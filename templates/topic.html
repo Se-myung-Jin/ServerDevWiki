@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 제목은 catalog.js 의 title 로 자동 설정된다. -->
+  <title>ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<!--
+  주제 문서 템플릿
+  1. 이 파일을 <분야 폴더>/<slug>.html 로 복사한다. 예: 02-operating-system/process-thread.html
+  2. 아래 data-topic 을 "<분야 폴더>/<slug>" 로 바꾼다.
+  3. assets/catalog.js 의 해당 분야 topics 에 { slug, title, level, summary } 를 추가한다.
+
+  제목 · 단계 배지 · 요약 · 목차 · 점검 문항 · 이전/다음 링크는 자동으로 붙는다.
+  여기에는 본문만 쓴다.
+
+  쓸 수 있는 것
+  - <span class="blank">핵심어</span> : 학습 모드에서 가려지고 클릭하면 보인다.
+  - <pre><code class="language-csharp">...</code></pre> : 코드 하이라이트 (cpp, csharp, sql, bash ...)
+  - <div class="table-scroll"><table>...</table></div> : 가로로 긴 표
+  - <blockquote> : 주의점, 인용
+-->
+<body data-page="topic" data-topic="00-category/slug">
+  <article class="doc-body">
+
+    <h2>한 줄 정의</h2>
+    <p></p>
+
+    <h2>왜 필요한가</h2>
+    <p><!-- 이 개념이 없으면 어떤 문제가 생기는지 --></p>
+
+    <h2>어떻게 동작하는가</h2>
+    <p></p>
+
+    <h2>게임 서버에서는</h2>
+    <p><!-- 실제로 이어지는 버그 · 설계 결정 · 성능 문제 --></p>
+
+    <h2>심화</h2>
+    <p></p>
+
+    <h2>출처</h2>
+    <ul class="sources">
+      <li><!-- 공식 문서, RFC, 표준 스펙 등 1차 자료 --></li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
