@@ -47,8 +47,10 @@
     return t.content.firstChild;
   }
 
+  // 분야 번호는 폴더 이름이 아니라 catalog.js 에 적힌 순서로 매긴다.
   function catNo(cat) {
-    return cat.dir.slice(0, 2);
+    var n = CATALOG.indexOf(cat) + 1;
+    return (n < 10 ? "0" : "") + n;
   }
 
   function topicId(cat, t) {

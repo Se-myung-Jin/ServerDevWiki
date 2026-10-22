@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>수의 표현 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="computer-architecture/number-representation">
+  <article class="doc-body">
+
+    <h2>핵심 요약</h2>
+    <p>
+      정수는 <span class="blank">2의 보수</span>로 담는다. 뺄셈을 "음수 더하기"로 바꿔 덧셈 회로 하나로 처리할 수 있고, 0의 표현도 하나뿐이라서다.
+      실수는 <strong>IEEE 754</strong>에 따라 부호·지수·가수로 나눠 담는다.
+    </p>
+    <p>
+      두 방식 모두 정해진 비트 안에 넣으므로 담기지 않는 값이 생긴다. 정수는 범위를 넘으면 <strong>감싸 돌거나(wraparound) 언어에 따라 미정의 동작</strong>이 되고,
+      실수는 가장 가까운 표현으로 반올림한 <strong>오차가 연산마다 누적</strong>된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>정밀도는 가수에 쓸 수 있는 비트 수가 정한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 150" role="img" aria-label="float는 부호 1 지수 8 가수 23비트, double은 부호 1 지수 11 가수 52비트">
+      <text class="f-text" x="98" y="46" text-anchor="end">float · 32비트</text>
+      <rect class="f-miss" x="110" y="24" width="9.4" height="34"/>
+      <rect class="f-box" x="119.4" y="24" width="75.2" height="34"/>
+      <text class="f-text" x="157" y="46" text-anchor="middle">지수 8</text>
+      <rect class="f-hit" x="194.60000000000002" y="24" width="216.20000000000002" height="34"/>
+      <text class="f-strong" x="302.70000000000005" y="46" text-anchor="middle">가수 23</text>
+      <text class="f-text" x="98" y="106" text-anchor="end">double · 64비트</text>
+      <rect class="f-miss" x="110" y="84" width="9.4" height="34"/>
+      <rect class="f-box" x="119.4" y="84" width="103.4" height="34"/>
+      <text class="f-text" x="171.10000000000002" y="106" text-anchor="middle">지수 11</text>
+      <rect class="f-hit" x="222.8" y="84" width="488.8" height="34"/>
+      <text class="f-strong" x="467.20000000000005" y="106" text-anchor="middle">가수 52</text>
+      <text class="f-sub" x="114.7" y="138" text-anchor="start">↑ 부호 1비트</text>
+      </svg>
+      <figcaption>막대 길이가 곧 비트 수다. double은 float보다 32비트가 많고, 그중 29비트가 가수로 갔다.</figcaption>
+    </figure>
+    <p>
+      값은 <code>±1.가수 × 2<sup>지수</sup></code> 형태로 담는다. 정규화하면 맨 앞 비트가 언제나 1이라서 그 비트는 저장하지 않는다(<span class="blank">hidden bit</span>).
+      그래서 실제 유효 비트는 저장된 비트보다 하나 많다. float은 23비트를 저장하고 24비트를 쓰고, double은 52비트를 저장하고 53비트를 쓴다.
+      10진수로 바꾸면 float은 약 7자리, double은 약 15~16자리다.
+    </p>
+
+    <h3>값이 커질수록 표현 간격이 벌어진다</h3>
+    <p>가수 비트 수는 고정이고 지수만 커지므로, 절댓값이 커질수록 이웃한 두 표현 사이의 간격이 넓어진다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="num">float 값의 크기</th><th class="num">이웃 표현과의 간격</th><th>게임 좌표(1 = 1m)로 보면</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="num">약 0.00000012</td><td>문제없음</td></tr>
+          <tr><td class="num">1,000</td><td class="num">약 0.00006</td><td>문제없음</td></tr>
+          <tr><td class="num">100,000</td><td class="num">약 0.008</td><td>원점에서 100km면 8mm 단위로만 움직인다</td></tr>
+          <tr><td class="num">1,000,000</td><td class="num">0.0625</td><td>6cm 단위. 이동이 계단처럼 보인다</td></tr>
+          <tr><td class="num">16,777,216 (2<sup>24</sup>)</td><td class="num">2</td><td>홀수 정수를 담지 못한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>반올림 오차가 결합법칙을 깨뜨린다</h3>
+    <p>
+      연산할 때마다 결과를 가장 가까운 표현으로 맞추면서 반올림 오차가 생긴다. 이 오차가 연산 순서에 따라 달라지기 때문에 결합법칙이 성립하지 않는다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>현상</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td><code>0.1 + 0.2 != 0.3</code></td><td>10진 소수 0.1을 2진으로 유한하게 표현할 수 없다</td></tr>
+          <tr><td><code>(a+b)+c != a+(b+c)</code></td><td>결합법칙 불성립. 합산 순서가 결과를 바꾼다</td></tr>
+          <tr><td>큰 값에 작은 값을 더하면 무시된다</td><td>지수 차가 크면 작은 값이 가수 비트 밖으로 밀려난다</td></tr>
+          <tr><td>좌표가 원점에서 멀어지면 정밀도가 떨어진다</td><td>절댓값이 커지면 표현 간격이 벌어진다</td></tr>
+          <tr><td>가까운 두 값을 빼면 정확한 자릿수가 크게 줄어든다</td><td>앞쪽 유효 숫자가 상쇄되고, 오차가 섞인 아래쪽 비트만 남는다(catastrophic cancellation)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>정수 오버플로의 규정은 언어마다 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>C · C++</th><th>C#</th></tr></thead>
+        <tbody>
+          <tr><td>부호 없는 정수 오버플로</td><td>2<sup>n</sup> 모듈로로 정의됨(감싸 돈다)</td><td>기본은 감싸 돈다. <code>checked</code>면 <code>OverflowException</code></td></tr>
+          <tr><td>부호 있는 정수 오버플로</td><td><strong>미정의 동작</strong></td><td>기본은 감싸 돈다(<code>unchecked</code>). <code>checked</code>면 <code>OverflowException</code></td></tr>
+          <tr><td><code>-1 &lt; 1u</code></td><td><code>false</code> (-1이 unsigned 최댓값으로 바뀐다)</td><td><code>true</code> (둘 다 <code>long</code>으로 올려 비교한다)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      표현 방식과 오버플로 규정은 별개다. C++20부터 부호 있는 정수의 표현은 2의 보수만 허용되지만, 오버플로는 그대로 미정의 동작으로 남았다.
+      비트 배치가 정해졌다고 해서 범위를 넘은 결과까지 보장되는 것은 아니다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>고정 오차 하나로 비교하면 큰 값에서는 ==와 같아진다</h3>
+    <p>
+      실수는 <code>==</code>가 아니라 허용 오차로 비교한다. 다만 오차 값을 하나로 정해 두면 큰 값에서 그 비교가 <code>==</code>와 다를 것이 없어진다.
+      머신 엡실론(<code>FLT_EPSILON</code>·<code>DBL_EPSILON</code>, C#의 <code>float.Epsilon</code>과는 다른 값이다)은 1.0에 더했을 때 1.0과 달라지는 가장 작은 값이라서, 1 근처에서만 뜻이 맞는다.
+      값이 커지면 이웃한 두 표현의 간격이 그 기준보다 먼저 벌어지고, 오차 안에 드는 값이 자기 자신밖에 남지 않는다. 그래서 <strong>상대 오차</strong>나 <strong>ULP 비교</strong>를 쓴다.
+    </p>
+<pre><code class="language-csharp">// 절대 오차 + 상대 오차를 함께 쓰는 흔한 형태
+static bool NearlyEqual(double a, double b, double absTol = 1e-9, double relTol = 1e-9)
+    =&gt; Math.Abs(a - b) &lt;= Math.Max(absTol, relTol * Math.Max(Math.Abs(a), Math.Abs(b)));</code></pre>
+    <p>
+      주의할 점: C#의 <code>float.Epsilon</code>·<code>double.Epsilon</code>은 머신 엡실론이 아니라 0보다 큰 가장 작은 값(약 1.4e-45, 4.9e-324)이다. 이름만 보고 허용 오차로 쓰면 사실상 <code>==</code>가 된다.
+    </p>
+
+    <h3>허용 오차로 정의한 같음은 전이되지 않는다</h3>
+    <p>
+      a와 b가 오차 범위 안이고 b와 c도 범위 안이어도, a와 c는 범위를 벗어날 수 있다. 그래서 정렬 기준이나 사전의 키처럼 같음이 전이되어야 하는 자리에는 쓸 수 없다.
+      실수 값을 키로 써야 한다면 정해진 단위로 정수화(예: 좌표를 1cm 격자 인덱스로)한 값을 쓴다.
+    </p>
+
+    <h3>같은 조건에서는 부동소수점도 결정적이다</h3>
+    <p>
+      같은 기계어를 같은 아키텍처에서 실행하면 연산 순서가 고정되므로 기본 사칙연산의 결과는 같다. 조건이 바뀌면 결정성이 틀어진다.
+    </p>
+    <ul>
+      <li><strong>식을 묶는 방식</strong>: 컴파일러가 한쪽은 <code>(a+b)+(c+d)</code>로, 다른 쪽은 <code>a+(b+(c+d))</code>로 계산하면 결과가 다르다.</li>
+      <li><strong>중간값 정밀도</strong>: 중간값을 80비트로 유지하는 x87과 형식 폭에 맞추는 SSE의 결과가 다르다.</li>
+      <li><strong>FMA</strong>: 곱셈과 덧셈을 한 번에 반올림하는 FMA를 쓰느냐에 따라 같은 식의 결과가 다르다.</li>
+      <li><strong>수학 함수</strong>: <code>Math.Sin</code>·<code>Math.Pow</code> 같은 함수는 OS·런타임의 수학 라이브러리 구현을 따르므로 플랫폼마다 마지막 비트가 다를 수 있다.</li>
+    </ul>
+    <p>플랫폼을 넘어 결과를 맞춰야 하면 고를 수 있는 방법은 둘이다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>부동소수점을 그대로 쓰고 조건을 고정한다. 컴파일러를 엄격 모드로, 같은 명령어 집합으로 빌드하고, 수학 함수를 직접 구현한다</td><td>최적화를 포기하는 만큼 느려지고, 고정할 조건을 하나라도 놓치면 깨진다</td></tr>
+          <tr><td>논리 계산을 고정소수점이나 정수로 옮긴다. lockstep 시뮬레이션이 주로 이쪽을 고른다</td><td>표현 범위가 좁아지고 코드가 복잡해진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>재화는 정수로 담는다.</strong> 골드·포인트·가격을 <code>float</code>/<code>double</code>로 두면 합산할 때마다 오차가 쌓이고, 큰 금액에서는 작은 금액이 아예 더해지지 않는다. 가장 작은 단위의 <code>long</code>으로 담거나 <code>decimal</code>을 쓴다.
+      </li>
+      <li>
+        <strong>곱셈 오버플로를 의심한다.</strong> 데미지 × 배율 × 버프처럼 곱이 이어지는 계산은 <code>int</code>를 쉽게 넘긴다. C# 기본값은 감싸 돌기라서 예외 없이 음수가 되고, 음수 데미지가 회복으로 처리되는 식의 버그가 된다. <code>long</code>으로 계산한 뒤 상한으로 자르거나, 중요한 계산은 <code>checked</code>로 감싼다.
+      </li>
+      <li>
+        <strong>넓은 월드는 좌표 기준점을 나눈다.</strong> 위 표처럼 원점에서 수십 km 떨어지면 float 좌표가 cm 단위를 잃는다. 존·섹터마다 지역 원점을 두고 그 기준의 상대 좌표로 계산한다. 서버가 <code>double</code>을 써도 클라이언트(Unity 등)가 <code>float</code>이면 결국 클라이언트 쪽에서 같은 문제가 생긴다.
+      </li>
+      <li>
+        <strong>위치 검증 허용치는 상대적으로 잡는다.</strong> 클라이언트가 보낸 위치와 서버가 계산한 위치를 비교할 때, 고정 오차 하나를 쓰면 원점 근처와 먼 곳에서 판정 강도가 달라진다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>C/C++에서 <code>int</code>와 <code>unsigned</code>를 비교하면 <code>int</code> 쪽이 unsigned로 바뀐다.</strong>
+        그래서 <code>-1 &lt; 1u</code>가 <code>false</code>다. 배열 인덱스에 <code>size_t</code>를 쓰고 역방향으로 돌면 <code>i &gt;= 0</code>이 언제나 참이라 루프가 끝나지 않는다. C#에서는 같은 비교가 <code>true</code>라서, 두 언어를 오가며 작성하는 코드에서 특히 헷갈린다.
+      </li>
+      <li>
+        <strong>C/C++의 부호 있는 오버플로는 단순히 잘리지 않는다.</strong>
+        미정의 동작이라서 컴파일러는 오버플로가 일어나지 않는다고 전제하고 코드를 만든다. <code>if (x + 100 &lt; x)</code>처럼 오버플로를 직접 검사하는 조건문은 언제나 거짓으로 보고 통째로 지운다. 검사는 연산 전에 <code>x &gt; INT_MAX - 100</code>처럼 한다.
+      </li>
+      <li>
+        <strong>NaN은 자기 자신과도 같지 않다.</strong> <code>double.NaN == double.NaN</code>은 <code>false</code>다. 계산 중에 NaN이 한 번 생기면 이후 모든 비교가 거짓이 되어, 좌표 검증이나 정렬이 조용히 어긋난다. 0으로 나누기나 음수의 제곱근이 흔한 출처다.
+      </li>
+      <li>
+        <strong>실수를 정수로 바꿀 때 범위를 넘으면 결과가 런타임과 플랫폼에 따라 다르다.</strong> 변환 전에 범위를 확인하거나 <code>Math.Clamp</code>로 자른 뒤 바꾼다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

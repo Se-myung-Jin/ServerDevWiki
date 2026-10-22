@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>메모리 계층과 캐시 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="computer-architecture/memory-hierarchy">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="locality.html">참조 지역성</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      CPU와 메모리의 속도 차를 메우려고 작고 빠른 저장소를 여러 단계로 쌓은 것이 <strong>메모리 계층</strong>이다.
+      아래로 갈수록 용량이 커지고, 그 대가로 지연은 <span class="blank">자릿수가 하나씩</span> 늘어난다.
+    </p>
+    <p>
+      캐시는 바이트가 아니라 <strong>캐시 라인</strong> 단위로 움직인다. Intel·AMD의 x86-64에서 그 라인은 <span class="blank">64바이트</span>이고, 이 문서는 그 값을 예로 든다.
+      4바이트를 읽어도 64바이트 전체를 가져온다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>한 단계 내려가면 지연의 자릿수가 하나 늘어난다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 254" role="img" aria-label="메모리 계층별 접근 지연 범위, 사이클 로그 눈금">
+      <line class="f-grid" x1="163" y1="16" x2="163" y2="220"/>
+      <text class="f-sub" x="163" y="238" text-anchor="middle">10⁰</text>
+      <line class="f-grid" x1="229" y1="16" x2="229" y2="220"/>
+      <text class="f-sub" x="229" y="238" text-anchor="middle">10¹</text>
+      <line class="f-grid" x1="295" y1="16" x2="295" y2="220"/>
+      <text class="f-sub" x="295" y="238" text-anchor="middle">10²</text>
+      <line class="f-grid" x1="361" y1="16" x2="361" y2="220"/>
+      <text class="f-sub" x="361" y="238" text-anchor="middle">10³</text>
+      <line class="f-grid" x1="427" y1="16" x2="427" y2="220"/>
+      <text class="f-sub" x="427" y="238" text-anchor="middle">10⁴</text>
+      <line class="f-grid" x1="493" y1="16" x2="493" y2="220"/>
+      <text class="f-sub" x="493" y="238" text-anchor="middle">10⁵</text>
+      <line class="f-grid" x1="559" y1="16" x2="559" y2="220"/>
+      <text class="f-sub" x="559" y="238" text-anchor="middle">10⁶</text>
+      <line class="f-line" x1="130" y1="220" x2="559" y2="220"/>
+      <text class="f-text" x="118" y="36" text-anchor="end">레지스터</text>
+      <rect class="f-bar" x="130" y="24" width="33" height="16" rx="3"/>
+      <text class="f-sub" x="171" y="36">1 사이클 미만</text>
+      <text class="f-text" x="118" y="68" text-anchor="end">L1</text>
+      <rect class="f-bar" x="196" y="56" width="13.199999999999989" height="16" rx="3"/>
+      <text class="f-sub" x="217.2" y="68">수 사이클</text>
+      <text class="f-text" x="118" y="100" text-anchor="end">L2</text>
+      <rect class="f-bar" x="229" y="88" width="19.80000000000001" height="16" rx="3"/>
+      <text class="f-sub" x="256.8" y="100">십수 사이클</text>
+      <text class="f-text" x="118" y="132" text-anchor="end">L3</text>
+      <rect class="f-bar" x="262" y="120" width="23.100000000000023" height="16" rx="3"/>
+      <text class="f-sub" x="293.1" y="132">수십 사이클</text>
+      <text class="f-text" x="118" y="164" text-anchor="end">메인 메모리</text>
+      <rect class="f-bar" x="308.20000000000005" y="152" width="26.399999999999977" height="16" rx="3"/>
+      <text class="f-sub" x="342.6" y="164">수백 사이클</text>
+      <text class="f-text" x="118" y="196" text-anchor="end">SSD</text>
+      <rect class="f-bar" x="446.8" y="184" width="85.7999999999999" height="16" rx="3"/>
+      <text class="f-sub" x="540.5999999999999" y="196">수만~수십만 사이클</text>
+      
+      </svg>
+      <figcaption>가로축은 사이클 수의 자릿수(로그 눈금)다. 막대는 한 점이 아니라 범위를 나타낸다.</figcaption>
+    </figure>
+    <p>
+      L1과 메인 메모리 사이가 두 자릿수고, 메인 메모리와 SSD 사이는 또 두 자릿수다.
+      정확한 값보다 이 간격이 판단할 때 쓰는 기준이다.
+    </p>
+    <p>
+      단계마다 누가 쓰는지도 다르다. <strong>L1과 L2는 코어마다 따로</strong> 있고, <strong>L3는 여러 코어가 함께</strong> 쓴다.
+      L1은 다시 명령어용(L1i)과 데이터용(L1d)으로 나뉜다. 그래서 "캐시 미스가 많다"고만 하면 어느 단계의 어느 캐시인지가 드러나지 않는다.
+    </p>
+    <p>
+      맨 위의 레지스터는 아래 단계와 성격이 다르다. 캐시는 하드웨어가 알아서 채우므로 프로그램은 주소만 지정하면 된다.
+      레지스터는 주소가 없고 개수가 정해져 있어, 무엇을 올릴지 컴파일러가 정한다. x86의 범용 레지스터는 32비트에서 8개, 64비트에서 16개다(<a href="32-64-bit.html">32비트와 64비트</a>).
+    </p>
+    <p>
+      개수가 모자라면 컴파일러가 값을 스택으로 내보낸다(spill). 그 스택도 결국 L1에 들어와 있으므로, 레지스터가 부족하다고 곧장 메인 메모리까지 떨어지지는 않는다.
+    </p>
+
+    <h3>캐시는 주소를 셋으로 나눠 읽는다</h3>
+    <p>
+      주소는 <span class="blank">태그 + 인덱스 + 오프셋</span>으로 나뉜다. 인덱스로 먼저 집합(set)을 찾는다.
+      그 집합 안에서 태그로 일치 여부를 확인하고, 맞으면 오프셋으로 라인 안의 바이트를 고른다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 232" role="img" aria-label="캐시 조회 흐름: 인덱스로 집합 선택, 태그 비교, 히트면 오프셋으로 바이트 선택, 미스면 라인을 가져온 뒤 같은 과정">
+      <defs><marker id="mh-ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-sub" x="95" y="70" text-anchor="middle">주소</text>
+      <rect class="f-box" x="20" y="78" width="50" height="34"/><text class="f-sub" x="45" y="99" text-anchor="middle">태그</text>
+      <rect class="f-hit" x="70" y="78" width="50" height="34"/><text class="f-sub" x="95" y="99" text-anchor="middle">인덱스</text>
+      <rect class="f-box" x="120" y="78" width="50" height="34"/><text class="f-sub" x="145" y="99" text-anchor="middle">오프셋</text>
+      <line class="f-line" x1="170" y1="95" x2="198" y2="95" marker-end="url(#mh-ah)"/>
+      <rect class="f-box" x="200" y="72" width="120" height="46" rx="6"/><text class="f-text" x="260" y="92" text-anchor="middle">인덱스로</text><text class="f-sub" x="260" y="108" text-anchor="middle">집합 선택</text>
+      <line class="f-line" x1="320" y1="95" x2="348" y2="95" marker-end="url(#mh-ah)"/>
+      <polygon class="f-box" points="350,95 425,51 500,95 425,139"/><text class="f-text" x="425" y="92" text-anchor="middle">태그가 맞는</text><text class="f-sub" x="425" y="108" text-anchor="middle">라인이 있나</text>
+      <line class="f-line" x1="500" y1="95" x2="538" y2="95" marker-end="url(#mh-ah)"/><text class="f-sub" x="519" y="87" text-anchor="middle">있다</text>
+      <rect class="f-hit" x="540" y="72" width="165" height="46" rx="6"/><text class="f-strong" x="622" y="92" text-anchor="middle">히트</text><text class="f-sub" x="622" y="108" text-anchor="middle">오프셋으로 바이트 선택</text>
+      <line class="f-line" x1="425" y1="139" x2="425" y2="168" marker-end="url(#mh-ah)"/><text class="f-sub" x="433" y="158">없다</text>
+      <rect class="f-box" x="340" y="170" width="170" height="46" rx="6"/><text class="f-text" x="425" y="190" text-anchor="middle">미스</text><text class="f-sub" x="425" y="206" text-anchor="middle">라인 64바이트를 가져온다</text>
+      <polyline class="f-line" points="510,193 622,193 622,120" marker-end="url(#mh-ah)"/><text class="f-sub" x="566" y="185" text-anchor="middle">채운 뒤</text>
+      </svg>
+      <figcaption>미스로 라인을 가져온 뒤에도 결국 같은 오프셋 계산으로 돌아온다.</figcaption>
+    </figure>
+    <p>
+      한 집합에 라인이 몇 개 들어가는지가 <strong>연관도(associativity)</strong>다.
+      direct-mapped(1-way)는 싸지만 충돌이 잦아서, 실제 구현은 4~16-way set associative를 쓴다.
+    </p>
+
+    <h3>쓰기는 캐시에만 하고 나중에 내려보낸다</h3>
+    <p>여기까지는 읽기 이야기다. 쓰기는 정책이 둘로 나뉜다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>정책</th><th>쓸 때 하는 일</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>write-through</td><td>캐시와 다음 단계에 함께 쓴다</td><td>쓸 때마다 느린 쪽을 기다린다</td></tr>
+          <tr><td>write-back</td><td>캐시에만 쓰고, 그 라인이 밀려날 때 내려보낸다</td><td>어느 라인이 고쳐졌는지 <span class="blank">dirty bit</span>로 따로 기억해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      현행 CPU는 <strong>write-back</strong>을 쓴다. 같은 라인에 여러 번 써도 아래 단계로 내려가는 것은 밀려날 때 한 번이다.
+      그래서 메모리에 접근하는 횟수가 쓰기 횟수보다 훨씬 적어진다.
+    </p>
+    <p>
+      쓰기에서 미스가 났을 때도 라인 단위가 그대로 적용된다. <strong>write-allocate</strong>는 그 라인을 먼저 가져온 다음 고치는 방식이고, write-back과 짝으로 쓴다.
+      64바이트 중 4바이트만 고칠 때에도 64바이트를 전부 가져온다는 뜻이다.
+    </p>
+
+    <h3>미스는 원인마다 대응이 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>원인</th><th>대응</th></tr></thead>
+        <tbody>
+          <tr><td>compulsory (cold)</td><td>처음 접근한다</td><td>prefetch</td></tr>
+          <tr><td>capacity</td><td>working set이 캐시보다 크다</td><td>캐시 크기로 나눠 도는 tiling</td></tr>
+          <tr><td>conflict</td><td>같은 집합에 몰린다</td><td>배열에 패딩을 줘 stride를 틀어 놓는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>미스 횟수만 세면 셋이 구분되지 않는데, 표에서 보듯 대응은 서로 다르다.</p>
+    <p>
+      고전적으로는 이 셋으로 나눈다. 멀티코어에서는 한 가지가 더해진다. 다른 코어가 같은 라인에 쓰면 이쪽 라인이 무효화되어 생기는 미스(coherence miss)다.
+      앞의 셋과 달리 자기 접근 패턴만 고쳐서는 줄어들지 않는다. <a href="cache-coherence.html">캐시 일관성과 false sharing</a>에서 다룬다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>복잡도가 같은데 실측이 다르면 먼저 배치를 본다</h3>
+    <p>
+      연결 리스트와 배열은 순회가 둘 다 O(n)이다. 복잡도만으로는 격차가 설명되지 않는다.
+      접근 횟수로도 마찬가지다. 원소 수가 같으니 접근 횟수도 같다.
+    </p>
+    <p>
+      달라지는 것은 <strong>한 번의 접근이 다음 접근을 얼마나 미리 해결해 주느냐</strong>다.
+      배열은 라인 하나를 가져오면 인접 원소가 함께 실려 온다. 연결 리스트는 노드가 흩어져 있어 라인의 대부분을 버리고, 다음 노드에서 또 미스가 난다.
+    </p>
+
+    <h3>연속 배치는 순회가 빨라지는 대신 중간 삽입이 느려진다</h3>
+    <p>
+      인접한 데이터를 곧 쓸 것이라면 이미 캐시에 와 있다. 흩어져 있으면 같은 64바이트를 실어 오고도 4바이트만 쓰고 버린다.
+      대신 연속 배치는 중간 삽입·삭제에서 원소 이동 비용이 그대로 발생한다.
+    </p>
+    <p><strong>순회가 주된 작업이면 연속 배치를 고르고, 중간 삽입·삭제가 잦으면 고르지 않는다.</strong></p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>틱 예산은 사이클로 따진다.</strong> 30Hz 서버의 한 틱은 약 33ms다. 메인 메모리 미스 한 번이 수백 사이클이니, 엔티티 수만 개를 흩어진 객체로 순회하면 미스만으로 틱 예산의 상당 부분을 쓸 수 있다.</li>
+      <li><strong>"캐시"라는 말을 구분한다.</strong> 서버 개발자가 매일 쓰는 Redis 캐시나 DB 버퍼 풀도 같은 계층 원리(작고 빠른 층이 크고 느린 층 앞에 선다)를 따른다. 하지만 지연 단위가 전혀 다르다. CPU 캐시는 나노초 단위이고, Redis는 네트워크 왕복을 포함해 수십~수백 마이크로초 단위다. 대화에서 어느 층 이야기인지 먼저 맞춘다.</li>
+      <li><strong>라인 크기를 숫자로 박지 않는다.</strong> <a href="cache-coherence.html">false sharing</a>을 피하려고 패딩을 넣을 때 64를 상수로 박으면 다른 CPU에서 틀릴 수 있다. 아래 주의 사항의 방법으로 확인한다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>2의 거듭제곱 크기 2차원 배열을 열 방향으로 순회하면 캐시가 제 역할을 못 한다.</strong>
+        모든 접근이 같은 집합에 떨어져 서로를 밀어낸다. 배열 한 줄에 패딩을 몇 바이트 넣어 stride를 틀어 주면 접근이 여러 집합으로 흩어진다.
+        conflict miss의 전형이고, 복잡도만으로는 드러나지 않는다.
+      </li>
+      <li>
+        <strong><a href="32-64-bit.html">32비트냐 64비트냐</a>는 라인 크기와 관계가 없다.</strong>
+        32/64비트는 주소와 범용 레지스터의 폭이고, 라인 크기는 캐시가 한 번에 옮기는 양이다. 같은 CPU에서 32비트 코드를 실행해도 라인은 그대로 64바이트다.
+        다만 64비트에서는 포인터가 8바이트가 되어 한 라인에 들어가는 원소 수가 줄어든다. 라인이 작아진 것이 아니라 원소가 커진 것이다.
+      </li>
+      <li>
+        <strong>64바이트는 x86-64의 값이지 모든 CPU의 값이 아니다.</strong>
+        정하는 것은 운영체제가 아니라 CPU다. 같은 Windows나 Linux라도 어느 칩에서 실행되는지에 따라 달라진다.
+      </li>
+    </ul>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>CPU 계열</th><th>주로 쓰이는 곳</th><th>캐시 라인</th></tr></thead>
+        <tbody>
+          <tr><td>Intel·AMD x86-64</td><td>데스크톱·서버의 Windows·Linux</td><td>모든 단계가 64바이트</td></tr>
+          <tr><td>ARM Cortex-A 계열</td><td>Android 기기 대부분</td><td>64바이트 (ARM 코어 문서에 적힌 값)</td></tr>
+          <tr><td>Apple 자체 코어</td><td>macOS·iOS</td><td>L1 데이터는 64바이트. 아래 단계는 더 크다고 알려져 있으나 공식 수치가 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>
+        <strong>x86-64 안에서도 늘 64바이트였던 것은 아니다.</strong>
+        Pentium 4의 L2는 128바이트 라인을 썼고, 그 라인은 다시 64바이트 두 조각(섹터)으로 나뉘어 있었다.
+      </li>
+      <li>
+        <strong>그래서 라인 크기를 코드에 숫자로 고정하지 않는다.</strong> 실행 중에 확인할 수 있다.
+        Linux·Android는 <code>/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size</code>를 읽고,
+        Windows는 <code>GetLogicalProcessorInformation</code>이 돌려주는 <code>LineSize</code>를 본다.
+      </li>
+      <li>
+        <strong>"캐시"는 CPU 캐시만 가리키는 말이 아니다.</strong>
+        웹 캐시와 DB 캐시가 따로 있고, 같은 낱말이 서로 다른 층을 가리킨다. 어느 층 이야기인지 먼저 구분한다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

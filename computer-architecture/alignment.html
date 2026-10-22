@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>정렬과 패딩 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="computer-architecture/alignment">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="memory-hierarchy.html">메모리 계층과 캐시</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      CPU는 값을 <span class="blank">자기 크기의 배수 주소</span>에 두고 읽도록 설계되어 있다(자연 정렬). 4바이트 <code>int</code>는 4의 배수 주소에, 8바이트 <code>double</code>은 8의 배수 주소에 둔다.
+    </p>
+    <p>
+      컴파일러는 이 규칙을 맞추려고 필드 사이에 빈 바이트를 넣는다. 그 빈 바이트가 <strong>패딩</strong>이고, 그만큼 구조체가 필드 크기의 합보다 커진다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>메모리는 정해진 경계 단위로 읽는다</h3>
+    <p>
+      메모리와 캐시는 임의의 주소에서 원하는 크기만큼 읽어 오지 않는다. 정해진 경계에 맞춰 일정한 크기 단위로 가져온다.
+      값이 그 경계 안에 들어가 있으면 한 번에 끝나지만, 경계에 걸쳐 있으면 두 번 읽어 두 조각을 붙여야 한다. 정렬은 그 두 번째 읽기를 없애려고 지키는 규칙이다.
+    </p>
+
+    <h3>선언 순서만 바꿔도 빈틈이 사라진다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 170" role="img" aria-label="char int char 순서는 12바이트, int char char 순서는 8바이트">
+      <text class="f-text" x="156" y="44" text-anchor="end">char · int · char</text>
+      <rect class="f-hit" x="170" y="20" width="40" height="36"/>
+      <text class="f-strong" x="190" y="43" text-anchor="middle">a</text>
+      <rect class="f-pad" x="212" y="22" width="36" height="32"/>
+      <rect class="f-pad" x="252" y="22" width="36" height="32"/>
+      <rect class="f-pad" x="292" y="22" width="36" height="32"/>
+      <rect class="f-hit" x="330" y="20" width="160" height="36"/>
+      <line class="f-tick" x1="370" y1="20" x2="370" y2="26"/><line class="f-tick" x1="370" y1="50" x2="370" y2="56"/>
+      <line class="f-tick" x1="410" y1="20" x2="410" y2="26"/><line class="f-tick" x1="410" y1="50" x2="410" y2="56"/>
+      <line class="f-tick" x1="450" y1="20" x2="450" y2="26"/><line class="f-tick" x1="450" y1="50" x2="450" y2="56"/>
+      <text class="f-strong" x="410" y="43" text-anchor="middle">b</text>
+      <rect class="f-hit" x="490" y="20" width="40" height="36"/>
+      <text class="f-strong" x="510" y="43" text-anchor="middle">c</text>
+      <rect class="f-pad" x="532" y="22" width="36" height="32"/>
+      <rect class="f-pad" x="572" y="22" width="36" height="32"/>
+      <rect class="f-pad" x="612" y="22" width="36" height="32"/>
+      <text class="f-strong" x="664" y="44">12바이트</text>
+      <text class="f-sub" x="170" y="72" text-anchor="middle">0</text>
+      <text class="f-sub" x="330" y="72" text-anchor="middle">4</text>
+      <text class="f-sub" x="490" y="72" text-anchor="middle">8</text>
+      <text class="f-sub" x="650" y="72" text-anchor="middle">12</text>
+      <text class="f-text" x="156" y="120" text-anchor="end">int · char · char</text>
+      <rect class="f-hit" x="170" y="96" width="160" height="36"/>
+      <line class="f-tick" x1="210" y1="96" x2="210" y2="102"/><line class="f-tick" x1="210" y1="126" x2="210" y2="132"/>
+      <line class="f-tick" x1="250" y1="96" x2="250" y2="102"/><line class="f-tick" x1="250" y1="126" x2="250" y2="132"/>
+      <line class="f-tick" x1="290" y1="96" x2="290" y2="102"/><line class="f-tick" x1="290" y1="126" x2="290" y2="132"/>
+      <text class="f-strong" x="250" y="119" text-anchor="middle">b</text>
+      <rect class="f-hit" x="330" y="96" width="40" height="36"/>
+      <text class="f-strong" x="350" y="119" text-anchor="middle">a</text>
+      <rect class="f-hit" x="370" y="96" width="40" height="36"/>
+      <text class="f-strong" x="390" y="119" text-anchor="middle">c</text>
+      <rect class="f-pad" x="412" y="98" width="36" height="32"/>
+      <rect class="f-pad" x="452" y="98" width="36" height="32"/>
+      <text class="f-strong" x="504" y="120">8바이트</text>
+      <text class="f-sub" x="170" y="148" text-anchor="middle">0</text>
+      <text class="f-sub" x="330" y="148" text-anchor="middle">4</text>
+      <text class="f-sub" x="490" y="148" text-anchor="middle">8</text>
+      </svg>
+      <figcaption>눈금 하나가 1바이트, 점선 칸이 패딩이다. 같은 필드, 같은 데이터인데 순서만 다르다. 큰 것부터 두면 네 칸이 사라진다.</figcaption>
+    </figure>
+    <p>
+      <code>char(1) · int(4) · char(1)</code> 순서로 선언하면 첫 <code>char</code> 뒤에 3바이트가 들어가 <code>int</code>를 4의 배수 주소에 놓는다.
+      마지막 <code>char</code> 뒤에도 3바이트가 붙는다(<span class="blank">tail padding</span>).
+      구조체 전체 크기를 가장 큰 필드의 정렬 단위 배수로 맞춰 두어야, 배열로 나열했을 때 두 번째 원소부터도 정렬이 맞기 때문이다.
+    </p>
+    <p>
+      줄이려면 <strong>큰 필드부터 선언</strong>한다. 다만 이 방법은 컴파일러가 선언 순서를 지킬 때만 통하고, 그 여부는 언어마다 다르다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>언어</th><th>선언 순서</th></tr></thead>
+        <tbody>
+          <tr><td>C · C++</td><td>지킨다. 선언한 순서 그대로 배치된다</td></tr>
+          <tr><td>C# <code>struct</code> (값 타입 필드만)</td><td>지킨다. <code>LayoutKind.Sequential</code>이 기본이다</td></tr>
+          <tr><td>C# <code>struct</code> (참조 타입 필드 포함)</td><td>보장하지 않는다. 런타임이 <code>Auto</code>처럼 재배치한다</td></tr>
+          <tr><td>C# <code>class</code></td><td>보장하지 않는다. 런타임이 패딩이 적게 재배치한다</td></tr>
+          <tr><td>Rust</td><td>보장하지 않는다. <code>#[repr(C)]</code>를 붙여야 지킨다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>순서를 바꿨는데 크기가 그대로면, 선언 순서를 보장하지 않는 경우인지부터 확인한다. C# <code>class</code>는 런타임이 이미 재배치하므로 손으로 순서를 바꿔도 얻는 것이 거의 없다.</p>
+
+    <h2>선택 기준</h2>
+    <p>
+      구조체 하나에서 몇 바이트는 사소하다. <strong>배열로 수만 개를 담을 때</strong> 의미가 생긴다.
+      구조체가 <a href="memory-hierarchy.html">캐시 라인</a>에 몇 개 들어가는지가 바뀌면서 순회 성능이 달라지기 때문이다.
+    </p>
+    <p>
+      정렬을 강제로 깨는 옵션(C/C++의 <code>#pragma pack</code>, C#의 <code>StructLayout(Pack = 1)</code>)은 파일 포맷이나 네트워크 프로토콜처럼 <strong>레이아웃이 외부에서 정해져 있을 때만</strong> 쓴다.
+      성능을 위해 쓰는 것이 아니다. 비정렬 접근은 플랫폼에 따라 느려지거나 아예 실패한다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+<pre><code class="language-csharp">// 매 틱 순회하는 엔티티 상태. 필드만 보면 1 + 8 + 1 + 8 = 18바이트
+struct EntityState
+{
+    public bool   Alive;     // 1 + 패딩 7
+    public double X;         // 8
+    public bool   Dirty;     // 1 + 패딩 7
+    public double Y;         // 8
+}
+// Unsafe.SizeOf&lt;EntityState&gt;() == 32  → 캐시 라인 하나에 2개
+
+struct EntityStatePacked
+{
+    public double X;
+    public double Y;
+    public bool   Alive;
+    public bool   Dirty;     // 끝에 tail padding 6
+}
+// Unsafe.SizeOf&lt;EntityStatePacked&gt;() == 24  → 엔티티 10만 개면 3.2MB → 2.4MB</code></pre>
+    <ul>
+      <li><strong>크기는 재서 확인한다.</strong> C#에서는 <code>Unsafe.SizeOf&lt;T&gt;()</code>가 관리 메모리에서의 실제 크기다. <code>Marshal.SizeOf&lt;T&gt;()</code>는 네이티브로 마샬링할 때의 크기라서 둘이 다를 수 있다.</li>
+      <li><strong>패킷을 구조체로 그대로 읽지 않는다.</strong> <code>Pack = 1</code> 구조체에 수신 버퍼를 덮어씌우는 방식은 간편하지만, 정렬과 <a href="endianness.html">엔디안</a>을 플랫폼에 맡기게 된다. 필드를 <code>BinaryPrimitives.ReadInt32LittleEndian</code> 같은 API로 하나씩 읽으면 정렬과 바이트 순서가 코드에 드러난다.</li>
+      <li><strong>ARM 서버로 옮길 때 다시 본다.</strong> AWS Graviton 같은 ARM64 서버가 흔해졌다. 일반 읽기·쓰기는 비정렬이어도 동작하지만, 아래 주의 사항처럼 원자적 연산은 정렬이 깨지면 실패한다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>64비트로 옮기면 패딩이 늘어난다.</strong>
+        포인터가 8바이트가 되면서 정렬 요구가 커지기 때문이다. 같은 구조체가 32비트에서보다 커지는 일이 흔하다(<a href="32-64-bit.html">32비트와 64비트</a>).
+      </li>
+      <li>
+        <strong>정렬을 깼을 때 무슨 일이 생기는지는 아키텍처가 정한다.</strong>
+        x86은 일반 읽기·쓰기에서 비정렬 접근을 명령 자체가 지원하고, 정렬 검사(AC 플래그)를 따로 켜지 않으면 예외도 나지 않는다.
+        단, <code>movaps</code>처럼 정렬을 요구하는 SIMD 명령은 x86에서도 정렬이 안 맞으면 예외가 난다.
+        ARM은 정렬 검사가 켜져 있거나 정렬을 요구하는 명령(원자적 연산 등)이면 트랩이 발생하고, Linux에서는 SIGBUS로 전달된다. "느려질 뿐"이라고만 알고 있으면 다른 플랫폼에서 깨진다.
+      </li>
+      <li>
+        <strong><a href="atomics-memory-order.html">원자적 연산</a>은 정렬을 지켜야 한다.</strong>
+        x86에서 캐시 라인에 걸친 원자적 연산(split lock)은 동작은 하지만 매우 느리고, 최신 Linux 커널은 이를 감지해 경고하거나 막는다. 64비트 .NET 프로세스는 <code>long</code> 필드를 8바이트 경계에 두므로, <code>Interlocked</code>에 일반 필드를 넘길 때는 보통 신경 쓸 일이 없다. <code>Pack = 1</code> 구조체 안의 필드나 버퍼 중간을 가리키는 참조를 넘길 때만 조심한다.
+      </li>
+      <li>
+        <strong>느려지는 정도도 경우에 따라 다르다.</strong>
+        비정렬이어도 값이 한 캐시 라인 안에 들어가 있으면 현행 x86에서는 거의 차이가 나지 않는다. 라인을 걸칠 때, 더 나아가 페이지를 걸칠 때 비용이 커진다.
+        정렬을 두고 "항상 느리다"와 "요즘은 상관없다"가 함께 통용되는 것은 이 차이를 빼고 말하기 때문이다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

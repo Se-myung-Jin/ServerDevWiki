@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>캐시 일관성과 false sharing · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="computer-architecture/cache-coherence">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="memory-hierarchy.html">메모리 계층과 캐시</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      멀티코어에서는 코어마다 자기 캐시(L1, L2)를 가진다. 한 코어가 어떤 라인에 쓰면, 같은 라인을 보관하던 다른 코어의 사본은 무효가 된다.
+      이 규칙을 지키는 것이 <strong>캐시 일관성 프로토콜</strong>이고, 대표가 <span class="blank">MESI</span>다.
+    </p>
+    <p>
+      무효화의 단위는 변수가 아니라 <strong>라인</strong>이다. 그래서 논리적으로 아무 관계 없는 두 변수라도 한 라인에 있으면 서로의 사본을 계속 무효로 만든다.
+      각 코어는 접근할 때마다 라인을 다시 가져온다. 이것이 <span class="blank">false sharing</span>이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>MESI: 라인마다 네 가지 상태를 둔다</h3>
+    <p>각 코어의 캐시는 라인마다 아래 상태 중 하나를 기록한다. 코어끼리는 버스나 인터커넥트로 서로의 요청을 보고 상태를 바꾼다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상태</th><th>뜻</th><th>이 코어가 쓸 수 있나</th></tr></thead>
+        <tbody>
+          <tr><td><strong>M</strong>odified</td><td>이 코어만 가지고 있고, 고쳐서 메모리와 값이 다르다</td><td>바로 쓴다</td></tr>
+          <tr><td><strong>E</strong>xclusive</td><td>이 코어만 가지고 있고, 메모리와 값이 같다</td><td>바로 쓴다(M으로 바뀜)</td></tr>
+          <tr><td><strong>S</strong>hared</td><td>여러 코어가 같은 값을 가지고 있을 수 있다</td><td>다른 사본을 무효화한 뒤에 쓴다</td></tr>
+          <tr><td><strong>I</strong>nvalid</td><td>사본이 무효다</td><td>라인을 다시 가져와야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      핵심은 <strong>쓰려면 그 라인을 독점(M 또는 E)해야 한다</strong>는 것이다. S나 I 상태에서 쓰려는 코어는 "가져오면서 소유권도 달라"는 요청(RFO, Read For Ownership)을 보내고, 다른 코어의 사본은 I가 된다.
+      Intel은 MESIF, AMD는 MOESI처럼 상태를 하나 더 둔 변형을 쓰지만, 쓰기 전에 독점해야 한다는 원칙은 같다.
+    </p>
+
+    <h3>라인 소유권이 코어 사이를 오가며 매 접근이 미스가 된다</h3>
+    <p>
+      코어 A가 변수 <code>x</code>를, 코어 B가 변수 <code>y</code>를 각자 갱신한다고 하자.
+      둘이 같은 64바이트 라인에 있으면, A가 쓸 때마다 B의 사본이, B가 쓸 때마다 A의 사본이 무효가 된다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 222" role="img" aria-label="코어 A는 x를, 코어 B는 y를 쓰는데 x와 y가 같은 캐시 라인에 있어 서로의 사본을 무효화한다">
+      <defs><marker id="cc-ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker><marker id="cc-ah2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <rect class="f-box" x="60" y="20" width="170" height="54" rx="6"/><text class="f-text" x="145" y="43" text-anchor="middle">코어 A</text><text class="f-sub" x="145" y="61" text-anchor="middle">x를 쓴다</text>
+      <rect class="f-box" x="490" y="20" width="170" height="54" rx="6"/><text class="f-text" x="575" y="43" text-anchor="middle">코어 B</text><text class="f-sub" x="575" y="61" text-anchor="middle">y를 쓴다</text>
+      <line class="f-inval" x1="232" y1="36" x2="486" y2="36" marker-end="url(#cc-ah2)"/><text class="f-strong" x="360" y="28" text-anchor="middle">A가 쓰면 B의 사본 무효화</text>
+      <line class="f-inval" x1="488" y1="60" x2="234" y2="60" marker-end="url(#cc-ah2)"/><text class="f-strong" x="360" y="80" text-anchor="middle">B가 쓰면 A의 사본 무효화</text>
+      <rect class="f-cell" x="160" y="150" width="50" height="34"/>
+      <rect class="f-hit" x="210" y="150" width="50" height="34"/>
+      <text class="f-strong" x="235" y="172" text-anchor="middle">x</text>
+      <rect class="f-cell" x="260" y="150" width="50" height="34"/>
+      <rect class="f-cell" x="310" y="150" width="50" height="34"/>
+      <rect class="f-cell" x="360" y="150" width="50" height="34"/>
+      <rect class="f-hit" x="410" y="150" width="50" height="34"/>
+      <text class="f-strong" x="435" y="172" text-anchor="middle">y</text>
+      <rect class="f-cell" x="460" y="150" width="50" height="34"/>
+      <rect class="f-cell" x="510" y="150" width="50" height="34"/>
+      <line class="f-line" x1="145" y1="76" x2="232" y2="146" marker-end="url(#cc-ah)"/>
+      <line class="f-line" x1="575" y1="76" x2="438" y2="146" marker-end="url(#cc-ah)"/>
+      <text class="f-sub" x="360" y="204" text-anchor="middle">같은 캐시 라인 64바이트 (long 8칸)</text>
+      </svg>
+      <figcaption>코드에는 공유가 없는데 <code>x</code>와 <code>y</code>가 같은 라인 안에 나란히 놓여 있다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="num">순서</th><th>일어나는 일</th><th class="num">A의 라인</th><th class="num">B의 라인</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>A가 <code>x</code>를 쓴다</td><td class="num">M</td><td class="num">I</td></tr>
+          <tr><td class="num">2</td><td>B가 <code>y</code>를 쓰려고 RFO → A의 사본 무효화, 라인이 B로 넘어간다</td><td class="num">I</td><td class="num">M</td></tr>
+          <tr><td class="num">3</td><td>A가 다시 <code>x</code>를 쓰려고 RFO → B의 사본 무효화</td><td class="num">M</td><td class="num">I</td></tr>
+          <tr><td class="num">…</td><td>매 쓰기가 코어 간 라인 이동이 된다</td><td class="num"></td><td class="num"></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      락도 없고 경합도 없다. 코드만 보면 완벽히 병렬인데 느려진다.
+      L1 히트였어야 할 쓰기가 매번 다른 코어의 캐시에서 라인을 끌어오는 작업이 되기 때문이다.
+    </p>
+
+    <h3>읽기만 하면 문제가 없다</h3>
+    <p>
+      여러 코어가 같은 라인을 읽기만 할 때는 저마다 S 상태 사본을 보관해도 무효화가 오가지 않는다. 한 코어가 쓰는 순간 나머지 사본이 무효가 된다.
+      그래서 <strong>쓰는 쪽이 하나만 있어도 false sharing이 생기고</strong>, 아무도 쓰지 않으면 여러 코어가 같은 라인을 읽어도 상관없다.
+    </p>
+    <p>
+      같은 변수를 여러 코어가 실제로 나눠 쓰는 것은 <strong>true sharing</strong>이다. 이쪽은 데이터를 떼어 놓아도 해결되지 않는다. 공유 자체를 줄이거나(스레드별로 모았다가 합치기) 설계를 바꿔야 한다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>떼어 놓으면 메모리를 더 쓴다</h3>
+    <p>
+      스레드별 카운터나 누적값처럼 코어마다 따로 쓰는 값은 캐시 라인 크기로 떼어 놓는다.
+      패딩을 넣거나, 배열 대신 스레드 로컬에 두고 마지막에 합친다.
+    </p>
+    <p>
+      대신 스레드 수만큼 라인을 차지한다. <strong>경합이 실제로 관측된 자리에만 적용한다.</strong>
+      측정 없이 모든 필드에 패딩을 붙이면 캐시에 들어가는 유효 데이터가 줄어 오히려 효율이 떨어진다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>언제</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>스레드 로컬에 모았다가 마지막에 합치기</td><td>중간 값을 다른 스레드가 볼 필요가 없을 때</td><td>합치는 시점에만 동기화. 가장 먼저 고려한다</td></tr>
+          <tr><td>패딩으로 라인 떼어 놓기</td><td>여러 스레드가 계속 읽어 가야 하는 값(큐의 head/tail, 통계 카운터)</td><td>스레드 수 × 라인 크기만큼 메모리</td></tr>
+          <tr><td>쓰는 필드와 읽는 필드 분리</td><td>자주 바뀌는 필드와 읽기 전용 필드가 한 객체에 섞여 있을 때</td><td>객체 구조가 둘로 나뉜다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>패딩 폭도 실측 대상이다</h3>
+    <p>
+      Intel 계열은 라인 하나를 가져올 때 128바이트로 짝이 되는 옆 라인까지 함께 가져오는 경우가 있다(인접 라인 프리페치).
+      그래서 64바이트로 떼어 놓아도 옆 라인이 함께 적재되면서 경합이 다시 생길 수 있다. 이 때문에 128바이트로 맞추는 라이브러리도 있다.
+    </p>
+    <p>
+      C++17의 <code>std::hardware_destructive_interference_size</code>가 이 폭을 나타내는 표준 상수다. 다만 컴파일 시점 상수라 실행할 머신에서 잰 값이 아니다.
+      참고 값으로 쓰고 실측을 대신하지 않는다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <p>
+      가장 흔한 형태는 <strong>스레드 번호로 인덱싱하는 통계 배열</strong>이다. IO 스레드마다 받은 패킷 수를 세려고 <code>long[]</code>을 만들면, <code>long</code> 8개가 한 라인에 들어가 IO 스레드끼리 서로를 무효화한다.
+    </p>
+<pre><code class="language-csharp">// 문제: 스레드마다 자기 칸만 쓰지만 칸들이 한 캐시 라인에 붙어 있다
+long[] recvCount = new long[ioThreadCount];
+// IO 스레드 t 에서: recvCount[t]++;
+
+// 해결 1: 구조체 크기를 라인보다 크게 잡아 칸 사이를 띄운다
+[StructLayout(LayoutKind.Explicit, Size = 128)]
+struct PaddedCounter
+{
+    [FieldOffset(0)] public long Value;
+}
+PaddedCounter[] recvCount = new PaddedCounter[ioThreadCount];
+// IO 스레드 t 에서: recvCount[t].Value++;
+
+// 해결 2: 스레드 로컬에 모았다가 가끔 한 번만 합친다
+[ThreadStatic] static long t_recvCount;
+static long s_totalRecv;
+// IO 스레드에서:       t_recvCount++;
+// 같은 IO 스레드가 1초마다: Interlocked.Add(ref s_totalRecv, t_recvCount); t_recvCount = 0;</code></pre>
+    <ul>
+      <li><strong>작업 큐의 head와 tail</strong>: 생산자는 tail을, 소비자는 head를 쓴다. 둘이 한 라인에 있으면 생산자와 소비자가 서로를 무효화한다. .NET의 <code>ConcurrentQueue</code>도 내부에서 head와 tail 사이에 패딩을 둔다.</li>
+      <li><strong>세션 객체</strong>: 네트워크 스레드가 갱신하는 필드(마지막 수신 시각, 수신 바이트)와 로직 스레드가 갱신하는 필드(위치, 상태)가 한 객체에 붙어 있으면 같은 현상이 생긴다. 스레드별로 쓰는 필드를 나눠 둔다.</li>
+      <li><strong>락 객체 배열</strong>: 샤드별 락을 배열에 촘촘히 두면, 서로 다른 샤드의 락끼리 같은 라인을 쓰게 된다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>"공유 변수가 없으니 동시성 문제도 없다"고 보면 이 현상을 설명할 수 없다.</strong>
+        false sharing은 정확성이 아니라 성능을 떨어뜨린다. 결과는 언제나 맞게 나오므로 테스트를 아무리 돌려도 드러나지 않는다.
+      </li>
+      <li>
+        <strong>전용 도구로 찾는다.</strong>
+        Linux의 <code>perf c2c</code>는 어느 캐시 라인에서 경합이 일어났는지, 그 라인의 어느 위치를 어느 스레드가 읽고 썼는지까지 짚어 준다. 같은 변수를 실제로 나눠 쓰는 true sharing과도 구분해 준다.
+        "프로파일러에 안 보인다"고만 알고 있으면 찾을 수 있는 문제를 찾지 않고 넘긴다.
+      </li>
+      <li>
+        <strong>코어를 늘렸는데 처리량이 안 늘면 의심한다.</strong>
+        스레드 수를 늘릴수록 오히려 느려지거나 제자리라면, 락 경합과 함께 false sharing을 후보에 넣는다.
+      </li>
+      <li>
+        <strong>라인 크기를 상수로 박지 않는다.</strong>
+        64는 x86-64의 값이다. <a href="memory-hierarchy.html">메모리 계층과 캐시</a>의 주의 사항에 실행 중 확인 방법이 있다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
