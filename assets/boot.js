@@ -4,8 +4,9 @@
   function get(key) {
     try { return localStorage.getItem("sdw." + key); } catch (e) { return null; }
   }
-  var theme = get("theme");
-  if (theme && theme !== "auto") root.setAttribute("data-theme", theme);
+  // 저장된 선택이 없으면 세피아. "auto" 를 고르면 OS 설정을 따른다.
+  var theme = get("theme") || "sepia";
+  if (theme !== "auto") root.setAttribute("data-theme", theme);
   var width = get("width");
   if (width) root.style.setProperty("--content-width", width + "px");
   if (get("study") !== "off") root.classList.add("study");

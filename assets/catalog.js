@@ -4,14 +4,96 @@
 // 새 주제 문서 추가 순서
 //   1. templates/topic.html 을 <dir>/<slug>.html 로 복사
 //   2. 복사한 파일의 data-topic 을 "<dir>/<slug>" 로 수정
-//   3. 아래 해당 카테고리의 topics 배열에 { slug, title, level, summary } 추가
-//      level: "기초" | "심화"
+//   3. 아래 해당 카테고리의 topics 배열에 { slug, title, importance, summary, tags } 추가
+//      importance: "핵심"  면접 단골. ★ 배지가 붙고 목록에서 강조된다
+//                  생략    보통. 아무 표시 없음
+//                  "참고"  알아두면 좋지만 면접·실무에 지장 없는 내용.
+//                          카테고리 페이지에서 목록 아래 "참고" 섹션으로 따로 모인다
+//      tags: 이 토픽이 다루는 내용. 분야의 tags 목록에 있는 것만 쓴다
+//
+// 분야의 tags 는 그 분야에서 쓰는 태그 전체 목록이다(10개 미만으로 유지).
+// 카테고리 페이지 위쪽에 이 순서대로 칩이 나오고, 누르면 그 태그의 토픽만 보인다.
 window.CATALOG = [
   {
     dir: "01-computer-architecture",
     title: "컴퓨터 구조",
     desc: "CPU 파이프라인, 캐시 계층과 지역성, 메모리 정렬, 분기 예측이 서버 코드 성능에 미치는 영향",
-    topics: [],
+    tags: ["데이터 표현", "캐시", "메모리 배치", "멀티코어", "CPU 실행"],
+    topics: [
+      {
+        slug: "number-representation",
+        title: "수의 표현",
+        summary: "정수도 실수도 담기지 않는 값이 생긴다. 실수는 오차가 연산마다 누적되고, 정수는 감싸 돌거나 미정의 동작이 된다.",
+        tags: ["데이터 표현"],
+      },
+      {
+        slug: "endianness",
+        title: "엔디안과 바이트 오더",
+        summary: "여러 바이트를 묶어 읽는 값에만 있는 순서 규칙. 바이트 배열의 경계를 넘을 때 같은 바이트가 다른 값으로 읽힌다.",
+        tags: ["데이터 표현"],
+      },
+      {
+        slug: "locality",
+        title: "참조 지역성",
+        importance: "핵심",
+        summary: "방금 쓴 데이터와 그 이웃을 곧 다시 쓰는 경향. 캐시가 통하는 이유이고, 그 경향을 만드는 것은 코드다.",
+        tags: ["캐시", "메모리 배치"],
+      },
+      {
+        slug: "memory-hierarchy",
+        title: "메모리 계층과 캐시",
+        importance: "핵심",
+        summary: "한 단계 내려갈 때마다 지연의 자릿수가 하나씩 늘고, 캐시는 바이트가 아니라 라인 단위로 움직인다.",
+        tags: ["캐시"],
+      },
+      {
+        slug: "alignment",
+        title: "정렬과 패딩",
+        summary: "구조체 크기가 필드 합보다 큰 이유. 선언 순서를 바꾸면 빈틈이 줄어든다.",
+        tags: ["메모리 배치"],
+      },
+      {
+        slug: "logical-hybrid-cores",
+        title: "논리 코어와 하이브리드 코어",
+        summary: "물리·논리·성능이 다른 코어가 저마다 다른 수를 내놓으므로 \"코어 수만큼 스레드\"가 성립하지 않는다.",
+        tags: ["멀티코어"],
+      },
+      {
+        slug: "cache-coherence",
+        title: "캐시 일관성과 false sharing",
+        importance: "핵심",
+        summary: "무효화의 단위가 변수가 아니라 라인이라서, 공유하지 않는 두 변수도 한 라인에 있으면 서로를 느리게 만든다.",
+        tags: ["캐시", "멀티코어"],
+      },
+      {
+        slug: "atomics-memory-order",
+        title: "원자적 연산과 메모리 순서",
+        importance: "핵심",
+        summary: "원자성만으로는 부족하다. 다른 스레드가 보는 순서가 내가 쓴 순서와 다를 수 있다.",
+        tags: ["멀티코어"],
+      },
+      {
+        slug: "32-64-bit",
+        title: "32비트와 64비트",
+        importance: "참고",
+        summary: "주소 공간과 레지스터는 넓어지지만, 포인터가 두 배가 되어 캐시에 들어가는 원소 수가 줄어든다.",
+        tags: ["메모리 배치"],
+      },
+      {
+        slug: "pipeline-branch-prediction",
+        title: "파이프라인과 분기 예측",
+        importance: "참고",
+        summary: "예측이 맞으면 분기는 사실상 공짜다. 비싼 것은 예측 불가능한 분기다.",
+        tags: ["CPU 실행"],
+      },
+      {
+        slug: "isa-execution",
+        title: "명령어 집합과 실행 모델",
+        importance: "참고",
+        summary: "CISC냐 RISC냐는 인코딩 이야기이고, 실제 실행은 둘 다 micro-op으로 나눠 순서를 바꿔 처리한다.",
+        tags: ["CPU 실행"],
+      },
+    ],
   },
   {
     dir: "02-operating-system",

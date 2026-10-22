@@ -87,8 +87,11 @@
     return QUIZ.filter(function (q) { return q.topic.indexOf(prefix) === 0; }).length;
   }
 
-  function badge(level) {
-    return level ? '<span class="badge badge--' + esc(level) + '">' + esc(level) + "</span>" : "";
+  // importance: "핵심" | "참고" | 생략(보통, 표시 없음)
+  function badge(importance) {
+    if (importance === "핵심") return '<span class="badge badge--core">★ 핵심</span>';
+    if (importance === "참고") return '<span class="badge badge--ref">참고</span>';
+    return "";
   }
 
   function totals() {
@@ -159,7 +162,7 @@
     var root = document.documentElement;
 
     var themeSel = document.getElementById("theme-select");
-    themeSel.value = store("theme") || "auto";
+    themeSel.value = store("theme") || "sepia";
     themeSel.addEventListener("change", function () {
       store("theme", themeSel.value);
       if (themeSel.value === "auto") root.removeAttribute("data-theme");
@@ -240,19 +243,66 @@
     );
   }
 
+  // 분야의 태그 중 실제로 쓰인 것만, 분야에 정의된 순서대로 돌려준다.
+  function usedTags(cat) {
+    var tags = cat.tags || [];
+    if (tags.length >= 10) console.warn("[catalog] " + cat.dir + " 의 태그가 " + tags.length + "개입니다. 10개 미만으로 유지하세요.");
+    cat.topics.forEach(function (t) {
+      (t.tags || []).forEach(function (tag) {
+        if (tags.indexOf(tag) === -1) console.warn("[catalog] " + cat.dir + "/" + t.slug + " 의 태그 '" + tag + "' 가 분야 tags 에 없습니다.");
+      });
+    });
+    return tags.filter(function (tag) {
+      return cat.topics.some(function (t) { return (t.tags || []).indexOf(tag) !== -1; });
+    });
+  }
+
+  function tagHref(cat, tag) {
+    return catHref(cat) + "?tag=" + encodeURIComponent(tag);
+  }
+
   function renderCategory(main, cat) {
-    var list;
-    if (cat.topics.length) {
-      list =
-        '<div class="table-scroll"><table><thead><tr><th>문서</th><th>단계</th><th>요약</th><th class="num">문항</th></tr></thead><tbody>' +
-        cat.topics.map(function (t) {
-          return (
-            '<tr><td><a href="' + topicHref(cat, t) + '">' + esc(t.title) + "</a></td><td>" + badge(t.level) +
-            "</td><td>" + esc(t.summary || "") + '</td><td class="num">' + questionsOf(topicId(cat, t)).length + "</td></tr>"
-          );
-        }).join("") +
-        "</tbody></table></div>";
-    } else {
+    var list = "";
+    // 핵심 · 보통은 한 목록에, 참고는 아래 별도 섹션으로 나눈다.
+    var regular = cat.topics.filter(function (t) { return t.importance !== "참고"; });
+    var refs = cat.topics.filter(function (t) { return t.importance === "참고"; });
+    var tags = usedTags(cat);
+
+    function row(t, isRef) {
+      var cls = !isRef && t.importance === "핵심" ? ' class="is-core"' : "";
+      return (
+        "<li" + cls + ' data-tags="' + esc((t.tags || []).join("|")) + '"><a href="' + topicHref(cat, t) + '">' +
+          '<span class="tlist__title">' + esc(t.title) + (isRef ? "" : " " + badge(t.importance)) + "</span>" +
+          '<span class="tlist__n">문항 ' + questionsOf(topicId(cat, t)).length + "</span>" +
+          (!isRef && t.summary ? '<span class="tlist__sum">' + esc(t.summary) + "</span>" : "") +
+        "</a></li>"
+      );
+    }
+
+    if (tags.length) {
+      list +=
+        '<div class="tagbar" role="group" aria-label="태그로 거르기">' +
+          '<button type="button" class="tag is-on" data-tag="">전체 <span>' + cat.topics.length + "</span></button>" +
+          tags.map(function (tag) {
+            var n = cat.topics.filter(function (t) { return (t.tags || []).indexOf(tag) !== -1; }).length;
+            return '<button type="button" class="tag" data-tag="' + esc(tag) + '"># ' + esc(tag) + " <span>" + n + "</span></button>";
+          }).join("") +
+        "</div>";
+    }
+    if (regular.length) {
+      list +=
+        '<div class="legend"><span>' + badge("핵심") + " 면접에서 주로 다룬다</span><span>표시 없음 · 보통</span></div>" +
+        '<ul class="tlist">' + regular.map(function (t) { return row(t, false); }).join("") + "</ul>";
+    }
+    if (refs.length) {
+      list +=
+        '<section class="ref-section">' +
+          '<h2 class="ref-title">참고</h2>' +
+          '<p class="doc-desc">알아두면 좋지만 면접이나 실무에 꼭 필요하지는 않은 내용이다.</p>' +
+          '<ul class="tlist tlist--ref">' + refs.map(function (t) { return row(t, true); }).join("") + "</ul>" +
+        "</section>";
+    }
+    if (!cat.topics.length) {
       list =
         '<div class="empty">아직 등록된 문서가 없습니다.<br>' +
         "<code>templates/topic.html</code>을 <code>" + esc(cat.dir) + "/</code>에 복사하고 " +
@@ -265,6 +315,44 @@
       '<p class="doc-desc">' + esc(cat.desc) + "</p>" +
       list
     );
+
+    if (tags.length) bindTagFilter(main, tags);
+  }
+
+  function bindTagFilter(main, tags) {
+    var bar = main.querySelector(".tagbar");
+
+    function apply(tag) {
+      bar.querySelectorAll(".tag").forEach(function (b) {
+        b.classList.toggle("is-on", b.getAttribute("data-tag") === tag);
+      });
+      main.querySelectorAll(".tlist li").forEach(function (li) {
+        li.hidden = !!tag && li.getAttribute("data-tags").split("|").indexOf(tag) === -1;
+      });
+      // 걸러진 결과가 없는 목록 · 섹션은 통째로 숨긴다.
+      main.querySelectorAll(".tlist").forEach(function (ul) {
+        var any = ul.querySelector("li:not([hidden])");
+        ul.hidden = !any;
+        var legend = ul.previousElementSibling;
+        if (legend && legend.classList.contains("legend")) legend.hidden = !any;
+      });
+      var ref = main.querySelector(".ref-section");
+      if (ref) ref.hidden = !ref.querySelector("li:not([hidden])");
+      try {
+        history.replaceState(null, "", location.pathname + (tag ? "?tag=" + encodeURIComponent(tag) : "") + location.hash);
+      } catch (e) { /* file:// 등에서 막히면 주소만 안 바뀐다 */ }
+    }
+
+    bar.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest(".tag");
+      if (!b) return;
+      var tag = b.getAttribute("data-tag");
+      apply(b.classList.contains("is-on") ? "" : tag);
+    });
+
+    var initial = "";
+    try { initial = new URLSearchParams(location.search).get("tag") || ""; } catch (e) {}
+    if (tags.indexOf(initial) !== -1) apply(initial);
   }
 
   function renderTopic(main, found, id) {
@@ -279,22 +367,37 @@
     var cat = found.cat, t = found.topic;
     document.title = t.title + " · " + cat.title + " · " + SITE;
 
-    // h2 에 id 를 붙이고 목차를 만든다.
-    var heads = body ? body.querySelectorAll("h2") : [];
+    // h2 · h3 에 id 를 붙이고 2단 목차를 만든다.
+    var heads = body ? body.querySelectorAll("h2, h3") : [];
     var toc = "";
     if (heads.length > 1) {
-      toc = '<nav class="toc"><strong>목차</strong><ol>' +
-        Array.prototype.map.call(heads, function (h, i) {
-          if (!h.id) h.id = "s" + (i + 1);
-          return '<li><a href="#' + h.id + '">' + esc(h.textContent) + "</a></li>";
-        }).join("") + "</ol></nav>";
+      var html = "", open = false;
+      Array.prototype.forEach.call(heads, function (h, i) {
+        if (!h.id) h.id = "s" + (i + 1);
+        var item = '<a href="#' + h.id + '">' + esc(h.textContent) + "</a>";
+        if (h.tagName === "H3") {
+          if (!open) { html += "<ol>"; open = true; }
+          html += "<li>" + item + "</li>";
+        } else {
+          if (open) { html += "</ol>"; open = false; }
+          html += (i ? "</li>" : "") + "<li>" + item;
+        }
+      });
+      if (open) html += "</ol>";
+      if (questionsOf(id).length) html += '</li><li><a href="#questions">점검 문항</a>';
+      toc = '<nav class="toc"><strong>목차</strong><ol>' + html + "</li></ol></nav>";
     }
 
     main.insertAdjacentHTML(
       "afterbegin",
       '<div class="crumbs"><a href="' + ROOT + 'index.html">' + SITE + '</a><span>/</span><a href="' + catHref(cat) + '">' +
         esc(cat.title) + "</a></div>" +
-      '<h1 class="doc-title">' + esc(t.title) + " " + badge(t.level) + "</h1>" +
+      '<h1 class="doc-title">' + esc(t.title) + " " + badge(t.importance) + "</h1>" +
+      (t.tags && t.tags.length
+        ? '<div class="tagbar tagbar--doc">' + t.tags.map(function (tag) {
+            return '<a class="tag" href="' + tagHref(cat, tag) + '"># ' + esc(tag) + "</a>";
+          }).join("") + "</div>"
+        : "") +
       (t.summary ? '<p class="doc-desc">' + esc(t.summary) + "</p>" : "") +
       toc
     );

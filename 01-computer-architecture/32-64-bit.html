@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>32비트와 64비트 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="01-computer-architecture/32-64-bit">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="memory-hierarchy.html">메모리 계층과 캐시</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      "64비트"라고 한 단어로 부르지만, <strong>주소 공간 · 범용 레지스터 폭 · 포인터 크기</strong>가 함께 움직일 뿐 셋은 서로 다른 값이다.
+    </p>
+    <p>
+      64비트가 되면 주소 공간과 레지스터는 넓어진다. 대신 포인터가 <span class="blank">두 배(8바이트)</span>가 되어, 캐시 라인 하나에 들어가는 포인터 수가 절반으로 줄어든다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>무엇이 넓어지고 무엇이 커지나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>항목</th><th>32비트</th><th>64비트</th></tr></thead>
+        <tbody>
+          <tr><td>가상 주소 공간</td><td>4GB (2<sup>32</sup>)</td><td>48비트 canonical 주소 = 256TB</td></tr>
+          <tr><td>프로세스가 쓰는 유저 공간</td><td>보통 2~3GB (64비트 OS 위의 32비트 프로세스는 최대 4GB)</td><td>약 128TB. 사실상 제약이 없다</td></tr>
+          <tr><td>포인터 크기</td><td>4바이트</td><td>8바이트</td></tr>
+          <tr><td>범용 레지스터</td><td>8개</td><td>16개</td></tr>
+          <tr><td>포인터 정렬</td><td>4바이트</td><td>8바이트</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      표의 값은 x86 계열 기준이다. 64비트라도 지금 CPU는 주소의 하위 48비트만 쓴다. 주소 공간은 위아래 두 영역으로 나뉘어 커널이 한쪽을 쓰므로, 프로세스가 쓰는 것은 256TB의 절반이다.
+      일부 최신 서버 CPU는 페이지 테이블을 한 단계 더 두어(5단계 페이징) 57비트까지 넓히므로, 이 값도 고정된 것이 아니다.
+    </p>
+    <p>
+      레지스터 수와 호출 규약은 아키텍처와 OS마다 다르다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>환경</th><th class="num">범용 레지스터</th><th>레지스터로 넘기는 정수 인자</th></tr></thead>
+        <tbody>
+          <tr><td>x86 32비트 (cdecl)</td><td class="num">8</td><td>없음. 전부 스택</td></tr>
+          <tr><td>x86-64 Windows</td><td class="num">16</td><td>4개</td></tr>
+          <tr><td>x86-64 Linux·macOS (System V)</td><td class="num">16</td><td>6개</td></tr>
+          <tr><td>ARM64</td><td class="num">31</td><td>8개</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>넓어져서 좋아지는 것</h3>
+    <ul>
+      <li><strong>4GB 벽이 사라진다.</strong> 물리 메모리가 남아 있는데 주소 공간이 먼저 바닥나는 일이 없어진다.</li>
+      <li><strong>함수 인자가 레지스터로 넘어간다.</strong> 레지스터가 두 배라 기본 호출 규약이 인자를 레지스터로 넘기고, 스택 접근이 줄어든다.</li>
+      <li><strong>64비트 정수 연산이 한 명령으로 끝난다.</strong> 32비트에서는 <code>long</code>(C#)·<code>int64_t</code> 덧셈 하나가 명령 두 개로 쪼개진다.</li>
+      <li><strong>SSE2가 기본이다.</strong> x86-64는 SSE2를 보장하므로 부동소수점 연산에 오래된 x87 대신 SSE를 쓴다.</li>
+    </ul>
+
+    <h3>대신 포인터가 캐시를 더 차지한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 850 150" role="img" aria-label="캐시 라인 64바이트에 32비트 포인터는 16개, 64비트 포인터는 8개 들어간다">
+      <text class="f-text" x="138" y="51" text-anchor="end">32비트 포인터</text>
+      <rect class="f-hit" x="150" y="30" width="40" height="32"/><text class="f-sub" x="170" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="190" y="30" width="40" height="32"/><text class="f-sub" x="210" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="230" y="30" width="40" height="32"/><text class="f-sub" x="250" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="270" y="30" width="40" height="32"/><text class="f-sub" x="290" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="310" y="30" width="40" height="32"/><text class="f-sub" x="330" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="350" y="30" width="40" height="32"/><text class="f-sub" x="370" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="390" y="30" width="40" height="32"/><text class="f-sub" x="410" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="430" y="30" width="40" height="32"/><text class="f-sub" x="450" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="470" y="30" width="40" height="32"/><text class="f-sub" x="490" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="510" y="30" width="40" height="32"/><text class="f-sub" x="530" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="550" y="30" width="40" height="32"/><text class="f-sub" x="570" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="590" y="30" width="40" height="32"/><text class="f-sub" x="610" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="630" y="30" width="40" height="32"/><text class="f-sub" x="650" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="670" y="30" width="40" height="32"/><text class="f-sub" x="690" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="710" y="30" width="40" height="32"/><text class="f-sub" x="730" y="50" text-anchor="middle">p</text>
+      <rect class="f-hit" x="750" y="30" width="40" height="32"/><text class="f-sub" x="770" y="50" text-anchor="middle">p</text>
+      <text class="f-strong" x="802" y="51">16개</text>
+      <text class="f-text" x="138" y="107" text-anchor="end">64비트 포인터</text>
+      <rect class="f-hit" x="150" y="86" width="80" height="32"/><text class="f-sub" x="190" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="230" y="86" width="80" height="32"/><text class="f-sub" x="270" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="310" y="86" width="80" height="32"/><text class="f-sub" x="350" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="390" y="86" width="80" height="32"/><text class="f-sub" x="430" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="470" y="86" width="80" height="32"/><text class="f-sub" x="510" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="550" y="86" width="80" height="32"/><text class="f-sub" x="590" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="630" y="86" width="80" height="32"/><text class="f-sub" x="670" y="106" text-anchor="middle">p</text>
+      <rect class="f-hit" x="710" y="86" width="80" height="32"/><text class="f-sub" x="750" y="106" text-anchor="middle">p</text>
+      <text class="f-strong" x="802" y="107">8개</text>
+      <path class="f-line" d="M152 27 V21 H788 V27"/><text class="f-sub" x="470" y="14" text-anchor="middle">캐시 라인 64바이트</text>
+      </svg>
+      <figcaption>같은 라인 하나를 가져와도 따라갈 수 있는 참조 수가 절반이다. 포인터가 많은 자료구조일수록 이 손해가 이득을 잠식한다.</figcaption>
+    </figure>
+    <p>
+      포인터가 두 배가 되면서 참조가 많은 자료구조(트리, 연결 리스트, 객체 그래프)는 같은 데이터를 담는 데 메모리를 더 쓴다.
+      캐시 라인에 들어가는 원소 수가 줄어 캐시 효율이 떨어지고, 포인터의 정렬 요구가 커진 만큼 <a href="alignment.html">구조체 패딩</a>도 늘어난다.
+    </p>
+    <p>
+      32/64비트는 <a href="memory-hierarchy.html">캐시 라인 크기</a>와는 관계가 없다. 라인은 그대로 64바이트고, 그 안에 들어가는 원소가 커진 것이다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <p>
+      <strong>64비트가 언제나 빠른 것은 아니다.</strong> 레지스터와 호출 규약 덕분에 대부분의 코드는 빨라지지만, 포인터 밀도가 높은 워크로드는 캐시 손해가 이득보다 클 수 있다.
+    </p>
+    <p>
+      그래서 "64비트 레지스터 + 32비트 포인터"를 노린 절충이 나왔다. JVM의 <strong>compressed oops</strong>는 힙이 약 32GB 이하일 때 객체 참조를 32비트로 저장한다. Linux의 <strong>x32 ABI</strong>는 64비트 모드에서 포인터만 32비트로 쓴다.
+      대신 포인터가 좁아진 만큼 다룰 수 있는 메모리에 상한이 생긴다. x32 ABI는 실제로는 거의 쓰이지 않는다.
+    </p>
+    <p>새로 만드는 서버라면 고민할 것 없이 64비트로 빌드한다. 판단할 일은 포인터 밀도가 높은 자료구조를 값 배열로 바꿀지다.</p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>.NET의 "32비트 선호" 설정을 확인한다.</strong>
+        .NET Framework 프로젝트의 AnyCPU 빌드에는 "32비트 선호(Prefer 32-bit)" 옵션이 있다. 이 옵션이 켜져 있으면 64비트 OS에서도 32비트 프로세스로 뜬다.
+        그러면 메모리가 넉넉한 서버에서 OutOfMemoryException이 난다. 시작할 때 <code>Environment.Is64BitProcess</code>를 로그로 남겨 두면 바로 확인할 수 있다.
+      </li>
+      <li>
+        <strong>C# 객체는 64비트에서 커진다.</strong>
+        참조가 8바이트가 되고, 객체 헤더(동기화 블록 + 타입 포인터)도 8바이트에서 16바이트가 된다. 작은 객체를 대량으로 만드는 서버에서는 이 차이가 메모리 사용량과 GC 부담으로 그대로 드러난다.
+        작은 데이터를 <code>struct</code> 배열로 두는 것이 효과가 큰 이유 중 하나다.
+      </li>
+      <li>
+        <strong>C#의 정수 크기는 플랫폼과 무관하다.</strong>
+        C#의 <code>int</code>는 항상 32비트, <code>long</code>은 항상 64비트다. 플랫폼에 따라 달라지는 것은 <code>IntPtr</code>/<code>nint</code>뿐이다.
+        아래 주의 사항의 data model 문제는 C/C++로 작성된 네이티브 라이브러리를 P/Invoke로 부를 때 다시 나온다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <p><strong>C/C++의 data model이 플랫폼마다 다르다.</strong></p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>모델</th><th class="num">int</th><th class="num">long</th><th class="num">포인터</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>ILP32</td><td class="num">32</td><td class="num">32</td><td class="num">32</td><td>32비트 전반</td></tr>
+          <tr><td>LP64</td><td class="num">32</td><td class="num">64</td><td class="num">64</td><td>Linux · macOS 64비트</td></tr>
+          <tr><td>LLP64</td><td class="num">32</td><td class="num">32</td><td class="num">64</td><td>Windows 64비트</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>
+        <code>long</code>에 포인터를 담는 코드는 Linux에서는 돌아가지만 <span class="blank">Windows 64비트</span>에서는 상위 32비트가 잘려 깨진다.
+        포인터를 정수로 담아야 하면 <code>intptr_t</code>/<code>uintptr_t</code>(C#은 <code>nint</code>/<code>IntPtr</code>)를 쓰고, 고정 폭이 필요하면 <code>int32_t</code>/<code>int64_t</code>를 쓴다.
+      </li>
+      <li>
+        P/Invoke 선언에서 네이티브 <code>long</code>을 C# <code>long</code>으로 옮기면 Windows에서 크기가 어긋난다. Windows의 네이티브 <code>long</code>은 C# <code>int</code>에 해당한다.
+      </li>
+      <li>
+        포인터 크기는 설치된 RAM이 아니라 <strong>빌드 대상 아키텍처</strong>가 정한다. 같은 64비트 OS에서도 32비트로 빌드한 프로세스의 포인터는 4바이트다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

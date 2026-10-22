@@ -41,9 +41,10 @@
           '<div class="btn-row" style="margin-top:8px"><button type="button" class="btn" data-all="1">전체 선택</button>' +
           '<button type="button" class="btn" data-all="0">전체 해제</button></div>' +
         "</fieldset>" +
-        "<fieldset><legend>단계</legend><div class=\"chips\">" +
-          '<label><input type="checkbox" name="level" value="기초" checked> 기초</label>' +
-          '<label><input type="checkbox" name="level" value="심화" checked> 심화</label>' +
+        "<fieldset><legend>중요도</legend><div class=\"chips\">" +
+          '<label><input type="checkbox" name="importance" value="핵심" checked> ★ 핵심</label>' +
+          '<label><input type="checkbox" name="importance" value="보통" checked> 보통</label>' +
+          '<label><input type="checkbox" name="importance" value="참고" checked> 참고</label>' +
         "</div></fieldset>" +
         "<fieldset><legend>문항 수</legend><div class=\"chips\">" +
           '<label><input type="radio" name="size" value="10" checked> 10</label>' +
@@ -67,9 +68,9 @@
     }
 
     function selection() {
-      var cats = checked("cat"), levels = checked("level");
+      var cats = checked("cat"), picked = checked("importance");
       return pool.filter(function (p) {
-        return cats.indexOf(p.cat.dir) !== -1 && levels.indexOf(p.topic.level) !== -1;
+        return cats.indexOf(p.cat.dir) !== -1 && picked.indexOf(p.topic.importance || "보통") !== -1;
       });
     }
 

@@ -316,8 +316,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   vertical-align: middle;
   white-space: nowrap;
 }
-.badge--기초 { color: var(--base); }
-.badge--심화 { color: var(--deep); }
+.badge--core { color: var(--accent); background: var(--accent-soft); }
+.badge--ref { color: var(--text-2); border-style: dashed; }
 
 .toc {
   background: var(--surface);
@@ -329,9 +329,111 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 }
 .toc strong { display: block; margin-bottom: 4px; color: var(--text-2); font-size: 12px; }
 .toc ol { margin: 0; padding-left: 20px; }
+.toc ol ol { padding-left: 18px; font-size: 13px; }
 
-/* 출처 섹션은 작게 */
-.sources { font-size: 14px; color: var(--text-2); }
+/* 카테고리 페이지의 문서 목록 */
+.tlist { list-style: none; margin: 8px 0 0; padding: 0; border-top: 1px solid var(--border); }
+.tlist li { border-bottom: 1px solid var(--border); }
+.tlist a {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 16px;
+  padding: 14px 12px;
+  color: var(--text);
+}
+.tlist a:hover { background: var(--surface); text-decoration: none; }
+.tlist li.is-core { background: var(--accent-soft); }
+.tlist li.is-core a:hover { background: transparent; }
+
+.ref-title {
+  font-size: 20px;
+  margin: 48px 0 4px;
+  padding-top: 20px;
+  border-top: 2px dashed var(--border);
+}
+.ref-title + .doc-desc { font-size: 14px; margin-bottom: 8px; }
+.tlist--ref .tlist__title { font-size: 16px; font-weight: 600; }
+.tlist--ref a { padding-block: 10px; }
+
+/* 태그 칩 */
+.tagbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tag span { font-size: 12px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.tag:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.tag.is-on { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tagbar--doc { margin: -2px 0 12px; }
+.tagbar--doc .tag { font-size: 12px; padding: 4px 9px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--text-2); margin: 0 0 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.tlist__title { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tlist a:hover .tlist__title { color: var(--accent); }
+.tlist__sum { grid-column: 1; color: var(--text-2); font-size: 14px; }
+.tlist__n {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 그림: <figure class="fig"><svg>…</svg><figcaption>…</figcaption></figure>
+   SVG 안에서는 아래 f-* 클래스로 색을 지정해 테마를 따라가게 한다. */
+.fig {
+  margin: 20px 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+.fig svg { display: block; width: 100%; min-width: 560px; height: auto; font-family: var(--font-sans); }
+.fig figcaption { margin-top: 10px; font-size: 14px; color: var(--text-2); }
+.f-cell { fill: var(--surface-2); stroke: var(--border); }
+.f-cell2 { fill: var(--surface); stroke: var(--border); }
+.f-hit { fill: var(--accent-soft); stroke: var(--accent); }
+.f-miss { fill: var(--accent); stroke: var(--accent); }
+.f-line { fill: none; stroke: var(--text-2); stroke-width: 1; }
+.f-text { fill: var(--text); font-size: 13px; }
+.f-strong { fill: var(--accent); font-size: 13px; font-weight: 700; }
+.f-sub { fill: var(--text-2); font-size: 12px; }
+.f-box { fill: var(--surface-2); stroke: var(--border); }
+.f-bar { fill: var(--accent-soft); stroke: var(--accent); }
+.f-grid { stroke: var(--border); stroke-dasharray: 2 3; }
+.f-head { fill: var(--text-2); }
+.f-pad { fill: none; stroke: var(--text-2); stroke-dasharray: 3 3; }
+.f-tick { stroke: var(--accent); stroke-width: 1; }
+.f-barrier { stroke: var(--accent); stroke-width: 3; }
+.f-dash { stroke-dasharray: 4 3; }
+.f-x { fill: var(--bad); font-size: 20px; font-weight: 700; }
+.f-on { fill: var(--surface); font-size: 13px; font-weight: 700; }
+.f-head-accent { fill: var(--accent); }
+.f-inval { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
+
+/* 문서 맨 위 "먼저 읽을 것" */
+.prereq {
+  font-size: 14px;
+  color: var(--text-2);
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
 
 /* 이전/다음 */
 .pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 56px; }

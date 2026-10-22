@@ -12,10 +12,10 @@
   주제 문서 템플릿
   1. 이 파일을 <분야 폴더>/<slug>.html 로 복사한다. 예: 02-operating-system/process-thread.html
   2. 아래 data-topic 을 "<분야 폴더>/<slug>" 로 바꾼다.
-  3. assets/catalog.js 의 해당 분야 topics 에 { slug, title, level, summary } 를 추가한다.
+  3. assets/catalog.js 의 해당 분야 topics 에 { slug, title, importance, summary, tags } 를 추가한다.
 
   제목 · 단계 배지 · 요약 · 목차 · 점검 문항 · 이전/다음 링크는 자동으로 붙는다.
-  여기에는 본문만 쓴다.
+  여기에는 본문만 쓴다. 면접·필기 문항은 assets/quiz-data.js 에 쓰면 문서 끝에 "점검 문항"으로 붙는다.
 
   쓸 수 있는 것
   - <span class="blank">핵심어</span> : 학습 모드에서 가려지고 클릭하면 보인다.
@@ -26,24 +26,26 @@
 <body data-page="topic" data-topic="00-category/slug">
   <article class="doc-body">
 
-    <h2>한 줄 정의</h2>
+    <h2>핵심 요약</h2>
+    <p><!-- 한두 문단으로 이 개념이 무엇이고 왜 중요한지. 종류가 나뉘면 표로 --></p>
+
+    <h2>동작 원리</h2>
+    <!-- h3 소제목으로 나눠도 된다(목차에 함께 나온다). 그림은 아래처럼:
+    <figure class="fig">
+      <svg viewBox="0 0 720 150">...  f-cell / f-hit / f-miss / f-text / f-sub / f-line 클래스로 색 지정</svg>
+      <figcaption>그림 설명</figcaption>
+    </figure>
+    -->
     <p></p>
 
-    <h2>왜 필요한가</h2>
-    <p><!-- 이 개념이 없으면 어떤 문제가 생기는지 --></p>
-
-    <h2>어떻게 동작하는가</h2>
-    <p></p>
+    <!-- 토픽에 맞게 필요한 섹션을 넣는다. 예: 선택 기준, 비교, 구현 방식 -->
 
     <h2>게임 서버에서는</h2>
     <p><!-- 실제로 이어지는 버그 · 설계 결정 · 성능 문제 --></p>
 
-    <h2>심화</h2>
-    <p></p>
-
-    <h2>출처</h2>
-    <ul class="sources">
-      <li><!-- 공식 문서, RFC, 표준 스펙 등 1차 자료 --></li>
+    <h2>주의 사항</h2>
+    <ul>
+      <li></li>
     </ul>
 
   </article>

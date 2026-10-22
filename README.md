@@ -63,7 +63,7 @@ ServerDevWiki/
 
 1. `templates/topic.html`을 `<분야 폴더>/<slug>.html`로 복사한다.
 2. 복사한 파일의 `data-topic`을 `"<분야 폴더>/<slug>"`로 바꾸고 본문을 쓴다.
-3. `assets/catalog.js`의 해당 분야 `topics`에 `{ slug, title, level, summary }`를 추가한다.
+3. `assets/catalog.js`의 해당 분야 `topics`에 `{ slug, title, importance, summary, tags }`를 추가한다. `importance`는 `"핵심"`(면접 단골), 생략(보통), `"참고"`(알아두면 좋은 정도) 중 하나다. `tags`는 그 분야의 `tags` 목록(분야당 10개 미만)에서 고른다.
 4. 점검 문항은 `assets/quiz-data.js`에 `{ topic, q, a }`로 추가한다.
 
 본문에서 `<span class="blank">핵심어</span>`로 감싼 부분은 학습 모드에서 가려지고, 클릭하면 드러납니다.
@@ -74,7 +74,3 @@ ServerDevWiki/
 2. **"왜"를 먼저, "어떻게"는 그다음** — 메커니즘의 이유를 이해해야 응용이 가능하다.
 3. **실무 사례와 반드시 연결한다** — 추상적인 이론으로 끝내지 않고, 실제로 어떤 버그/설계 결정과 이어지는지 남긴다.
 4. **계속 고쳐 쓴다** — 한 번 쓰고 끝나는 문서가 아니라, 이해가 깊어질 때마다 갱신한다.
-
-## 라이선스
-
-개인 학습 기록이지만, 내용 자체는 [MIT License](LICENSE)로 공개합니다. 틀린 부분을 발견하셨다면 이슈로 알려주세요.

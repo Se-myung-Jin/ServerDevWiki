@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>논리 코어와 하이브리드 코어 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="01-computer-architecture/logical-hybrid-cores">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="memory-hierarchy.html">메모리 계층과 캐시</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      "코어 수"는 <strong>물리 코어</strong>, SMT로 늘어난 <strong>논리 코어</strong>, 성능이 다른 <strong>P-core와 E-core</strong> 중 무엇을 가리키느냐에 따라 달라진다. 셋은 서로 다른 값이다.
+    </p>
+    <p>
+      그래서 "코어 수만큼 스레드를 만든다"는 규칙이 그대로 성립하지 않는다. 같은 CPU가 어느 쪽을 세느냐에 따라 8이 되기도 16이 되기도 하고, 하이브리드라면 그중 일부는 나머지보다 느리다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>SMT는 코어를 늘리지 않고, 비어 있는 실행 유닛을 다른 스레드가 쓰게 한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="P-core는 논리 스레드 둘이 실행 유닛과 캐시를 공유하고, E-core는 스레드 하나에 실행 유닛과 캐시가 더 작다">
+      <rect class="f-cell2" x="20" y="10" width="320" height="210" rx="10"/>
+      <text class="f-text" x="36" y="34">P-core · 물리 코어 1개</text>
+      <rect class="f-hit" x="36" y="48" width="136" height="46" rx="6"/><text class="f-strong" x="104" y="68" text-anchor="middle">논리 스레드 0</text><text class="f-sub" x="104" y="85" text-anchor="middle">레지스터 따로</text>
+      <rect class="f-hit" x="188" y="48" width="136" height="46" rx="6"/><text class="f-strong" x="256" y="68" text-anchor="middle">논리 스레드 1</text><text class="f-sub" x="256" y="85" text-anchor="middle">레지스터 따로</text>
+      <rect class="f-box" x="36" y="110" width="288" height="40" rx="6"/><text class="f-text" x="180" y="135" text-anchor="middle">실행 유닛 (두 스레드가 공유)</text>
+      <rect class="f-box" x="36" y="162" width="288" height="40" rx="6"/><text class="f-text" x="180" y="187" text-anchor="middle">L1 · L2 캐시 (공유)</text>
+      <rect class="f-cell2" x="380" y="10" width="320" height="210" rx="10"/>
+      <text class="f-text" x="396" y="34">E-core · 물리 코어 1개</text>
+      <rect class="f-hit" x="396" y="48" width="136" height="46" rx="6"/><text class="f-strong" x="464" y="68" text-anchor="middle">논리 스레드 </text><text class="f-sub" x="464" y="85" text-anchor="middle">레지스터 따로</text>
+      <rect class="f-box" x="396" y="110" width="180" height="40" rx="6"/><text class="f-text" x="486" y="135" text-anchor="middle">실행 유닛 (더 좁다)</text>
+      <rect class="f-box" x="396" y="162" width="140" height="40" rx="6"/><text class="f-text" x="466" y="187" text-anchor="middle">캐시 (더 작다)</text>
+      </svg>
+      <figcaption>같은 "코어 1개"인데 담는 스레드 수도, 스레드 하나가 받는 처리량도 다르다. 구성은 세대·모델마다 다르다. 예를 들어 Intel의 최신 일부 데스크톱·노트북 CPU는 P-core에서도 SMT를 뺐다.</figcaption>
+    </figure>
+    <p>
+      SMT(Intel은 Hyper-Threading이라 부른다)는 한 물리 코어 안에 <strong>아키텍처 상태(레지스터 등)를 스레드마다 따로</strong> 둔다.
+      그래서 한 스레드의 명령이 메모리를 기다리며 멈춰 있어도, 다른 스레드의 명령을 같은 실행 유닛으로 내보낼 수 있다. OS는 이 두 스레드를 각각 하나의 CPU로 본다.
+    </p>
+    <p>
+      공유하는 것은 실행 유닛만이 아니다. <strong>L1·L2 캐시, TLB, 분기 예측기</strong>도 함께 쓰고, 일부 내부 버퍼는 두 스레드가 반씩 나눠 쓴다.
+      그래서 한쪽 스레드가 이 자원을 많이 쓰면 다른 쪽도 같이 느려진다.
+    </p>
+    <p>
+      이득의 크기는 워크로드가 실행 유닛을 얼마나 비워 두느냐가 정한다. 메모리 대기가 잦으면 비는 구간이 많아 이득이 크다.
+      실행 유닛을 이미 꽉 채우는 연산 위주의 작업이면 두 스레드가 서로 밀어내기만 해서 이득이 거의 없거나 오히려 손해다.
+    </p>
+
+    <h3>하이브리드에서는 같은 코드가 어디서 실행되느냐로 속도가 달라진다</h3>
+    <p>
+      P-core(성능 코어)와 E-core(효율 코어)는 한 클럭당 처리하는 명령 수(IPC)도, 클럭도, 캐시 크기도 다르다.
+      OS 스케줄러가 스레드를 다른 종류의 코어로 옮기면 같은 일이 다른 속도로 실행된다.
+    </p>
+    <p>
+      어디에 둘지는 OS 혼자 정하지 않는다. Intel의 Thread Director처럼 CPU 안의 장치가 스레드가 어떤 명령을 얼마나 쓰는지 관찰해 OS에 힌트를 준다.
+      그래서 같은 프로그램이 실행 도중에도 코어를 옮겨 다니고, 측정할 때 코어를 고정하지 않으면 실행할 때마다 결과가 달라진다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>논리 코어 수는 처리량의 기준이 아니다</h3>
+    <p>
+      .NET의 <code>Environment.ProcessorCount</code>는 <strong>논리 코어 수</strong>를 돌려준다. 이 값으로 작업 스레드 수를 잡으면 SMT로 부풀려진 수를 쓰게 되고, 하이브리드라면 그중 일부가 느린 코어에서 실행된다.
+    </p>
+    <p>
+      이 값이 무엇을 반영하는지도 버전마다 다르다. .NET 6부터는 Windows에서도 프로세스 affinity와 CPU 사용 제한(컨테이너, Job Object)을 반영한다. Linux에서는 그 전부터 cgroup 제한을 반영했다.
+      .NET 5 이전의 Windows에서는 둘을 무시하고 머신 전체의 논리 코어 수를 돌려줬다. 필요하면 <code>DOTNET_PROCESSOR_COUNT</code> 환경 변수로 값을 직접 지정할 수 있다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>작업 성격</th><th>스레드 수 출발점</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>CPU를 계속 쓰는 계산</td><td>물리 코어 수에서 시작해 논리 코어 수까지 재 본다</td><td>SMT 이득이 작거나 없을 수 있다</td></tr>
+          <tr><td>대기가 잦은 작업(IO, 락, 메모리 대기)</td><td>논리 코어 수 이상도 가능</td><td>대기 중에는 코어를 쓰지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>어느 쪽인지는 워크로드가 정하지 코어 수가 정하지 않는다. 숫자는 출발점이고, 결론은 측정으로 낸다.</p>
+
+    <h3>affinity를 고정하지 않은 수치는 비교에 쓸 수 없다</h3>
+    <p>
+      측정에서는 변동이 곧 오염이다. 어느 코어에서 실행할지를 고정하고(Linux <code>taskset</code>, Windows <code>start /affinity</code>, BenchmarkDotNet의 affinity 설정), 고정이 실패하면 조용히 넘어가지 않고 드러나게 한다.
+    </p>
+    <p>
+      대신 고정한 환경은 실제 운영 환경과 달라진다. 측정용 설정이지 배포용 설정이 아니다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>클라우드의 vCPU는 대개 논리 코어다.</strong>
+        x86 기반 클라우드 인스턴스에서 vCPU 하나는 보통 SMT 스레드 하나라서, "4 vCPU"는 물리 코어 2개에 해당하는 경우가 많다. ARM 기반 인스턴스(AWS Graviton 등)는 vCPU 하나가 물리 코어 하나다.
+        같은 vCPU 수라도 x86과 ARM 인스턴스의 계산 능력이 다르게 나오는 이유 중 하나다.
+      </li>
+      <li>
+        <strong>서버 CPU는 대부분 하이브리드가 아니다.</strong>
+        하이브리드 구성은 주로 데스크톱·노트북 CPU에 있다. 개발 PC에서 잰 벤치마크가 서버에서 다르게 나오는 원인이 될 수 있다. 성능 판단은 배포 환경과 같은 종류의 머신에서 한다.
+      </li>
+      <li>
+        <strong>컨테이너 CPU 제한이 스레드 수를 바꾼다.</strong>
+        Kubernetes에서 CPU limit을 2로 주면 .NET 6 이상에서는 <code>ProcessorCount</code>가 2가 되고, 스레드 풀과 서버 GC의 힙 수도 이 값을 따른다. 배포 설정을 바꿀 때 서버 내부 동작이 함께 바뀐다는 점을 기억한다.
+      </li>
+      <li>
+        <strong>틱 스레드의 짝 스레드를 본다.</strong>
+        싱글 스레드 게임 루프가 SMT 형제 스레드와 한 코어를 나눠 쓰면, 형제 쪽에서 무거운 작업이 돌 때 틱 시간이 흔들린다. 틱 지터가 원인 없이 생기면 같은 물리 코어에 무엇이 함께 돌고 있는지 확인한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>"코어 8개니까 스레드 8개"에서 그 8이 어느 쪽 수인지 먼저 확인한다.</strong>
+        물리 코어가 8개라도 논리 코어는 16개일 수 있고, 하이브리드라면 그 16개의 성능이 서로 다르다. 숫자만 주고받으면 어느 쪽을 말하는지 알 수 없다.
+      </li>
+      <li>
+        <strong>SMT로 늘어나는 것은 코어가 아니다.</strong>
+        실행 유닛은 그대로이고, 늘어난 것은 한 스레드가 멈춰 있을 때 다른 스레드를 실행할 여지다. 연산 능력이 두 배가 되는 것이 아니다.
+      </li>
+      <li>
+        <strong>같은 코어의 두 논리 스레드는 캐시를 나눠 쓴다.</strong>
+        각자 작업 집합이 크면 서로의 데이터를 캐시에서 밀어낸다. SMT를 켰더니 느려지는 경우의 흔한 원인이다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

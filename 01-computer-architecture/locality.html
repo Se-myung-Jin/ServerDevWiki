@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>참조 지역성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="01-computer-architecture/locality">
+  <article class="doc-body">
+
+    <h2>핵심 요약</h2>
+    <p>
+      참조 지역성은 프로그램이 <strong>방금 쓴 데이터를 곧 다시 쓰고</strong>, <strong>쓴 데이터의 이웃을 곧 이어서 쓰는</strong> 경향이다.
+      CPU와 메모리의 속도 차이를 메우는 캐시는 이 경향이 있다는 가정 위에서만 효과를 낸다.
+    </p>
+    <p>
+      지역성은 하드웨어가 보장해 주는 성질이 아니다. <span class="blank">데이터를 어떻게 배치하고 어떤 순서로 접근하느냐</span>에 따라 같은 알고리즘, 같은 빅오라도 실행 시간이 몇 배씩 벌어진다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>뜻</th><th>하드웨어가 이용하는 방식</th><th>흔한 예</th></tr></thead>
+        <tbody>
+          <tr><td>시간 지역성</td><td>같은 주소를 짧은 시간 안에 다시 접근한다</td><td>최근에 쓴 라인을 캐시에 남겨 둔다(교체 정책)</td><td>루프 카운터, 누적 변수, 반복 호출되는 함수 코드</td></tr>
+          <tr><td>공간 지역성</td><td>접근한 주소의 근처를 곧 접근한다</td><td><span class="blank">캐시 라인</span> 단위로 한꺼번에 가져온다</td><td>배열 원소, 같은 구조체의 필드</td></tr>
+          <tr><td>순차 지역성</td><td>주소가 일정한 방향과 간격으로 이어진다</td><td>하드웨어 <span class="blank">프리페처</span>가 다음 라인을 미리 가져온다</td><td>배열을 앞에서부터 순회, 명령어 순차 실행</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>순차 지역성은 공간 지역성의 특수한 경우로 묶어 두 가지로만 분류하기도 한다.</p>
+
+    <h2>동작 원리</h2>
+
+    <h3>캐시는 바이트가 아니라 라인 단위로 가져온다</h3>
+    <p>
+      CPU가 메모리에서 4바이트 정수 하나를 읽으면, 캐시는 그 값이 들어 있는 <strong>캐시 라인</strong> 전체를 가져온다.
+      x86에서 라인 크기는 보통 64바이트라서 <code>int</code> 16개가 한 번에 올라온다.
+      그래서 배열을 순서대로 읽으면 첫 원소에서만 메모리까지 가고, 나머지 15개는 캐시에서 바로 읽힌다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 150" role="img" aria-label="int 배열 32개를 순서대로 읽을 때 캐시 라인 단위 적재">
+      <path class="f-line" d="M42 34 V28 H358 V34"/>
+      <text class="f-sub" x="200" y="22" text-anchor="middle">캐시 라인 0 · 64바이트 = int 16개</text>
+      <path class="f-line" d="M362 34 V28 H678 V34"/>
+      <text class="f-sub" x="520" y="22" text-anchor="middle">캐시 라인 1</text>
+      <rect class="f-miss" x="40" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="60" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="80" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="100" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="120" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="140" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="160" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="180" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="200" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="220" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="240" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="260" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="280" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="300" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="320" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="340" y="44" width="20" height="28"/>
+      <rect class="f-miss" x="360" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="380" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="400" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="420" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="440" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="460" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="480" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="500" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="520" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="540" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="560" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="580" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="600" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="620" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="640" y="44" width="20" height="28"/>
+      <rect class="f-hit" x="660" y="44" width="20" height="28"/>
+      <text class="f-sub" x="50" y="88" text-anchor="middle">a[0]</text>
+      
+      <text class="f-sub" x="370" y="88" text-anchor="middle">a[16]</text>
+      <text class="f-sub" x="670" y="88" text-anchor="middle">a[31]</text>
+      <rect class="f-miss" x="40" y="114" width="14" height="14"/><text class="f-text" x="60" y="125">미스: 메모리에서 라인 전체를 가져온다</text>
+      <rect class="f-hit" x="330" y="114" width="14" height="14"/><text class="f-text" x="350" y="125">히트: 이미 캐시에 올라와 있다</text>
+      </svg>
+      <figcaption><code>int</code> 배열 32개를 처음부터 읽을 때. 32번 읽는 동안 메모리까지 가는 것은 두 번뿐이다. 프리페처가 순차 접근을 알아채고 라인 1을 미리 가져오면 <code>a[16]</code>도 히트가 된다.</figcaption>
+    </figure>
+    <p>
+      L1 캐시 히트는 몇 사이클이면 끝나지만, 메인 메모리까지 가면 수백 사이클이 걸린다.
+      그래서 미스 횟수가 성능을 거의 결정하고, 미스 횟수는 접근 패턴이 결정한다.
+    </p>
+
+    <h3>지역성은 코드가 만든다</h3>
+    <p>
+      C#의 2차원 배열 <code>int[,]</code>는 행 우선(row-major)으로 저장된다. 한 행의 원소가 메모리에 연달아 놓이고, 그다음 행이 이어진다.
+      같은 배열을 행 방향으로 돌면 메모리를 순서대로 읽지만, 열 방향으로 돌면 접근할 때마다 행 길이만큼 건너뛴다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 170" role="img" aria-label="행 우선으로 저장된 4x4 배열을 행 순회와 열 순회로 읽는 순서">
+      <path class="f-line" d="M112 34 V28 H252 V34"/>
+      <text class="f-sub" x="182" y="22" text-anchor="middle">행 0</text>
+      <path class="f-line" d="M256 34 V28 H396 V34"/>
+      <text class="f-sub" x="326" y="22" text-anchor="middle">행 1</text>
+      <path class="f-line" d="M400 34 V28 H540 V34"/>
+      <text class="f-sub" x="470" y="22" text-anchor="middle">행 2</text>
+      <path class="f-line" d="M544 34 V28 H684 V34"/>
+      <text class="f-sub" x="614" y="22" text-anchor="middle">행 3</text>
+      <text class="f-text" x="98" y="63" text-anchor="end">행 순회</text>
+      <rect class="f-hit" x="110" y="44" width="36" height="30"/><text class="f-strong" x="128" y="63" text-anchor="middle">1</text>
+      <rect class="f-hit" x="146" y="44" width="36" height="30"/><text class="f-strong" x="164" y="63" text-anchor="middle">2</text>
+      <rect class="f-hit" x="182" y="44" width="36" height="30"/><text class="f-strong" x="200" y="63" text-anchor="middle">3</text>
+      <rect class="f-hit" x="218" y="44" width="36" height="30"/><text class="f-strong" x="236" y="63" text-anchor="middle">4</text>
+      <rect class="f-cell2" x="254" y="44" width="36" height="30"/><text class="f-text" x="272" y="63" text-anchor="middle">5</text>
+      <rect class="f-cell2" x="290" y="44" width="36" height="30"/><text class="f-text" x="308" y="63" text-anchor="middle">6</text>
+      <rect class="f-cell2" x="326" y="44" width="36" height="30"/><text class="f-text" x="344" y="63" text-anchor="middle">7</text>
+      <rect class="f-cell2" x="362" y="44" width="36" height="30"/><text class="f-text" x="380" y="63" text-anchor="middle">8</text>
+      <rect class="f-cell" x="398" y="44" width="36" height="30"/><text class="f-text" x="416" y="63" text-anchor="middle">9</text>
+      <rect class="f-cell" x="434" y="44" width="36" height="30"/><text class="f-text" x="452" y="63" text-anchor="middle">10</text>
+      <rect class="f-cell" x="470" y="44" width="36" height="30"/><text class="f-text" x="488" y="63" text-anchor="middle">11</text>
+      <rect class="f-cell" x="506" y="44" width="36" height="30"/><text class="f-text" x="524" y="63" text-anchor="middle">12</text>
+      <rect class="f-cell2" x="542" y="44" width="36" height="30"/><text class="f-text" x="560" y="63" text-anchor="middle">13</text>
+      <rect class="f-cell2" x="578" y="44" width="36" height="30"/><text class="f-text" x="596" y="63" text-anchor="middle">14</text>
+      <rect class="f-cell2" x="614" y="44" width="36" height="30"/><text class="f-text" x="632" y="63" text-anchor="middle">15</text>
+      <rect class="f-cell2" x="650" y="44" width="36" height="30"/><text class="f-text" x="668" y="63" text-anchor="middle">16</text>
+      <text class="f-text" x="98" y="129" text-anchor="end">열 순회</text>
+      <rect class="f-hit" x="110" y="110" width="36" height="30"/><text class="f-strong" x="128" y="129" text-anchor="middle">1</text>
+      <rect class="f-cell" x="146" y="110" width="36" height="30"/><text class="f-text" x="164" y="129" text-anchor="middle">5</text>
+      <rect class="f-cell" x="182" y="110" width="36" height="30"/><text class="f-text" x="200" y="129" text-anchor="middle">9</text>
+      <rect class="f-cell" x="218" y="110" width="36" height="30"/><text class="f-text" x="236" y="129" text-anchor="middle">13</text>
+      <rect class="f-hit" x="254" y="110" width="36" height="30"/><text class="f-strong" x="272" y="129" text-anchor="middle">2</text>
+      <rect class="f-cell2" x="290" y="110" width="36" height="30"/><text class="f-text" x="308" y="129" text-anchor="middle">6</text>
+      <rect class="f-cell2" x="326" y="110" width="36" height="30"/><text class="f-text" x="344" y="129" text-anchor="middle">10</text>
+      <rect class="f-cell2" x="362" y="110" width="36" height="30"/><text class="f-text" x="380" y="129" text-anchor="middle">14</text>
+      <rect class="f-hit" x="398" y="110" width="36" height="30"/><text class="f-strong" x="416" y="129" text-anchor="middle">3</text>
+      <rect class="f-cell" x="434" y="110" width="36" height="30"/><text class="f-text" x="452" y="129" text-anchor="middle">7</text>
+      <rect class="f-cell" x="470" y="110" width="36" height="30"/><text class="f-text" x="488" y="129" text-anchor="middle">11</text>
+      <rect class="f-cell" x="506" y="110" width="36" height="30"/><text class="f-text" x="524" y="129" text-anchor="middle">15</text>
+      <rect class="f-hit" x="542" y="110" width="36" height="30"/><text class="f-strong" x="560" y="129" text-anchor="middle">4</text>
+      <rect class="f-cell2" x="578" y="110" width="36" height="30"/><text class="f-text" x="596" y="129" text-anchor="middle">8</text>
+      <rect class="f-cell2" x="614" y="110" width="36" height="30"/><text class="f-text" x="632" y="129" text-anchor="middle">12</text>
+      <rect class="f-cell2" x="650" y="110" width="36" height="30"/><text class="f-text" x="668" y="129" text-anchor="middle">16</text>
+      <text class="f-sub" x="110" y="160">메모리 주소 →</text>
+      </svg>
+      <figcaption>칸은 메모리에 놓인 순서, 숫자는 접근 순서다. 처음 네 번의 접근(강조)이 행 순회에서는 한곳에 모이고 열 순회에서는 흩어진다. 행이 수천 원소 길이라면 열 순회는 접근할 때마다 다른 캐시 라인을 건드린다.</figcaption>
+    </figure>
+<pre><code class="language-csharp">var grid = new int[Rows, Cols];
+long sum = 0;
+
+// 행 우선 순회: 메모리에 놓인 순서대로 읽는다
+for (int r = 0; r &lt; Rows; r++)
+    for (int c = 0; c &lt; Cols; c++)
+        sum += grid[r, c];
+
+// 열 우선 순회: 읽을 때마다 Cols * 4바이트씩 건너뛴다
+for (int c = 0; c &lt; Cols; c++)
+    for (int r = 0; r &lt; Rows; r++)
+        sum += grid[r, c];</code></pre>
+    <p>두 루프는 같은 원소를 같은 횟수만큼 읽는다. 차이는 루프 순서 하나뿐인데, 배열이 캐시보다 크면 열 우선 쪽이 눈에 띄게 느려진다.</p>
+
+    <h3>명령어에도 지역성이 있다</h3>
+    <p>
+      CPU는 실행할 명령어도 메모리에서 읽어 명령어 캐시(L1i)에 올린다.
+      명령어는 대부분 순서대로 실행되고(순차 지역성) 루프는 같은 코드를 반복한다(시간 지역성). 그래서 명령어 캐시는 보통 데이터 캐시보다 적중률이 높다.
+      반대로 가상 호출이나 분기가 많아 실행 경로가 여러 곳으로 흩어지면 명령어 캐시 미스가 늘어난다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <p>
+      어떤 지역성을 노릴지는 데이터를 어떻게 쓰는지 보고 정한다.
+      <strong>같은 데이터를 또 쓰면 시간 지역성</strong>, <strong>이웃 데이터를 이어서 쓰면 공간 지역성</strong>, <strong>한 방향으로 쭉 훑으면 순차 지역성</strong>을 노린다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>접근 패턴</th><th>노릴 지역성</th><th>방법</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>작은 데이터에 여러 번 연산한다<br><small>예: 시야 범위 안 객체끼리 충돌 검사</small></td>
+            <td>시간</td>
+            <td>다 쓰기 전에 캐시에서 밀려나지 않도록 작업 단위를 캐시 크기에 맞게 쪼갠다(타일링). 같은 데이터를 쓰는 연산은 루프 하나로 합친다.</td>
+          </tr>
+          <tr>
+            <td>많은 원소를 한 번씩 훑는다<br><small>예: 매 틱 모든 몬스터 위치 갱신</small></td>
+            <td>공간 + 순차</td>
+            <td>원소를 연속 배열에 둔다. 그 루프에서 쓰는 필드만 따로 모은다(SoA, 핫/콜드 분리). 앞에서 뒤로 순서대로 돈다.</td>
+          </tr>
+          <tr>
+            <td>키로 드문드문 조회한다<br><small>예: 세션 ID로 플레이어 찾기</small></td>
+            <td>기대하기 어렵다</td>
+            <td>조회 한 번에 건드리는 캐시 라인 수를 줄인다. 포인터를 여러 번 따라가는 구조보다 배열 기반 해시나 노드가 넓은 트리(B-트리 계열)가 유리하다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <p>
+      게임 서버의 틱 루프는 "많은 원소를 한 번씩 훑는" 패턴의 전형이다. 여기서 C#의 <code>class</code>와 <code>struct</code> 차이가 그대로 지역성 차이가 된다.
+    </p>
+<pre><code class="language-csharp">// class 배열: 배열에는 참조(8바이트)만 연속으로 놓이고,
+// 실제 객체는 힙 여기저기에 있을 수 있다. 원소마다 포인터를 한 번 더 따라간다.
+class Monster
+{
+    public Vector3 Position;
+    public Vector3 Velocity;
+    public string Name;
+    public List&lt;Item&gt; DropTable;
+    // ... 이동 처리와 상관없는 필드들
+}
+Monster[] monsters;
+
+// struct 배열: 값 자체가 배열 안에 연속으로 놓인다.
+// 이동 틱에서 쓰는 필드만 모아 두면 캐시 라인 하나에 더 많은 원소가 들어간다.
+struct Motion
+{
+    public Vector3 Position;
+    public Vector3 Velocity;
+}
+Motion[] motions;
+
+for (int i = 0; i &lt; motions.Length; i++)
+    motions[i].Position += motions[i].Velocity * dt;</code></pre>
+    <ul>
+      <li><strong>핫/콜드 분리</strong>: 매 틱 쓰는 필드(위치, 속도, 상태)와 가끔 쓰는 필드(이름, 드롭 테이블, 로그용 정보)를 다른 배열이나 객체로 나눈다. 핫 데이터만 훑을 때 캐시에 쓸데없는 바이트가 올라오지 않는다.</li>
+      <li><strong>Dictionary 순회</strong>: <code>Dictionary&lt;long, Player&gt;</code>를 <code>foreach</code>로 돌면 내부 엔트리 배열은 순서대로 읽는다. 하지만 값이 <code>class</code>면 결국 원소마다 흩어진 객체를 따라가야 한다. 매 틱 전체를 훑어야 한다면 키 조회용 사전과 별도로 순회용 연속 배열을 두는 것을 고려한다.</li>
+      <li><strong>패킷 버퍼</strong>: 수신 버퍼를 앞에서부터 순서대로 파싱하는 것은 순차 지역성이 좋은 패턴이다. 버퍼를 작은 조각으로 쪼개 리스트로 이으면 이 이점이 줄어든다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>작은 벤치마크는 착시를 만든다.</strong> 데이터 전체가 L1/L2에 들어가면 어떤 순서로 접근해도 차이가 거의 없다. 실제 서비스에 가까운 크기로 측정해야 한다.</li>
+      <li><strong>빅오가 같아도 실제 시간은 다르다.</strong> 배열과 연결 리스트 순회는 둘 다 O(n)이지만, 연결 리스트는 노드마다 다른 라인일 수 있어 미스가 훨씬 많다.</li>
+      <li><strong>공간 지역성이 오히려 해가 되는 경우가 있다.</strong> 서로 다른 스레드가 쓰는 변수가 같은 캐시 라인에 있으면, 논리적으로는 공유하지 않는데도 라인이 코어 사이를 오가며 느려진다(<span class="blank">false sharing</span>). 자세한 내용은 <a href="cache-coherence.html">캐시 일관성과 false sharing</a>에서 다룬다.</li>
+      <li><strong>2의 거듭제곱 간격 접근은 조심한다.</strong> 4096바이트처럼 큰 2의 거듭제곱 간격으로 접근하면 같은 캐시 세트로 몰려 충돌 미스가 생길 수 있다. 열 우선 순회에서 행 길이가 딱 2의 거듭제곱일 때 특히 그렇다.</li>
+      <li><strong>GC가 배치를 바꾼다.</strong> .NET에서 연달아 할당한 객체는 처음에는 힙에 가깝게 놓이는 경향이 있다. 하지만 오래 살면서 할당과 해제가 섞이면 흩어진다. "지금 빠르다"가 계속 빠르다는 뜻은 아니다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
