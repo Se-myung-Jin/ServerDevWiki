@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>스케줄링 알고리즘 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/scheduling">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="pcb-context-switch.html">PCB와 컨텍스트 스위칭</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      스케줄링은 준비 상태의 흐름 중 <strong>어느 것에 CPU를 줄지</strong> 고르는 일이다.
+      고르는 방식마다 좋아지는 지표가 다르고, 한쪽을 좋게 하면 다른 쪽이 나빠진다. 응답 시간과 처리량은 같이 좋아지지 않는다.
+    </p>
+    <p>
+      크게는 <span class="blank">선점 여부</span>로 나뉜다. 실행 중인 것을 중간에 빼앗을 수 있으면 선점형이고, 스스로 놓을 때까지 기다리면 비선점형이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>같은 작업 셋도 순서에 따라 대기 시간이 달라진다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="같은 작업 A 6, B 2, C 2를 FCFS, SJF, 라운드 로빈으로 실행한 순서와 평균 대기 시간">
+      <text class="f-text" x="128" y="41" text-anchor="end">FCFS</text>
+      <rect class="f-box" x="140" y="20" width="276" height="32" rx="4"/><text class="f-text" x="278" y="41" text-anchor="middle">A</text>
+      <rect class="f-hit" x="416" y="20" width="92" height="32" rx="4"/><text class="f-strong" x="462" y="41" text-anchor="middle">B</text>
+      <rect class="f-hit" x="508" y="20" width="92" height="32" rx="4"/><text class="f-strong" x="554" y="41" text-anchor="middle">C</text>
+      <text class="f-strong" x="616" y="41">평균 대기 4.7</text>
+      <text class="f-text" x="128" y="91" text-anchor="end">SJF</text>
+      <rect class="f-hit" x="140" y="70" width="92" height="32" rx="4"/><text class="f-strong" x="186" y="91" text-anchor="middle">B</text>
+      <rect class="f-hit" x="232" y="70" width="92" height="32" rx="4"/><text class="f-strong" x="278" y="91" text-anchor="middle">C</text>
+      <rect class="f-box" x="324" y="70" width="276" height="32" rx="4"/><text class="f-text" x="462" y="91" text-anchor="middle">A</text>
+      <text class="f-strong" x="616" y="91">평균 대기 2.0</text>
+      <text class="f-text" x="128" y="141" text-anchor="end">라운드 로빈 (조각 2)</text>
+      <rect class="f-box" x="140" y="120" width="92" height="32" rx="4"/><text class="f-text" x="186" y="141" text-anchor="middle">A</text>
+      <rect class="f-hit" x="232" y="120" width="92" height="32" rx="4"/><text class="f-strong" x="278" y="141" text-anchor="middle">B</text>
+      <rect class="f-hit" x="324" y="120" width="92" height="32" rx="4"/><text class="f-strong" x="370" y="141" text-anchor="middle">C</text>
+      <rect class="f-box" x="416" y="120" width="184" height="32" rx="4"/><text class="f-text" x="508" y="141" text-anchor="middle">A</text>
+      <text class="f-strong" x="616" y="141">평균 대기 3.3</text>
+      <line class="f-line" x1="140" y1="172" x2="600" y2="172"/>
+      <text class="f-sub" x="140" y="190" text-anchor="middle">0</text>
+      <text class="f-sub" x="232" y="190" text-anchor="middle">2</text>
+      <text class="f-sub" x="324" y="190" text-anchor="middle">4</text>
+      <text class="f-sub" x="416" y="190" text-anchor="middle">6</text>
+      <text class="f-sub" x="508" y="190" text-anchor="middle">8</text>
+      <text class="f-sub" x="600" y="190" text-anchor="middle">10</text>
+      <text class="f-sub" x="616" y="190">시간</text>
+      </svg>
+      <figcaption>A(6)는 길고 B(2)·C(2)는 짧다. 셋이 동시에 도착했다. 짧은 것을 먼저 하면 평균 대기가 가장 짧고, 라운드 로빈은 평균은 중간이지만 모두가 일찍 한 번씩 실행된다.</figcaption>
+    </figure>
+
+    <h3>알고리즘마다 좋아지는 지표가 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>알고리즘</th><th>선점</th><th>고르는 방식</th><th>좋아지는 것</th><th>나빠지는 것</th></tr></thead>
+        <tbody>
+          <tr><td>FCFS</td><td>비선점</td><td>먼저 온 순서</td><td>단순하고 예측 가능하다</td><td>긴 작업 하나가 뒤를 다 막는다(호송 효과)</td></tr>
+          <tr><td>SJF</td><td>비선점</td><td>실행 시간이 짧은 것부터</td><td>평균 대기 시간이 가장 짧다</td><td>긴 작업이 계속 밀린다. 실행 시간을 미리 알아야 한다</td></tr>
+          <tr><td>SRT</td><td>선점</td><td>남은 시간이 가장 짧은 것부터(SJF의 선점형)</td><td>짧은 작업의 응답이 더 빨라진다</td><td>전환이 늘고, 긴 작업이 더 밀린다</td></tr>
+          <tr><td>HRN</td><td>비선점</td><td>(기다린 시간 + 실행 시간) ÷ 실행 시간이 큰 것부터</td><td>오래 기다린 작업이 끝없이 밀리지 않는다</td><td>실행 시간을 미리 알아야 하는 것은 SJF와 같다</td></tr>
+          <tr><td>라운드 로빈</td><td>선점</td><td>시간 조각을 돌아가며</td><td>응답 시간이 고르다</td><td>조각이 짧으면 전환 비용이 커진다</td></tr>
+          <tr><td>우선순위</td><td>둘 다 가능</td><td>순위가 높은 것부터</td><td>중요한 일을 먼저 한다</td><td>낮은 순위가 영영 밀릴 수 있다(<a href="starvation.html">기아</a>)</td></tr>
+          <tr><td>다단계 큐</td><td>보통 선점</td><td>성격별로 큐를 나누고 그 큐에 계속 둔다</td><td>작업 종류마다 다르게 다룬다</td><td>위 큐가 비지 않으면 아래 큐가 실행되지 못한다</td></tr>
+          <tr><td>다단계 피드백 큐</td><td>선점</td><td>큐를 여러 단계로 두고 동작에 따라 옮긴다</td><td>실행 시간을 몰라도 SJF에 가까워진다</td><td>큐 수, 조각 길이, 승격 주기를 전부 정해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>세로로 읽는다. 좋아지는 칸만 보고 고르면 나빠지는 칸을 함께 받는다.</p>
+
+    <h3>시간 조각 길이가 라운드 로빈의 성격을 정한다</h3>
+    <p>
+      조각이 길면 FCFS에 가까워진다. 앞 작업이 오래 잡고 있으니 뒤가 기다린다.
+      조각이 짧으면 응답은 고르지만 전환 횟수가 늘어, 전환 비용과 <a href="pcb-context-switch.html">캐시를 다시 채우는 비용</a> 때문에 실제 일하는 시간이 줄어든다.
+    </p>
+    <p>
+      적정 길이는 전환 비용과 작업 길이 분포가 정한다. 대부분의 대화형 작업이 한 조각 안에 끝나고 스스로 CPU를 놓을 만큼은 길어야 한다. 범용 OS는 수 ms에서 수십 ms 범위를 쓰고, Windows는 서버 에디션이 데스크톱보다 긴 조각을 기본으로 쓴다.
+    </p>
+
+    <h3>실무 커널은 실행 시간을 예측하지 않고 SJF에 다가간다</h3>
+    <p>
+      다단계 피드백 큐는 남은 실행 시간을 예측하지 않는다. 대신 그 작업이 <strong>지금까지 어떻게 동작했는지</strong>를 본다.
+      새로 들어온 작업은 맨 위 큐에서 시작한다. 받은 시간 조각을 다 쓰면 아래 큐로 내리고, 조각을 다 쓰기 전에 스스로 CPU를 놓는 대화형 작업은 위에 남긴다.
+      그러면 짧은 작업이 자연히 위쪽에 모여 SJF와 비슷한 순서가 된다. 내리기만 하면 긴 작업이 아래에 쌓여 영영 밀리므로, 주기를 정해 전부 맨 위로 되돌린다.
+    </p>
+    <p>
+      Linux는 다른 축을 택했다. CFS는 큐를 단계로 나누는 대신 <strong>지금까지 가장 덜 실행된 작업</strong>을 고르고, 고정된 시간 조각 대신 실행 중인 작업 수에 따라 조각을 나눈다.
+      커널 6.6부터는 CFS를 EEVDF 스케줄러로 바꿨는데, 공정하게 나눈다는 목표는 같고 지연에 민감한 작업을 더 빨리 실행하도록 다듬은 것이다.
+      Windows는 우선순위 기반 선점형에, 대기가 길어진 스레드나 입력을 받은 스레드의 우선순위를 잠시 올려 주는 방식을 더한다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>목표로 삼는 것</th><th>무엇을 고르나</th></tr></thead>
+        <tbody>
+          <tr><td>평균 대기 시간</td><td>짧은 작업을 먼저 (SJF 계열)</td></tr>
+          <tr><td>응답 시간이 고른 것</td><td>라운드 로빈</td></tr>
+          <tr><td>중요한 일의 지연</td><td>우선순위. 다만 기아 대책을 함께</td></tr>
+          <tr><td>전환 비용 절감</td><td>비선점형. 다만 긴 작업이 막는 것을 감수</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      대화형 시스템은 응답 시간을 고르게 하는 쪽이 맞고, 일괄 처리 시스템은 처리량을 올리는 쪽이 맞는다. 둘을 함께 요구하면 다단계 피드백 큐처럼 나눠 다루는 구조를 쓴다.
+      이 판단은 OS 스케줄러를 고를 때보다 <strong>내가 만드는 작업 큐</strong>를 설계할 때 더 자주 하게 된다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 루프의 <code>Thread.Sleep</code>은 생각보다 오래 잔다.</strong>
+        Windows의 기본 타이머 해상도는 약 15.6ms라서, <code>Thread.Sleep(1)</code>이 실제로는 15ms 가까이 잘 수 있다. 33ms 틱(30Hz)에서 이 오차는 틱 지터로 바로 보인다.
+        다음 틱 시각까지 남은 시간을 매번 계산해 기다리고, 실제 경과 시간(<code>Stopwatch</code>)으로 보정한다. 고해상도 타이머를 켜는 방법도 있지만 전력과 시스템 전체에 영향을 준다.
+      </li>
+      <li>
+        <strong>컨테이너 CPU limit은 스케줄러가 강제로 멈추는 것이다.</strong>
+        Linux에서 CPU limit은 일정 주기(기본 100ms) 안에 쓸 수 있는 CPU 시간 할당량으로 구현된다. 할당량을 다 쓰면 그 주기의 남은 시간 동안 프로세스 전체가 멈춘다(throttling).
+        평균 사용률이 낮아도 순간적으로 몰리면 수십 ms씩 멈추므로, 틱 시간이 튀면 컨테이너의 throttling 지표부터 확인한다.
+      </li>
+      <li>
+        <strong>직접 만드는 작업 큐에도 같은 선택이 있다.</strong>
+        .NET <a data-ref="operating-system/thread-pool">스레드 풀</a>은 작업(<code>Task</code>) 단위로 보면 비선점형이다. OS가 스레드는 선점하지만, 풀은 실행 중인 작업을 중간에 빼앗지 않는다. 그래서 한 작업이 CPU를 오래 쓰면 그 스레드가 맡을 다음 작업들은 기다린다. 무거운 계산(길찾기, 대량 저장)은 별도 큐로 나누고, 로그인 같은 짧은 요청이 그 뒤에 막히지 않게 한다. 호송 효과를 직접 만들지 않는 것이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>SJF는 조건이 갖춰졌을 때만 최적이다.</strong> 각 작업의 실행 시간을 미리 알아야 하는데, 현실에서는 모른다. 그래서 과거 실행 시간으로 추정하거나, 다단계 피드백 큐처럼 동작을 보고 근사한다.</li>
+      <li><strong>선점형이 언제나 나은 것은 아니다.</strong> 선점은 전환을 늘리고, 전환은 캐시를 밀어낸다. 조각이 아주 짧으면 일하는 시간보다 전환에 쓰는 시간이 커지는 구간이 생긴다.</li>
+      <li><strong>순위를 올린다고 언제나 빨라지지는 않는다.</strong> 순위가 낮은 쪽이 락을 쥔 채 밀리면 그 락을 기다리는 높은 순위도 함께 멈춘다(<a href="starvation.html">우선순위 역전</a>). 게임 루프 스레드의 <code>Thread.Priority</code>를 올리는 것은 효과가 작고 이런 위험을 늘린다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

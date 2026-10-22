@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>기아와 우선순위 역전 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/starvation">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="scheduling.html">스케줄링 알고리즘</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>기아(starvation)</strong>는 차례가 영영 오지 않는 상태다. 시스템 전체는 정상으로 동작하는데 특정 흐름만 계속 밀린다.
+      평균 응답 시간은 정상으로 보이고 <span class="blank">꼬리 지연</span>만 길어져서 지표로도 잘 안 잡힌다.
+    </p>
+    <p>
+      순서를 순위로 정해 놓고 그 순위가 바뀌지 않으면 낮은 쪽은 영영 밀린다.
+      스케줄러만의 문제가 아니라 락 획득 순서, 작업 큐, 커넥션 풀에서도 똑같이 생긴다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>순위로 고르는 곳이면 어디든 생긴다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>어디서</th><th>어떻게 생기나</th></tr></thead>
+        <tbody>
+          <tr><td>우선순위 스케줄링</td><td>높은 순위가 계속 들어오면 낮은 순위에 차례가 오지 않는다</td></tr>
+          <tr><td>SJF · SRT</td><td>짧은 작업이 계속 도착하면 긴 작업이 영영 밀린다</td></tr>
+          <tr><td>다단계 큐</td><td>상위 큐가 비지 않으면 하위 큐가 실행되지 않는다</td></tr>
+          <tr><td>읽기 쓰기 락</td><td>읽기가 끊이지 않으면 락이 완전히 비는 순간이 없어 쓰기가 밀린다</td></tr>
+          <tr><td>비공정 락</td><td>대기 순서를 보장하지 않아 오래 기다린 쪽이 계속 밀릴 수 있다</td></tr>
+          <tr><td>CAS 재시도 루프</td><td>경합이 심하면 특정 흐름만 매번 다른 흐름에게 져서 재시도만 반복한다</td></tr>
+          <tr><td>커넥션 풀 · 작업 큐</td><td>짧은 요청이 계속 자리를 채우면 긴 요청이 들어가지 못한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>위의 셋은 스케줄러 안에서 생기고, 나머지는 락과 자원 풀에서 생긴다. 응용 코드에서 실제로 마주치는 것은 대부분 아래쪽이다.</p>
+
+    <h3>우선순위 역전은 높은 순위가 낮은 순위를 기다리게 되는 상황이다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="낮은 순위 L이 락을 쥔 사이 중간 순위 M이 실행되어, 높은 순위 H가 M보다 늦게 실행되는 우선순위 역전">
+      <text class="f-text" x="118" y="40" text-anchor="end">H (높음)</text>
+      <text class="f-text" x="118" y="90" text-anchor="end">M (중간)</text>
+      <text class="f-text" x="118" y="140" text-anchor="end">L (낮음)</text>
+      <rect class="f-hit" x="130" y="120" width="104" height="30" rx="4"/><text class="f-strong" x="182" y="140" text-anchor="middle">락 획득</text>
+      <rect class="f-pad" x="234" y="120" width="312" height="30" rx="4"/><text class="f-sub" x="390" y="140" text-anchor="middle">실행되지 못함</text>
+      <rect class="f-hit" x="546" y="120" width="52" height="30" rx="4"/><text class="f-strong" x="572" y="140" text-anchor="middle">해제</text>
+      <rect class="f-pad" x="234" y="20" width="364" height="30" rx="4"/><text class="f-sub" x="416" y="40" text-anchor="middle">락을 기다림</text>
+      <rect class="f-miss" x="598" y="20" width="52" height="30" rx="4"/><text class="f-on" x="624" y="40" text-anchor="middle">실행</text>
+      <rect class="f-box" x="234" y="70" width="312" height="30" rx="4"/><text class="f-sub" x="390" y="90" text-anchor="middle">락과 무관한 일</text>
+      <line class="f-line" x1="130" y1="168" x2="650" y2="168"/>
+      <text class="f-sub" x="130" y="186" text-anchor="middle">0</text>
+      <text class="f-sub" x="234" y="186" text-anchor="middle">2</text>
+      <text class="f-sub" x="338" y="186" text-anchor="middle">4</text>
+      <text class="f-sub" x="442" y="186" text-anchor="middle">6</text>
+      <text class="f-sub" x="546" y="186" text-anchor="middle">8</text>
+      <text class="f-sub" x="650" y="186" text-anchor="middle">10</text>
+      <text class="f-sub" x="664" y="186">시간</text>
+      </svg>
+      <figcaption>H가 L이 쥔 락을 기다리는 동안 M이 CPU를 가져가면, L은 실행되지 못해 락을 놓지 못하고 H도 계속 기다린다. M이 끼어들지 않으면 L이 곧 실행되어 락을 놓으므로 역전이 짧게 끝난다.</figcaption>
+    </figure>
+    <ol>
+      <li>낮은 순위 L이 락을 잡는다.</li>
+      <li>높은 순위 H가 그 락을 기다린다.</li>
+      <li>락과 무관한 중간 순위 M이 들어와 CPU를 가져간다.</li>
+      <li>L이 실행되지 못해 락을 놓지 못하고, 결과적으로 H가 M보다 늦게 실행된다.</li>
+    </ol>
+    <p>
+      1997년 화성 탐사선 Mars Pathfinder가 이 문제로 반복해서 재부팅된 일이 대표적인 사례다. 원격으로 <a data-ref="operating-system/sync-primitives">뮤텍스</a>의 우선순위 상속을 켜서 해결했다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>한계</th></tr></thead>
+        <tbody>
+          <tr><td>에이징</td><td>기다린 시간만큼 순위를 올린다</td><td>올리는 속도가 너무 느리면 여전히 밀리고, 너무 빠르면 순위의 의미가 사라진다</td></tr>
+          <tr><td>우선순위 상속</td><td>락을 가진 쪽의 순위를 기다리는 쪽만큼 잠시 올린다</td><td>우선순위 역전에만 듣고, 소유자를 아는 락(뮤텍스)에서만 가능하다</td></tr>
+          <tr><td>순서 보장 대기열(공정 락)</td><td>먼저 온 순서대로 준다</td><td>재우고 깨우는 순서를 지키느라 처리량이 떨어진다</td></tr>
+          <tr><td>쓰기 우선 정책</td><td>기다리는 쓰기가 있으면 새 읽기를 막는다</td><td>읽기 쓰기 락에만 듣는다</td></tr>
+          <tr><td>백오프</td><td>재시도 사이에 무작위 지연을 넣는다</td><td>경합 확률을 낮출 뿐 순서를 보장하지 않는다</td></tr>
+          <tr><td>최소 비율 보장</td><td>낮은 순위에도 일정 비율의 처리 몫을 준다</td><td>높은 순위가 쓸 수 있는 몫이 줄어든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>에이징이 가장 일반적이다.</strong> 어떤 자원이든 대기 시간을 재고 있으면 적용할 수 있다.
+      공정하게 만들수록 처리량은 떨어진다. 꼬리 지연을 줄이는 것이 목표면 순서를 보장하는 쪽을, 평균 처리량이 목표면 보장하지 않는 쪽을 고른다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>매치메이킹의 대기 시간 확장은 에이징이다.</strong>
+        실력이 비슷한 상대만 찾으면 상위권이나 대규모 파티는 영영 매칭되지 않는다. 기다린 시간에 비례해 허용 범위를 넓히는 것이 정확히 에이징이고, 넓히는 속도가 곧 위 표의 "올리는 속도" 문제다.
+      </li>
+      <li>
+        <strong>우선순위 작업 큐에는 최소 몫을 둔다.</strong>
+        결제·로그인을 높은 우선순위로 처리하는 큐를 만들면, 트래픽이 몰릴 때 일반 요청이나 저장 작업이 계속 밀린다. 저장이 밀리면 서버가 죽을 때 데이터가 사라진다. 낮은 우선순위 큐에도 일정 비율을 보장한다.
+      </li>
+      <li>
+        <strong>C#의 <code>lock</code>은 공정하지 않다.</strong>
+        <code>Monitor</code>는 대기 순서를 보장하지 않아, 경합이 심하면 특정 스레드가 오래 밀릴 수 있다. 순서가 중요하면 <code>Channel</code>이나 큐로 요청을 줄 세워 한 스레드가 처리하게 바꾸는 편이 확실하다.
+      </li>
+      <li>
+        <strong>스레드 우선순위는 건드리지 않는 편이 낫다.</strong>
+        <code>Thread.Priority</code>를 올린 로직 스레드가 낮은 우선순위 스레드와 락을 공유하면 바로 우선순위 역전이 생긴다. OS가 오래 굶은 스레드를 잠시 올려 주긴 하지만 수 초 단위라 게임 틱에는 너무 늦다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>기아를 데드락과 섞으면 잘못 진단한다.</strong>
+        데드락은 관련된 모두가 멈춘다. 기아는 나머지가 정상으로 동작하는 와중에 하나만 못 나간다.
+        덤프를 떠 보면 데드락은 서로를 기다리는 고리가 보이고, 기아는 큐에 오래 앉아 있는 항목이 보인다(<a href="deadlock.html">데드락</a>).
+      </li>
+      <li>
+        <strong>평균만 보면 기아를 놓친다.</strong> 대기 시간의 최댓값이나 p99 같은 꼬리 백분위를 봐야 드러난다. 작업 큐에는 "가장 오래 기다린 항목의 대기 시간"을 지표로 남겨 둔다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

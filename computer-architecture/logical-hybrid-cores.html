@@ -44,7 +44,7 @@
       그래서 한 스레드의 명령이 메모리를 기다리며 멈춰 있어도, 다른 스레드의 명령을 같은 실행 유닛으로 내보낼 수 있다. OS는 이 두 스레드를 각각 하나의 CPU로 본다.
     </p>
     <p>
-      공유하는 것은 실행 유닛만이 아니다. <strong>L1·L2 캐시, TLB, 분기 예측기</strong>도 함께 쓰고, 일부 내부 버퍼는 두 스레드가 반씩 나눠 쓴다.
+      공유하는 것은 실행 유닛만이 아니다. <strong>L1·L2 캐시, <a data-ref="operating-system/paging-tlb">TLB</a>, <a data-ref="computer-architecture/pipeline-branch-prediction">분기 예측</a>기</strong>도 함께 쓰고, 일부 내부 버퍼는 두 스레드가 반씩 나눠 쓴다.
       그래서 한쪽 스레드가 이 자원을 많이 쓰면 다른 쪽도 같이 느려진다.
     </p>
     <p>
@@ -55,7 +55,7 @@
     <h3>하이브리드에서는 같은 코드가 어디서 실행되느냐로 속도가 달라진다</h3>
     <p>
       P-core(성능 코어)와 E-core(효율 코어)는 한 클럭당 처리하는 명령 수(IPC)도, 클럭도, 캐시 크기도 다르다.
-      OS 스케줄러가 스레드를 다른 종류의 코어로 옮기면 같은 일이 다른 속도로 실행된다.
+      OS <a data-ref="operating-system/scheduling">스케줄러</a>가 스레드를 다른 종류의 코어로 옮기면 같은 일이 다른 속도로 실행된다.
     </p>
     <p>
       어디에 둘지는 OS 혼자 정하지 않는다. Intel의 Thread Director처럼 CPU 안의 장치가 스레드가 어떤 명령을 얼마나 쓰는지 관찰해 OS에 힌트를 준다.
@@ -104,7 +104,7 @@
       </li>
       <li>
         <strong>컨테이너 CPU 제한이 스레드 수를 바꾼다.</strong>
-        Kubernetes에서 CPU limit을 2로 주면 .NET 6 이상에서는 <code>ProcessorCount</code>가 2가 되고, 스레드 풀과 서버 GC의 힙 수도 이 값을 따른다. 배포 설정을 바꿀 때 서버 내부 동작이 함께 바뀐다는 점을 기억한다.
+        Kubernetes에서 CPU limit을 2로 주면 .NET 6 이상에서는 <code>ProcessorCount</code>가 2가 되고, <a data-ref="operating-system/thread-pool">스레드 풀</a>과 서버 <a data-ref="csharp/gc-basics">GC</a>의 힙 수도 이 값을 따른다. 배포 설정을 바꿀 때 서버 내부 동작이 함께 바뀐다는 점을 기억한다.
       </li>
       <li>
         <strong>틱 스레드의 짝 스레드를 본다.</strong>

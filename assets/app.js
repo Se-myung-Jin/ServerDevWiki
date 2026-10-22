@@ -426,6 +426,23 @@
     );
   }
 
+  // ---------- 문서 참조: <a data-ref="분야/slug">…</a> ----------
+  // 대상 문서가 catalog.js 에 등록돼 있으면 링크가 되고, 아직 없으면 "작성 예정" 표시로 남는다.
+  // 그래서 나중에 쓸 문서도 미리 걸어 둘 수 있다.
+  function resolveRefs() {
+    document.querySelectorAll("a[data-ref]").forEach(function (a) {
+      var found = findTopic(a.getAttribute("data-ref"));
+      if (found) {
+        a.href = topicHref(found.cat, found.topic);
+        a.title = found.topic.title;
+      } else {
+        a.removeAttribute("href");
+        a.classList.add("ref-pending");
+        a.title = "작성 예정 문서";
+      }
+    });
+  }
+
   // ---------- code highlight (pre > code 가 있을 때만 CDN 로드) ----------
 
   function highlight() {
@@ -459,6 +476,7 @@
     else if (page === "category" && currentCat) renderCategory(main, currentCat);
     else if (page === "topic") renderTopic(main, found, id);
 
+    resolveRefs();
     highlight();
     document.dispatchEvent(new CustomEvent("sdw:ready", { detail: { root: ROOT } }));
   }

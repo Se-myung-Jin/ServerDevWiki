@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>가상 메모리 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/virtual-memory">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="process-memory-layout.html">프로세스 메모리 구성</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>가상 메모리</strong>는 프로세스마다 독립된 주소 공간을 주고, 그 주소를 실행 시점에 물리 주소로 번역하는 구조다. 번역은 CPU 안의 <span class="blank">MMU</span>라는 하드웨어가 한다.
+    </p>
+    <p>
+      주소를 한 겹 감싸는 것만으로 여러 가지가 함께 따라온다. 프로세스끼리 <strong>격리</strong>되고, 물리 메모리보다 <strong>큰 주소 공간</strong>을 쓸 수 있고, 흩어진 물리 메모리를 연속된 것처럼 보이게 해 <strong>물리 메모리의 외부 단편화를 감춘다</strong>.
+      여러 프로세스가 같은 물리 메모리를 함께 보게 만드는 <strong>공유</strong>도 같은 구조로 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>같은 주소가 프로세스마다 다른 곳을 가리킨다</h3>
+    <p>
+      가상 주소 공간을 고정 크기(x86-64는 보통 4KB)로 나눈 조각이 <strong>페이지</strong>이고, 물리 메모리를 같은 크기로 나눈 칸이 <strong>페이지 프레임</strong>이다.
+      <strong>페이지 테이블</strong>은 어느 페이지가 어느 프레임에 들어 있는지, 그리고 읽기·쓰기·실행 권한을 적어 둔 표이고, 프로세스마다 따로 있다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="프로세스 A와 B의 가상 주소 0x4000이 각자의 페이지 테이블을 거쳐 프레임 12와 47로 가고, 두 테이블 모두 공유 라이브러리 프레임 80을 가리킨다">
+      <defs><marker id="vm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-sub" x="95" y="20" text-anchor="middle">가상 주소</text>
+      <text class="f-sub" x="300" y="20" text-anchor="middle">페이지 테이블</text>
+      <text class="f-sub" x="590" y="20" text-anchor="middle">물리 메모리 (프레임)</text>
+      <rect class="f-box" x="20" y="46" width="150" height="46" rx="6"/><text class="f-text" x="95" y="66" text-anchor="middle">프로세스 A</text><text class="f-sub" x="95" y="83" text-anchor="middle">0x4000</text>
+      <rect class="f-box" x="20" y="158" width="150" height="46" rx="6"/><text class="f-text" x="95" y="178" text-anchor="middle">프로세스 B</text><text class="f-sub" x="95" y="195" text-anchor="middle">0x4000</text>
+      <rect class="f-box" x="230" y="46" width="140" height="46" rx="6"/><text class="f-text" x="300" y="74" text-anchor="middle">A의 페이지 테이블</text>
+      <rect class="f-box" x="230" y="158" width="140" height="46" rx="6"/><text class="f-text" x="300" y="186" text-anchor="middle">B의 페이지 테이블</text>
+      <rect class="f-cell" x="490" y="30" width="200" height="26" rx="3"/><text class="f-sub" x="590" y="48" text-anchor="middle">프레임 3</text>
+      <rect class="f-hit" x="490" y="60" width="200" height="26" rx="3"/><text class="f-strong" x="590" y="78" text-anchor="middle">프레임 12</text>
+      <rect class="f-cell" x="490" y="90" width="200" height="26" rx="3"/><text class="f-sub" x="590" y="108" text-anchor="middle">프레임 20</text>
+      <rect class="f-hit" x="490" y="120" width="200" height="26" rx="3"/><text class="f-strong" x="590" y="138" text-anchor="middle">프레임 47</text>
+      <rect class="f-cell" x="490" y="150" width="200" height="26" rx="3"/><text class="f-sub" x="590" y="168" text-anchor="middle">프레임 55</text>
+      <rect class="f-miss" x="490" y="180" width="200" height="26" rx="3"/><text class="f-on" x="590" y="198" text-anchor="middle">프레임 80 · 공유 라이브러리</text>
+      <rect class="f-cell" x="490" y="210" width="200" height="26" rx="3"/><text class="f-sub" x="590" y="228" text-anchor="middle">프레임 91</text>
+      <line class="f-line" x1="170" y1="69" x2="228" y2="69" marker-end="url(#vm-a)"/>
+      <line class="f-line" x1="170" y1="181" x2="228" y2="181" marker-end="url(#vm-a)"/>
+      <line class="f-line" x1="370" y1="62" x2="488" y2="73" marker-end="url(#vm-a)"/>
+      <line class="f-line" x1="370" y1="174" x2="488" y2="133" marker-end="url(#vm-a)"/>
+      <line class="f-line f-dash" x1="370" y1="80" x2="488" y2="190" marker-end="url(#vm-a)"/>
+      <line class="f-line f-dash" x1="370" y1="192" x2="488" y2="198" marker-end="url(#vm-a)"/>
+      </svg>
+      <figcaption>두 프로세스가 같은 가상 주소 0x4000을 쓰지만 각자의 페이지 테이블을 거쳐 다른 프레임에 닿는다. 이것이 격리다. 반대로 두 테이블이 같은 프레임(공유 라이브러리)을 가리키면 그 프레임은 양쪽에 함께 보인다.</figcaption>
+    </figure>
+    <p>
+      프로세스를 바꿀 때는 페이지 테이블을 가리키는 레지스터(x86의 CR3)만 바꾸면 번역 대상이 통째로 바뀐다. 그래서 <a href="pcb-context-switch.html">컨텍스트 스위칭</a>은 메모리 내용을 옮기지 않는다.
+    </p>
+    <p>
+      공유 라이브러리를 메모리에 하나만 올려 두고 여러 프로세스가 쓰는 것, <code>fork</code>한 자식이 부모 메모리를 복사하지 않고 함께 보다가 한쪽이 쓰는 순간에만 그 페이지를 복사하는 것(<span class="blank">copy-on-write</span>)이 모두 이 방식이다.
+    </p>
+
+    <h3>물리 메모리보다 큰 주소 공간을 어떻게 쓰나</h3>
+    <p>
+      모든 페이지가 물리 메모리에 올라와 있을 필요가 없다. 처음 접근할 때 비로소 프레임을 주고(demand paging), 당장 쓰지 않는 페이지는 디스크(스왑, Windows의 페이지 파일)로 내려보냈다가 다시 접근하면 올린다.
+      이 과정은 <a href="page-fault-thrashing.html">페이지 폴트</a>로 일어난다.
+    </p>
+    <p>그래서 주소 공간의 크기가 물리 메모리 크기에 묶이지 않는다. 대신 디스크로 내려간 페이지에 접근하는 순간은 메모리 접근보다 수천 배 이상 느리다.</p>
+
+    <h3>고정 크기로 자르면 연속된 빈 공간을 찾을 필요가 없다</h3>
+    <p>
+      프레임 크기가 모두 같으니 비어 있는 프레임이면 어디에 넣어도 된다. 흩어진 프레임을 모아 주고, 페이지 테이블이 연속처럼 보이게 만든다.
+      대신 페이지 끝에 남는 자리가 생긴다. 이것이 내부 단편화이고, 외부 단편화와 맞바꾼 셈이다(<a href="fragmentation.html">단편화</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>가상 크기와 실제 사용량을 구분해서 본다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>지표</th><th>뜻</th><th>판단에 쓰나</th></tr></thead>
+        <tbody>
+          <tr><td>가상 크기 (VSZ, Virtual Size)</td><td>예약하거나 매핑한 주소 공간 전체</td><td>메모리 부족 판단에는 쓰지 않는다. 64비트에서는 매우 커도 정상이다</td></tr>
+          <tr><td>상주 크기 (RSS, Working Set)</td><td>지금 물리 메모리에 올라와 있는 페이지</td><td>실제 메모리 사용량 판단에 쓴다</td></tr>
+          <tr><td>커밋 크기 (Private Bytes, Commit)</td><td>물리 메모리나 페이지 파일로 보장해 둔 양</td><td>Windows에서 메모리 누수를 볼 때 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>.NET 서버의 가상 크기는 원래 크다.</strong> <a data-ref="csharp/gc-basics">GC</a>는 힙으로 쓸 주소 범위를 미리 크게 예약해 두고 필요할 때 실제 메모리를 붙인다. 그래서 작업 관리자나 <code>top</code>의 가상 크기는 수십~수백 GB로 보일 수 있다. 메모리 알람은 상주 크기(Working Set, RSS)와 GC 힙 크기로 건다.
+      </li>
+      <li>
+        <strong>스왑이 시작되면 틱이 무너진다.</strong> 게임 서버의 메모리가 물리 메모리를 넘어 스왑으로 밀리면, 평소 나노초 단위이던 접근이 디스크 대기가 되어 틱 지연이 수십~수백 ms로 튄다. 서버 머신은 메모리에 여유를 두고, 컨테이너라면 메모리 제한을 명시해 차라리 일찍 OOM으로 재시작되게 한다.
+      </li>
+      <li>
+        <strong>32비트 프로세스는 가상 주소 공간이 먼저 바닥난다.</strong> 물리 메모리가 남아 있어도 2~4GB 주소 공간이 조각나면 큰 배열을 할당하지 못하고 <code>OutOfMemoryException</code>이 난다(<a href="../computer-architecture/32-64-bit.html">32비트와 64비트</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>가상 메모리는 "메모리가 부족할 때 디스크를 쓰는 기능"만이 아니다.</strong> 그것은 여러 쓰임 중 하나다. 격리, 단편화 은닉, 페이지 공유, 권한 보호가 같은 구조에서 함께 이루어지고, 메모리가 넉넉한 요즘 기계도 가상 메모리를 쓴다.</li>
+      <li><strong>외부 단편화가 완전히 사라지는 것은 아니다.</strong> 물리 메모리의 단편화는 감춰지지만, 가상 주소 공간 자체도 조각날 수 있다. 64비트에서는 공간이 워낙 커서 거의 문제가 안 되고, 32비트에서는 실제로 문제가 된다.</li>
+      <li><strong>번역은 공짜가 아니다.</strong> 메모리 접근마다 페이지 테이블을 보면 느려지므로 TLB라는 캐시가 따로 있다(<a href="paging-tlb.html">페이징과 TLB</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -23,7 +23,7 @@
         <thead><tr><th>종류</th><th>뜻</th><th>하드웨어가 이용하는 방식</th><th>흔한 예</th></tr></thead>
         <tbody>
           <tr><td>시간 지역성</td><td>같은 주소를 짧은 시간 안에 다시 접근한다</td><td>최근에 쓴 라인을 캐시에 남겨 둔다(교체 정책)</td><td>루프 카운터, 누적 변수, 반복 호출되는 함수 코드</td></tr>
-          <tr><td>공간 지역성</td><td>접근한 주소의 근처를 곧 접근한다</td><td><span class="blank">캐시 라인</span> 단위로 한꺼번에 가져온다</td><td>배열 원소, 같은 구조체의 필드</td></tr>
+          <tr><td>공간 지역성</td><td>접근한 주소의 근처를 곧 접근한다</td><td><span class="blank"><a data-ref="computer-architecture/memory-hierarchy">캐시 라인</a></span> 단위로 한꺼번에 가져온다</td><td>배열 원소, 같은 구조체의 필드</td></tr>
           <tr><td>순차 지역성</td><td>주소가 일정한 방향과 간격으로 이어진다</td><td>하드웨어 <span class="blank">프리페처</span>가 다음 라인을 미리 가져온다</td><td>배열을 앞에서부터 순회, 명령어 순차 실행</td></tr>
         </tbody>
       </table>
@@ -231,7 +231,7 @@ for (int i = 0; i &lt; motions.Length; i++)
       <li><strong>빅오가 같아도 실제 시간은 다르다.</strong> 배열과 연결 리스트 순회는 둘 다 O(n)이지만, 연결 리스트는 노드마다 다른 라인일 수 있어 미스가 훨씬 많다.</li>
       <li><strong>공간 지역성이 오히려 해가 되는 경우가 있다.</strong> 서로 다른 스레드가 쓰는 변수가 같은 캐시 라인에 있으면, 논리적으로는 공유하지 않는데도 라인이 코어 사이를 오가며 느려진다(<span class="blank">false sharing</span>). 자세한 내용은 <a href="cache-coherence.html">캐시 일관성과 false sharing</a>에서 다룬다.</li>
       <li><strong>2의 거듭제곱 간격 접근은 조심한다.</strong> 4096바이트처럼 큰 2의 거듭제곱 간격으로 접근하면 같은 캐시 세트로 몰려 충돌 미스가 생길 수 있다. 열 우선 순회에서 행 길이가 딱 2의 거듭제곱일 때 특히 그렇다.</li>
-      <li><strong>GC가 배치를 바꾼다.</strong> .NET에서 연달아 할당한 객체는 처음에는 힙에 가깝게 놓이는 경향이 있다. 하지만 오래 살면서 할당과 해제가 섞이면 흩어진다. "지금 빠르다"가 계속 빠르다는 뜻은 아니다.</li>
+      <li><strong><a data-ref="csharp/gc-basics">GC</a>가 배치를 바꾼다.</strong> .NET에서 연달아 할당한 객체는 처음에는 힙에 가깝게 놓이는 경향이 있다. 하지만 오래 살면서 할당과 해제가 섞이면 흩어진다. "지금 빠르다"가 계속 빠르다는 뜻은 아니다.</li>
     </ul>
 
   </article>

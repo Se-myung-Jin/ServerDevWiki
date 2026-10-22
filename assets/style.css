@@ -1,12 +1,15 @@
 /* ServerDevWiki 공통 스타일
    테마는 :root 토큰만 바꿔서 전환한다. data-theme 이 없으면 OS 설정(auto)을 따른다. */
 
+/* 본문 나눔고딕, 코드 나눔고딕코딩. 불러오지 못하면 시스템 고딕으로 떨어진다. */
+@import url("https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&family=Nanum+Gothic+Coding:wght@400;700&display=swap");
+
 :root {
   --content-width: 880px;
   --side-width: 264px;
 
-  --font-sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "D2Coding", Consolas, "Courier New", monospace;
+  --font-sans: "Nanum Gothic", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "Nanum Gothic Coding", "D2Coding", Consolas, "Courier New", monospace;
   --font-body: var(--font-sans);
 
   --bg: #f7f8fa;
@@ -77,7 +80,6 @@
 }
 
 :root[data-theme="sepia"] {
-  --font-body: "Noto Serif KR", "Batang", Georgia, serif;
   --bg: #f4efe4;
   --surface: #fbf8f1;
   --surface-2: #ece5d6;
@@ -278,7 +280,7 @@ pre code.hljs { background: transparent; padding: 0; color: var(--text); }
 .crumbs a { color: var(--text-2); }
 .crumbs span { margin: 0 6px; }
 
-.doc-title { font-size: 30px; line-height: 1.3; margin: 0 0 8px; letter-spacing: -0.01em; }
+.doc-title { font-size: 30px; font-weight: 800; line-height: 1.3; margin: 0 0 8px; letter-spacing: -0.01em; }
 .doc-desc { color: var(--text-2); margin: 0 0 24px; }
 
 .doc-body { font-family: var(--font-body); }
@@ -425,6 +427,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .f-on { fill: var(--surface); font-size: 13px; font-weight: 700; }
 .f-head-accent { fill: var(--accent); }
 .f-inval { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
+
+/* 아직 없는 문서를 가리키는 참조: 링크 대신 점선 밑줄 */
+a.ref-pending {
+  color: inherit;
+  text-decoration: underline dotted var(--text-2);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+a.ref-pending:hover { text-decoration: underline dotted var(--text-2); }
 
 /* 문서 맨 위 "먼저 읽을 것" */
 .prereq {

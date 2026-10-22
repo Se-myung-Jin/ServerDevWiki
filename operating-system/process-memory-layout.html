@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>프로세스 메모리 구성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/process-memory-layout">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="process-thread.html">프로세스와 스레드</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      프로세스의 주소 공간은 크게 <span class="blank">코드 · 데이터 · 힙 · 스택</span>으로 나뉜다. 코드와 데이터는 크기가 실행 전에 정해지고, 힙과 스택은 실행 중에 늘어난다.
+    </p>
+    <p>
+      교과서 그림에서는 힙이 위로, 스택이 아래로 서로를 향해 자란다. 실제로는 그 사이를 공유 라이브러리와 파일 매핑이 차지하고, 스택은 스레드마다 크기가 정해져 있으며, 영역의 시작 주소는 실행할 때마다 무작위로 바뀐다(ASLR).
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>영역마다 자라는 방향과 성질이 다르다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 380" role="img" aria-label="높은 주소부터 스택, 가드 페이지, 빈 공간, 메모리 맵 영역, 빈 공간, 힙, BSS, 데이터, 텍스트 순서">
+        <defs><marker id="pml-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="190" y="22" text-anchor="end">높은 주소</text>
+        <rect class="f-hit" x="200" y="30" width="260" height="40"/><text class="f-strong" x="330" y="55" text-anchor="middle">스택</text>
+        <rect class="f-pad" x="202" y="72" width="256" height="10"/>
+        <rect class="f-cell2" x="200" y="84" width="260" height="50"/>
+        <line class="f-line" x1="330" y1="90" x2="330" y2="126" marker-end="url(#pml-a)"/>
+        <rect class="f-box" x="200" y="134" width="260" height="44"/><text class="f-text" x="330" y="161" text-anchor="middle">메모리 맵 영역</text>
+        <rect class="f-cell2" x="200" y="178" width="260" height="50"/>
+        <line class="f-line" x1="330" y1="222" x2="330" y2="186" marker-end="url(#pml-a)"/>
+        <rect class="f-hit" x="200" y="228" width="260" height="40"/><text class="f-strong" x="330" y="253" text-anchor="middle">힙</text>
+        <rect class="f-box" x="200" y="268" width="260" height="28"/><text class="f-text" x="330" y="287" text-anchor="middle">BSS</text>
+        <rect class="f-box" x="200" y="296" width="260" height="28"/><text class="f-text" x="330" y="315" text-anchor="middle">데이터</text>
+        <rect class="f-box" x="200" y="324" width="260" height="34"/><text class="f-text" x="330" y="346" text-anchor="middle">텍스트 (코드)</text>
+        <text class="f-sub" x="190" y="374" text-anchor="end">낮은 주소</text>
+        <text class="f-sub" x="476" y="55">지역 변수 · 호출 기록. 아래로 자란다</text>
+        <text class="f-sub" x="476" y="81">가드 페이지: 넘치면 여기서 폴트</text>
+        <text class="f-sub" x="476" y="161">공유 라이브러리 · 파일 매핑</text>
+        <text class="f-sub" x="476" y="253">동적 할당. 위로 자란다</text>
+        <text class="f-sub" x="476" y="287">0으로 시작하는 전역·정적</text>
+        <text class="f-sub" x="476" y="315">초기값 있는 전역·정적</text>
+        <text class="f-sub" x="476" y="346">기계어. 읽기 전용</text>
+      </svg>
+      <figcaption>교과서식 배치다. 힙과 스택 사이가 전부 비어 있지는 않고, 공유 라이브러리와 파일 매핑이 그 사이에 들어간다. 스레드가 여럿이면 스택이 스레드 수만큼 생긴다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>영역</th><th>무엇이 들어가나</th><th>크기가 정해지는 때</th></tr></thead>
+        <tbody>
+          <tr><td>텍스트</td><td>기계어 명령</td><td>컴파일 때. 실행 중 읽기 전용이다</td></tr>
+          <tr><td>데이터</td><td>초기값이 있는 전역·정적 변수</td><td>컴파일 때. 실행 파일에 값이 들어 있다</td></tr>
+          <tr><td>BSS</td><td>초기값이 없는(0으로 시작하는) 전역·정적 변수</td><td>컴파일 때. 크기만 적어 두고 적재할 때 0으로 채운다</td></tr>
+          <tr><td>힙</td><td>실행 중 동적으로 할당한 것</td><td>실행 중. 요청할 때마다</td></tr>
+          <tr><td>메모리 맵 영역</td><td>공유 라이브러리, 파일 매핑, 큰 할당</td><td>적재할 때와 실행 중</td></tr>
+          <tr><td>스택</td><td>지역 변수, 함수 호출 기록</td><td>스레드를 만들 때 최대 크기가 정해지고, 그 안에서 호출마다 늘고 준다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      데이터가 둘로 나뉘는 것은 실행 파일 크기 때문이다. 초기값이 있는 것은 값을 파일에 담아야 하지만, 0으로 시작할 것은 크기만 적어 두면 된다. 그래서 큰 배열을 초기값 없이 전역으로 두어도 실행 파일이 커지지 않는다.
+    </p>
+    <p>
+      텍스트는 읽기 전용이라 같은 프로그램을 두 개 실행해도 물리 페이지를 함께 쓴다. 공유 라이브러리도 마찬가지로 여러 프로세스가 나눠 쓰고, 매핑한 파일은 전체를 복사하지 않고 실제로 접근한 만큼만 읽어 들인다.
+    </p>
+
+    <h3>C#에서는 무엇이 어디에 있나</h3>
+    <p>
+      .NET의 관리 힙(<a data-ref="csharp/gc-basics">GC</a> 힙)은 C의 <code>malloc</code> 힙과 별개로, 런타임이 메모리 맵 영역에 직접 잡아 관리한다. <code>new</code>로 만든 객체는 여기에 있다.
+      스택에는 지역 변수가 놓이는데, 값 타입은 값 자체가, 참조 타입은 참조(64비트에서 8바이트)만 놓이고 객체는 GC 힙에 있다.
+      람다가 캡처한 지역 변수나 <code>async</code> 메서드의 지역 변수는 컴파일러가 힙 객체로 옮기므로 스택에 남지 않는다.
+    </p>
+    <p>
+      C#의 <code>static</code> 필드는 C의 전역 변수와 달리 데이터·BSS 영역에 있지 않다. 런타임이 타입을 처음 쓸 때 따로 잡은 영역에 두고, 참조형 <code>static</code> 필드가 가리키는 객체는 GC 힙에 있다.
+      그래서 <code>static</code> 컬렉션에 넣은 객체는 프로세스가 끝날 때까지 GC가 회수하지 않는다. 서버의 메모리 누수에서 흔한 모양이다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>스택 오버플로는 서버를 바로 내린다.</strong> .NET에서 <code>StackOverflowException</code>은 <code>catch</code>로 잡을 수 없고 프로세스가 즉시 끝난다. 깊은 재귀(길찾기, 트리 순회, 순환 참조가 있는 직렬화)는 반복문과 명시적 스택으로 바꾸거나 깊이에 상한을 둔다.
+      </li>
+      <li>
+        <strong>메모리 사용량은 영역별로 본다.</strong> 덤프나 <code>dotnet-counters</code>로 GC 힙 크기와 프로세스 전체 메모리를 비교하면, 늘어난 것이 관리 객체인지 네이티브 라이브러리·스레드 스택인지 가를 수 있다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>스택이 자라다가 힙을 침범하는 것이 아니다.</strong> 스택 크기는 스레드를 만들 때 정해지고, 그 끝에는 접근이 막힌 가드 페이지가 깔려 있다. 넘치면 그 페이지에 접근해 폴트가 난다. 힙과 마주 보며 서로를 침범하던 것은 예전 구조다.
+      </li>
+      <li>
+        <strong>스택 오버플로와 힙 고갈은 다른 실패다.</strong> 스택은 넘치는 순간 그 자리에서 죽는다. 힙은 할당 함수가 실패를 알려 주는 것이 원칙이지만, Linux는 기본적으로 메모리를 실제로 쓸 때까지 내주는 것을 미루기 때문에(overcommit) 할당은 성공하고 나중에 OOM killer가 프로세스를 죽이는 일도 있다. Windows는 반대로 할당(커밋)하는 순간 쓸 수 있는 양을 따져서, 모자라면 그 자리에서 실패시킨다.
+      </li>
+      <li>
+        <strong>주소만 보고 영역을 짐작하지 않는다.</strong> ASLR 때문에 영역의 시작 주소는 실행마다 다르다. 주소를 그 프로세스의 메모리 맵(Linux <code>/proc/&lt;pid&gt;/maps</code>, 디버거의 모듈 목록)과 비교해서 판단한다.
+      </li>
+      <li>
+        <strong>C·C++의 전역 변수는 힙에 있지 않다.</strong> 전역은 데이터·BSS 영역이고, 힙에는 실행 중에 요청해서 받은 것만 들어간다. 수명이 다르고, 해제하는 주체도 다르다. C#의 <code>static</code>은 위에서 본 것처럼 다르다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

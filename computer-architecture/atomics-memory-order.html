@@ -15,7 +15,7 @@
     <h2>핵심 요약</h2>
     <p>
       <strong>원자적 연산</strong>은 읽기·수정·쓰기를 다른 코어가 끼어들 수 없는 하나의 동작으로 처리한다.
-      CPU는 그동안 해당 <span class="blank">캐시 라인의 소유권</span>을 쥐고 있어서, 다른 코어가 그 라인을 건드리지 못한다.
+      CPU는 그동안 해당 <span class="blank"><a data-ref="computer-architecture/memory-hierarchy">캐시 라인</a>의 소유권</span>을 쥐고 있어서, 다른 코어가 그 라인을 건드리지 못한다.
     </p>
     <p>
       그런데 원자성만으로는 부족하다. 컴파일러와 CPU는 성능을 위해 <strong>메모리 접근 순서를 바꿀 수 있고</strong>, 다른 스레드는 그 바뀐 순서를 관측한다.
@@ -72,7 +72,7 @@ do
           <tr>
             <td>ARM (오래된 방식)</td>
             <td>LL/SC: 읽기(<code>LDXR</code>)와 쓰기(<code>STXR</code>)를 짝으로 묶고, 그 사이에 다른 코어가 그 주소를 건드렸으면 쓰기를 실패시킨다</td>
-            <td>값이 같은지가 아니라 <strong>건드렸는지</strong>를 본다. 문맥 교환만 있어도 실패할 수 있어 항상 루프로 감싼다</td>
+            <td>값이 같은지가 아니라 <strong>건드렸는지</strong>를 본다. <a data-ref="operating-system/pcb-context-switch">문맥 교환</a>만 있어도 실패할 수 있어 항상 루프로 감싼다</td>
           </tr>
           <tr>
             <td>ARMv8.1 이후 (LSE)</td>
@@ -163,7 +163,7 @@ if (Volatile.Read(ref _ready))     // acquire: 뒤의 읽기가 앞으로 당겨
     <ul>
       <li>
         <strong>lock-free는 경합이 심해지면 락보다 느려질 수 있다.</strong> CAS 재시도가 늘고, 라인 소유권이 코어 사이를 계속 오간다.
-        ABA 문제와 안전한 메모리 회수라는 난제도 따라온다. 다만 .NET에서는 GC가 참조가 남아 있는 객체를 재사용하지 않으므로, 참조 기반 자료구조의 ABA와 메모리 회수 문제가 C++보다 훨씬 작다.
+        ABA 문제와 안전한 메모리 회수라는 난제도 따라온다. 다만 .NET에서는 <a data-ref="csharp/gc-basics">GC</a>가 참조가 남아 있는 객체를 재사용하지 않으므로, 참조 기반 자료구조의 ABA와 메모리 회수 문제가 C++보다 훨씬 작다.
       </li>
       <li>
         <strong>배리어를 다 붙이면 느려지고, 빼면 재현되지 않는 버그가 된다.</strong> 이 사이의 폭이 좁아서 lock-free를 제대로 구현하기 어렵다. 직접 만들기 전에 <code>ConcurrentQueue</code>, <code>Channel</code> 같은 검증된 구현을 먼저 쓴다.

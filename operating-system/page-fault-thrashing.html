@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>페이지 폴트와 스래싱 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/page-fault-thrashing">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="paging-tlb.html">페이징과 TLB</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>페이지 폴트</strong>는 접근한 가상 페이지가 지금 물리 메모리에 매핑돼 있지 않을 때 CPU가 일으키는 예외다.
+      고장이 아니라 <span class="blank"><a data-ref="operating-system/virtual-memory">가상 메모리</a>가 동작하는 방식 그 자체</span>다. 프로그램을 처음 실행할 때도, 새로 받은 메모리를 처음 쓸 때도 폴트가 난다.
+    </p>
+    <p>
+      폴트가 난다는 것 자체는 문제가 아니다. 디스크까지 내려가는 폴트가 너무 잦아질 때 문제가 된다.
+      일하는 시간보다 페이지를 나르는 시간이 길어진 상태가 <span class="blank">스래싱</span>이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>폴트라고 다 같은 폴트가 아니다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="메모리 접근이 마이너 폴트, 메이저 폴트, 잘못된 접근 세 갈래로 나뉜다">
+      <defs><marker id="pf-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <rect class="f-box" x="16" y="90" width="130" height="50" rx="6"/><text class="f-text" x="81" y="111" text-anchor="middle">페이지 폴트</text><text class="f-sub" x="81" y="128" text-anchor="middle">매핑이 없는 접근</text>
+      <polyline class="f-line" points="146,115 200,115 200,45 256,45" marker-end="url(#pf-a)"/>
+      <rect class="f-hit" x="258" y="20" width="220" height="50" rx="6"/><text class="f-strong" x="368" y="41" text-anchor="middle">마이너 폴트</text><text class="f-sub" x="368" y="58" text-anchor="middle">물리 메모리에 있다</text>
+      <text class="f-sub" x="494" y="50">매핑만 건다 · 싸다</text>
+      <polyline class="f-line" points="146,115 200,115 200,115 256,115" marker-end="url(#pf-a)"/>
+      <rect class="f-miss" x="258" y="90" width="220" height="50" rx="6"/><text class="f-on" x="368" y="111" text-anchor="middle">메이저 폴트</text><text class="f-on" x="368" y="128" text-anchor="middle">디스크에서 읽어 온다</text>
+      <text class="f-strong" x="494" y="120">비싸다 · 이 수를 본다</text>
+      <polyline class="f-line" points="146,115 200,115 200,185 256,185" marker-end="url(#pf-a)"/>
+      <rect class="f-box" x="258" y="160" width="220" height="50" rx="6"/><text class="f-text" x="368" y="181" text-anchor="middle">잘못된 접근</text><text class="f-sub" x="368" y="198" text-anchor="middle">주소·권한이 맞지 않다</text>
+      <text class="f-sub" x="494" y="190">프로세스가 죽는다</text>
+      
+      </svg>
+      <figcaption>같은 접근이라도 셋 중 어느 갈래로 가느냐에 따라 비용이 달라진다. 폴트 횟수만 세면 마이너까지 세어 문제가 있는 것처럼 보인다. 봐야 하는 것은 가운데다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>무슨 상황인가</th><th>비용</th></tr></thead>
+        <tbody>
+          <tr><td style="white-space:nowrap">마이너 폴트</td><td>페이지가 물리 메모리 어딘가에 있거나 새로 0으로 채워 주면 되는 경우. 처음 쓰는 힙, copy-on-write, 다른 프로세스가 이미 올려 둔 공유 라이브러리</td><td>매핑만 걸면 끝난다. 새 페이지를 0으로 채우는 시간까지 대략 마이크로초 수준</td></tr>
+          <tr><td style="white-space:nowrap">메이저 폴트</td><td>디스크에서 읽어 와야 한다. 스왑으로 내려간 페이지, 아직 안 읽은 실행 파일·메모리 매핑 파일</td><td>디스크 접근이 붙는다. SSD라도 수십 마이크로초 이상, HDD면 밀리초</td></tr>
+          <tr><td style="white-space:nowrap">잘못된 접근</td><td>할당되지 않은 주소이거나, 읽기 전용 페이지에 쓰는 것처럼 권한이 맞지 않다</td><td>OS가 처리할 수 없다. Linux는 SIGSEGV, Windows는 Access Violation으로 프로세스가 죽는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      잘못된 접근도 하드웨어 입장에서는 같은 페이지 폴트로 들어온다. OS가 폴트 처리기에서 주소와 권한을 확인한 뒤 "고칠 수 없다"고 판정하는 것이다. 널 포인터 역참조가 여기 해당한다.
+      C#에서는 결과가 다르다. .NET 런타임이 널 참조로 생긴 이 폴트를 받아 <code>NullReferenceException</code>으로 바꿔 던지므로, 잡을 수 있는 예외가 된다. 프로세스가 바로 죽는 것은 네이티브 코드(P/Invoke, <code>unsafe</code>)에서 잘못된 주소를 건드렸을 때다.
+    </p>
+    <p>
+      메이저 폴트가 늘면 물리 메모리가 모자라다는 뜻이다. 진단할 때는 전체 폴트 수가 아니라 메이저 폴트 수를 본다.
+    </p>
+
+    <h3>교체 알고리즘은 다음에 안 쓸 것을 고르는 문제다</h3>
+    <p>물리 메모리가 꽉 찼는데 새 페이지를 올려야 하면, 이미 올라와 있는 페이지 하나를 내보내야 한다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>알고리즘</th><th>고르는 방식</th><th>문제</th></tr></thead>
+        <tbody>
+          <tr><td>FIFO</td><td>먼저 들어온 것부터</td><td>자주 쓰는 페이지도 순서가 되면 나간다. 벨라디 이상이 생긴다</td></tr>
+          <tr><td>최적(OPT)</td><td>앞으로 가장 늦게 쓸 것</td><td>미래를 알아야 해서 구현할 수 없다. 비교 기준으로만 쓴다</td></tr>
+          <tr><td>LRU</td><td>가장 오래 안 쓴 것</td><td>접근할 때마다 순서를 갱신해야 해서 그대로 구현하기 비싸다</td></tr>
+          <tr><td>시계(Clock)</td><td>참조 비트를 보며 한 바퀴 돈다</td><td>LRU를 싸게 흉내 낸다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      LRU를 그대로 쓰는 OS는 드물다. 메모리 접근은 하드웨어가 하므로 소프트웨어가 접근마다 순서를 고칠 수 없다.
+      하드웨어는 페이지 테이블 항목에 참조 비트를 세워 주기만 하고, OS는 그 비트로 LRU를 근사한다. 시계 알고리즘이 교과서의 대표이고, Linux는 활성·비활성 목록을 두는 식으로 같은 근사를 한다.
+    </p>
+    <p>
+      FIFO는 프레임을 늘렸는데 폴트가 오히려 늘어나는 경우가 있다. 이것이 <strong>벨라디 이상</strong>이다.
+      LRU에는 이런 일이 없다. 프레임을 하나 늘리면, 늘리기 전에 담고 있던 페이지를 그대로 담은 채 하나가 더 들어가기 때문이다.
+    </p>
+
+    <h3>스래싱은 스스로를 키운다</h3>
+    <p>
+      최근 한동안 실제로 접근한 페이지를 모은 것을 <strong>워킹셋</strong>이라고 한다. <a href="../computer-architecture/locality.html">참조 지역성</a> 덕분에 이 집합은 주소 공간 전체보다 훨씬 작다.
+      실행 중인 프로세스들의 워킹셋 합이 물리 메모리를 넘으면 악순환이 시작된다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="워킹셋이 물리 메모리를 넘으면 폴트가 늘고 CPU 사용률이 떨어지며, 일을 더 올리면 다시 메모리가 모자라는 악순환">
+      <defs><marker id="th-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <rect class="f-miss" x="30" y="24" width="290" height="52" rx="6"/><text class="f-on" x="175" y="46" text-anchor="middle">워킹셋 합 > 물리 메모리</text><text class="f-on" x="175" y="63" text-anchor="middle">서로의 페이지를 밀어낸다</text>
+      <rect class="f-box" x="400" y="24" width="290" height="52" rx="6"/><text class="f-text" x="545" y="46" text-anchor="middle">메이저 폴트가 잦아진다</text><text class="f-sub" x="545" y="63" text-anchor="middle">흐름이 디스크를 기다리며 멈춘다</text>
+      <rect class="f-box" x="400" y="152" width="290" height="52" rx="6"/><text class="f-text" x="545" y="174" text-anchor="middle">CPU 사용률이 떨어진다</text><text class="f-sub" x="545" y="191" text-anchor="middle">겉으로는 한가해 보인다</text>
+      <rect class="f-box" x="30" y="152" width="290" height="52" rx="6"/><text class="f-text" x="175" y="174" text-anchor="middle">일을 더 올린다</text><text class="f-sub" x="175" y="191" text-anchor="middle">프로세스·작업 추가</text>
+      <polyline class="f-line" points="320,50 398,50" marker-end="url(#th-a)"/>
+      <polyline class="f-line" points="545,76 545,150" marker-end="url(#th-a)"/>
+      <polyline class="f-line" points="400,178 322,178" marker-end="url(#th-a)"/>
+      <polyline class="f-line" points="175,152 175,78" marker-end="url(#th-a)"/>
+      <text class="f-strong" x="360" y="120" text-anchor="middle">스래싱</text>
+      </svg>
+      <figcaption>CPU 사용률이 떨어진 것을 여유로 오해해 일을 더 올리면, 메모리는 더 모자라지고 폴트는 더 잦아진다.</figcaption>
+    </figure>
+
+    <h2>선택 기준</h2>
+    <h3>스래싱은 튜닝이 아니라 메모리 문제다</h3>
+    <p>
+      교체 알고리즘을 바꿔서 해결되지 않는다. 원인은 워킹셋 합이 물리 메모리보다 크다는 것이라, 손댈 곳은 셋뿐이다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>누가 하나</th></tr></thead>
+        <tbody>
+          <tr><td>동시에 도는 프로세스·작업 수를 줄인다</td><td>운영자, 오케스트레이터(배치 수 조정)</td></tr>
+          <tr><td>프로그램이 한 번에 접근하는 데이터 범위(워킹셋)를 줄인다</td><td>개발자</td></tr>
+          <tr><td>물리 메모리를 늘린다</td><td>운영자(인스턴스 크기)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      교과서에서는 OS가 일부 프로세스를 통째로 내려놓아 나머지를 살린다고 설명한다. 하지만 현대 Linux는 프로세스를 통째로 스왑 아웃하지 않는다.
+      스왑으로 버티다가 메모리가 바닥나면 <strong>OOM killer</strong>가 프로세스 하나를 골라 죽인다. 컨테이너에서는 메모리 limit을 넘는 순간 바로 죽는다(OOMKilled).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>스왑에 들어가는 순간 틱이 무너진다.</strong>
+        메이저 폴트 하나가 틱 시간 전체를 먹을 수 있다. 실시간 게임 서버는 스왑을 끄거나 최소로 두고, 메모리 사용량에 여유를 둔 채 운영한다. 지연이 이유 없이 튀면 메이저 폴트 수부터 본다(Linux <code>ps -o min_flt,maj_flt</code>, <code>/proc/vmstat</code>의 <code>pgmajfault</code>, Windows 성능 카운터 Hard Faults/sec).
+      </li>
+      <li>
+        <strong>컨테이너 메모리 limit은 <a data-ref="csharp/gc-basics">GC</a> 설정과 함께 본다.</strong>
+        .NET은 컨테이너 메모리 limit을 읽어 GC 힙 상한을 잡는다. 그래도 네이티브 메모리, 스레드 스택, 버퍼 풀까지 합친 프로세스 전체가 limit을 넘으면 OOMKilled다. 필요하면 <code>GCHeapHardLimit</code>(또는 <code>GCHeapHardLimitPercent</code>)로 힙 상한을 명시한다.
+      </li>
+      <li>
+        <strong>서버 시작 직후의 느림은 마이너 폴트일 수 있다.</strong>
+        큰 풀이나 맵 데이터를 처음 만지면 페이지마다 마이너 폴트가 난다. 오픈 직후 첫 몇 분만 느리다면 시작 단계에서 풀을 미리 채우고 한 번씩 접근해 두는(warm-up) 방식으로 비용을 오픈 전으로 옮긴다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>페이지 폴트는 오류가 아니다.</strong> 폴트가 없으면 가상 메모리가 동작하지 않는다. 문제는 메이저 폴트의 빈도다.</li>
+      <li><strong>CPU 사용률이 낮다고 여유가 있다는 뜻은 아니다.</strong> 스래싱 중인 시스템은 대부분의 흐름이 디스크를 기다리느라 사용률이 낮게 보인다. 그 상태에서 부하를 더 주면 더 나빠진다.</li>
+      <li><strong>메모리 사용량 지표를 구분한다.</strong> 가상 메모리 크기(VSZ, Private Bytes)가 아니라 실제로 물리 메모리를 차지한 양(RSS, Working Set)이 스래싱과 OOM에 직접 관련된다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

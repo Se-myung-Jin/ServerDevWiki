@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>동기화 객체 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/sync-primitives">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="kernel-boundary.html">커널 경계와 시스템 콜</a> · <a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      동기화 객체는 두 축으로 나뉜다. <strong>소유권이 있느냐</strong>와 <strong>기다릴 때 자느냐 도느냐</strong>다.
+    </p>
+    <p>
+      소유권이 있으면 잡은 쪽만 놓을 수 있어 실수를 막아 준다. 기다릴 때 자면 CPU를 넘겨주지만 깨우는 비용이 들고, 돌면 CPU를 계속 쓰지만 즉시 반응한다.
+      프로세스를 넘어가야 하면 후보는 <span class="blank">커널이 아는 객체</span>로 좁혀진다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>두 축으로 늘어놓으면 쓰임이 나뉜다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="동기화 객체를 소유권 유무와 기다리는 방식으로 나눈 표">
+      <text class="f-strong" x="300" y="22" text-anchor="middle">소유권 있다</text>
+      <text class="f-strong" x="600" y="22" text-anchor="middle">소유권 없다</text>
+      <text class="f-text" x="146" y="67" text-anchor="end">돈다</text>
+      <text class="f-text" x="146" y="133" text-anchor="end">돌다가 잔다</text>
+      <text class="f-text" x="146" y="199" text-anchor="end">잔다</text>
+      <rect class="f-box" x="160" y="34" width="280" height="58" rx="6"/>
+      <text class="f-text" x="300" y="58" text-anchor="middle">스핀락(소유자 기록형)</text>
+      <text class="f-sub" x="300" y="78" text-anchor="middle">C# SpinLock</text>
+      <rect class="f-box" x="460" y="34" width="280" height="58" rx="6"/>
+      <text class="f-text" x="600" y="68" text-anchor="middle">단순 플래그 스핀락</text>
+      <rect class="f-hit" x="160" y="100" width="280" height="58" rx="6"/>
+      <text class="f-strong" x="300" y="124" text-anchor="middle">Windows 크리티컬 섹션</text>
+      <text class="f-sub" x="300" y="144" text-anchor="middle">C# lock · futex 뮤텍스</text>
+      <rect class="f-hit" x="460" y="100" width="280" height="58" rx="6"/>
+      <text class="f-strong" x="600" y="134" text-anchor="middle">C# SemaphoreSlim</text>
+      <rect class="f-box" x="160" y="166" width="280" height="58" rx="6"/>
+      <text class="f-text" x="300" y="190" text-anchor="middle">커널 뮤텍스</text>
+      <text class="f-sub" x="300" y="210" text-anchor="middle">읽기 쓰기 락</text>
+      <rect class="f-box" x="460" y="166" width="280" height="58" rx="6"/>
+      <text class="f-text" x="600" y="190" text-anchor="middle">세마포어 · 이벤트</text>
+      <text class="f-sub" x="600" y="210" text-anchor="middle">조건 변수</text>
+      </svg>
+      <figcaption>가로는 소유권, 세로는 기다리는 방식이다. 현대 구현은 대부분 "잠깐 돌다가 잔다"의 하이브리드라서 가운데 줄에 모인다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>객체</th><th>소유권</th><th>기다릴 때</th><th>주로 쓰는 자리</th></tr></thead>
+        <tbody>
+          <tr><td>뮤텍스</td><td>있다</td><td>잔다(구현에 따라 잠깐 돈 뒤)</td><td>한 번에 하나만 들어가는 임계 구역</td></tr>
+          <tr><td>크리티컬 섹션 (Windows)</td><td>있다</td><td>돌다가 잔다</td><td>한 프로세스 안의 임계 구역</td></tr>
+          <tr><td>세마포어</td><td>없다</td><td>잔다</td><td>개수를 세는 자원, 신호 전달</td></tr>
+          <tr><td>스핀락</td><td>구현에 따라 다르다</td><td>돈다</td><td>아주 짧은 임계 구역, 커널 내부</td></tr>
+          <tr><td>읽기 쓰기 락</td><td>있다</td><td>잔다</td><td>읽기가 압도적으로 많은 자료</td></tr>
+          <tr><td>이벤트</td><td>없다</td><td>잔다</td><td>조건이 만족됐음을 알릴 때</td></tr>
+          <tr><td>조건 변수</td><td>없다(락과 짝)</td><td>잔다</td><td>락과 짝지어 상태 변화를 기다릴 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>소유권이 뮤텍스와 세마포어를 가른다</h3>
+    <p>
+      <strong>카운트가 1인 세마포어도 뮤텍스가 되지는 않는다.</strong> 소유자를 기록하지 않으니 엉뚱한 흐름이 놓아도 막지 못한다.
+      소유권이 있으면 할 수 있는 일이 더 있다. 같은 스레드가 다시 잡는 재진입은 "지금 쥔 쪽이 나인가"를 알아야 허용할 수 있고, <a href="starvation.html">우선순위 상속</a>은 "누가 쥐고 있는가"를 알아야 그 순위를 올려 줄 수 있다.
+      이진 세마포어로 뮤텍스를 대신하면 이 둘이 빠진다.
+    </p>
+    <p>개수는 둘을 나누는 기준이 아니다. 소유권이 본질이고, 개수 차이는 거기서 따라 나온다.</p>
+
+    <h3>프로세스를 넘어가려면 커널이 아는 객체여야 한다</h3>
+    <p>
+      유저 모드 객체는 프로세스 메모리 안의 변수라, 다른 프로세스에서 같은 실체를 가리킬 수 없다. Windows의 크리티컬 섹션과 SRW 락, .NET의 <code>lock</code>이 여기 해당한다.
+      이름을 붙인 뮤텍스·세마포어·이벤트는 커널이 들고 있어서 다른 프로세스가 그 이름으로 열 수 있다.
+    </p>
+    <p>
+      대신 커널 객체는 대기·해제할 때마다 <a href="kernel-boundary.html">커널로 들어간다</a>. 유저 모드 락은 경합이 없으면 원자적 연산 한 번으로 끝나고, 기다려야 할 때만 커널을 부른다(Linux의 futex, Windows의 크리티컬 섹션이 이 구조다).
+    </p>
+
+    <h3>읽기 쓰기 락은 읽기끼리만 겹치게 한다</h3>
+    <p>
+      읽기는 여럿이 동시에 들어갈 수 있고 쓰기는 혼자만 들어간다. Windows의 SRW 락은 가볍게 만들려고 기능을 줄인 대신, 재진입을 허용하지 않고 읽기로 잡은 것을 쓰기로 바꾸지도 못한다. 같은 스레드가 다시 잡으려 하면 그대로 멈춘다.
+    </p>
+    <p>
+      읽기가 끊이지 않으면 락이 완전히 비는 순간이 오지 않아 쓰기가 계속 밀린다. 쓰기가 기다리는 동안 새 읽기를 막는 구현을 쓰거나, 읽기 대상을 불변 스냅샷으로 바꿔 락 자체를 없애기도 한다.
+    </p>
+
+    <h3>조건 변수는 락을 놓는 일과 잠드는 일을 한 번에 한다</h3>
+    <p>
+      <code>wait</code>는 락을 쥔 채로 부른다. 락을 놓는 것과 대기로 들어가는 것이 한 번에 일어나야, 락을 놓은 직후에 온 신호를 놓치고 영영 깨어나지 못하는 일이 생기지 않는다. 깨어날 때는 락을 다시 잡고 돌아온다.
+    </p>
+    <p>깨어났다고 조건이 만족됐다는 보장은 없다.</p>
+    <ul>
+      <li>신호가 여럿에게 갈 수 있다. 먼저 깬 쪽이 조건을 소비하면 뒤에 깬 쪽은 헛되이 깨어난다.</li>
+      <li>가짜 기상(spurious wakeup)이 있다. 아무도 깨우지 않았는데 깨어나는 경우를 규격이 허용한다.</li>
+    </ul>
+    <p>그래서 깨어난 뒤 조건을 다시 확인하고, 아니면 다시 기다려야 한다. <code>if</code>로 한 번만 확인하면 조건이 아닌데도 진행한다.</p>
+<pre><code class="language-csharp">lock (_gate)
+{
+    while (_queue.Count == 0)      // if 가 아니라 while
+        Monitor.Wait(_gate);       // 락을 놓고 잠들었다가, 깨면 다시 잡고 돌아온다
+    var job = _queue.Dequeue();
+}</code></pre>
+
+    <h2>선택 기준</h2>
+
+    <h3>기다리는 시간이 짧을 때만 스핀이 낫다</h3>
+    <p>재우고 깨우려면 커널 진입과 <a data-ref="operating-system/scheduling">스케줄러</a> 개입이 필요하다. 임계 구역이 그보다 짧으면 그냥 도는 편이 싸다. 다음 조건이 모두 맞아야 한다.</p>
+    <ul>
+      <li>임계 구역이 아주 짧다.</li>
+      <li>코어가 여러 개다. 단일 코어에서는 잡은 쪽이 실행되지 못해 락이 풀리지 않는다.</li>
+      <li>잡은 쪽이 기다리는 동안 선점당하지 않는다. 선점되면 기다리는 쪽은 아무 소용 없이 돌기만 한다.</li>
+    </ul>
+    <p>
+      하나만 어긋나도 손해로 뒤집힌다. 그래서 응용 코드보다 선점을 끌 수 있는 커널 내부에서 많이 쓴다.
+      실제 구현은 둘을 섞는다. 짧게 돌아 보고 그 안에 못 잡으면 잠든다. .NET의 <code>lock</code>도 이렇게 동작한다.
+    </p>
+
+    <h3>읽기가 많다고 항상 읽기 쓰기 락이 낫지는 않다</h3>
+    <p>
+      읽기 쓰기 락은 일반 락보다 상태 관리가 복잡해 획득 자체가 비싸다. 임계 구역이 짧으면 그 차이를 회수하지 못한다.
+      읽기 비율과 임계 구역 길이가 함께 커야 이득이 나므로, 바꾸기 전에 일반 락과 나란히 재 본다.
+    </p>
+
+    <h3>C#에서는 무엇을 쓰나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>필요한 것</th><th>C#</th><th>비고</th></tr></thead>
+        <tbody>
+          <tr><td>프로세스 안의 임계 구역</td><td><code>lock</code> (<code>Monitor</code>, .NET 9부터 <code>System.Threading.Lock</code>)</td><td>소유권 있음, 재진입 가능, 잠깐 돌다가 잔다. 가장 먼저 고려한다</td></tr>
+          <tr><td>임계 구역 안에서 <code>await</code></td><td><code>SemaphoreSlim(1, 1)</code> + <code>WaitAsync</code></td><td><code>lock</code> 안에서는 <code>await</code>할 수 없다. 소유권이 없으니 <code>finally</code>에서 반드시 <code>Release</code></td></tr>
+          <tr><td>동시 N개 제한</td><td><code>SemaphoreSlim(N)</code></td><td>DB 커넥션, 외부 API 호출 수 제한</td></tr>
+          <tr><td>프로세스 간 상호 배제</td><td>이름 붙인 <code>Mutex</code> / <code>Semaphore</code></td><td>커널 객체. 매번 커널을 거쳐 느리다. Linux·macOS의 .NET은 이름 붙인 <code>Mutex</code>만 지원하고, 이름 붙인 <code>Semaphore</code>·<code>EventWaitHandle</code>은 Windows 전용이다</td></tr>
+          <tr><td>읽기가 압도적인 자료</td><td><code>ReaderWriterLockSlim</code>, 또는 불변 스냅샷 교체</td><td>스냅샷 교체가 더 단순하고 빠른 경우가 많다</td></tr>
+          <tr><td>신호 전달</td><td><code>ManualResetEventSlim</code>, <code>TaskCompletionSource</code></td><td>비동기 코드에서는 TCS 쪽</td></tr>
+          <tr><td>아주 짧은 임계 구역</td><td><code>SpinLock</code></td><td>구조체라 복사하면 다른 락이 된다. 측정으로 이득이 확인될 때만</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>서버 중복 실행 막기.</strong> 같은 머신에서 같은 서버 프로세스가 두 번 뜨지 않게 하려면 이름 붙인 <code>Mutex</code>를 시작할 때 잡는다. 프로세스를 넘어가야 하는 몇 안 되는 자리라 커널 객체가 맞다. 이름 붙인 <code>Mutex</code>는 Linux에서도 동작하지만, 컨테이너마다 격리되어 있으니 같은 컨테이너 안의 프로세스끼리만 막는다.
+      </li>
+      <li>
+        <strong>락 안에서 DB를 부르지 않는다.</strong> <code>lock</code> 안에서는 <code>await</code>이 막혀 있어서, 동기 호출(<code>.Result</code>)로 우회하는 순간 <a data-ref="operating-system/thread-pool">스레드 풀</a> 스레드가 DB 응답을 기다리며 묶인다. <code>SemaphoreSlim.WaitAsync</code>로 바꾸거나, 락 밖에서 데이터를 가져와 락 안에서는 반영만 한다.
+      </li>
+      <li>
+        <strong>락 대신 소유 스레드를 정한다.</strong> 존·채널 상태처럼 자주 바뀌는 데이터는, 락을 여러 곳에서 잡게 하기보다 한 스레드(또는 큐 하나)만 만지게 하고 다른 스레드는 메시지로 요청하는 구조가 흔하다. 동기화 객체가 필요한 자리 자체를 줄이는 것이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>스핀락은 빠른 락이 아니다.</strong> 조건이 맞을 때만 빠르고, 어긋나면 CPU를 계속 쓰면서 기다리는 가장 비싼 선택이 된다. 특히 컨테이너처럼 CPU가 제한된 환경에서는 도는 시간이 다른 스레드의 몫을 빼앗는다.</li>
+      <li><strong><code>SemaphoreSlim</code>은 소유권이 없다.</strong> 잡지 않은 쪽에서 <code>Release</code>해도 막지 않고, 예외 경로에서 <code>Release</code>를 빠뜨리면 영원히 잠긴다. 반드시 <code>try/finally</code>로 짝을 맞춘다.</li>
+      <li><strong>재진입 여부를 확인한다.</strong> C# <code>lock</code>은 재진입이 되지만 <code>SemaphoreSlim</code>과 SRW 락은 되지 않는다. 같은 스레드가 두 번 잡으면 스스로 <a data-ref="operating-system/deadlock">데드락</a>에 빠진다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

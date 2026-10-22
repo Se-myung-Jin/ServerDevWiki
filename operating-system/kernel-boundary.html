@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>커널 경계와 시스템 콜 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operating-system/kernel-boundary">
+  <article class="doc-body">
+
+    <h2>핵심 요약</h2>
+    <p>
+      운영체제는 하드웨어를 여럿이 나눠 쓰게 만드는 층이다. CPU·메모리·장치를 누가 언제 쓸지 정하고(<strong>자원 관리</strong>),
+      응용에는 파일·프로세스·소켓 같은 추상을 대신 제공하며(<strong>추상화</strong>), 응용끼리 서로를 망가뜨리지 못하게 막는다(<strong>보호</strong>).
+    </p>
+    <p>
+      보호를 위해 권한을 둘로 나눈다. 응용은 <span class="blank">사용자 모드</span>에서 실행되고 하드웨어에 직접 접근하지 못한다.
+      필요한 일은 커널에 요청해야 하고, 그 요청 통로가 <span class="blank">시스템 콜</span>이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>모드를 나누지 않으면 프로세스 하나가 전부를 망가뜨린다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 265" role="img" aria-label="응용은 사용자 모드에서 시스템 콜로만 커널에 요청하고, 커널만 하드웨어를 직접 다룬다">
+        <defs><marker id="kb-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="20" y="48">사용자 모드</text>
+        <rect class="f-hit" x="150" y="20" width="130" height="46" rx="6"/><text class="f-strong" x="215" y="48" text-anchor="middle">응용 A</text>
+        <rect class="f-hit" x="300" y="20" width="130" height="46" rx="6"/><text class="f-strong" x="365" y="48" text-anchor="middle">응용 B</text>
+        <rect class="f-hit" x="450" y="20" width="130" height="46" rx="6"/><text class="f-strong" x="515" y="48" text-anchor="middle">응용 C</text>
+        <line class="f-barrier" x1="20" y1="96" x2="610" y2="96"/><text class="f-sub" x="20" y="90">권한 경계</text>
+        <line class="f-line" x1="215" y1="66" x2="215" y2="118" marker-end="url(#kb-a)"/>
+        <line class="f-line" x1="365" y1="66" x2="365" y2="118" marker-end="url(#kb-a)"/>
+        <line class="f-line" x1="515" y1="66" x2="515" y2="118" marker-end="url(#kb-a)"/>
+        <text class="f-sub" x="222" y="86">시스템 콜</text>
+        <text class="f-sub" x="20" y="150">커널 모드</text>
+        <rect class="f-box" x="150" y="120" width="450" height="50" rx="6"/><text class="f-text" x="375" y="150" text-anchor="middle">커널: 스케줄링 · 메모리 할당 · 장치 제어</text>
+        <line class="f-line" x1="375" y1="170" x2="375" y2="198" marker-end="url(#kb-a)"/>
+        <rect class="f-cell" x="150" y="200" width="450" height="42" rx="6"/><text class="f-text" x="375" y="226" text-anchor="middle">하드웨어 (CPU · 메모리 · 장치)</text>
+        <polyline class="f-line f-dash" points="580,43 650,43 650,221 604,221" marker-end="url(#kb-a)"/>
+        <text class="f-x" x="650" y="112" text-anchor="middle">✕</text>
+        <text class="f-sub" x="650" y="258" text-anchor="middle">직통 경로 없음</text>
+      </svg>
+      <figcaption>응용에서 하드웨어로 가는 직통 경로가 없다. 반드시 커널을 거친다.</figcaption>
+    </figure>
+    <p>
+      권한 경계가 없으면 응용 하나가 다른 프로세스의 메모리를 읽거나 장치를 독점할 수 있다.
+      CPU는 지금 어느 모드인지를 기록해 두고, 사용자 모드에서 <strong>특권 명령</strong>을 실행하면 하드웨어가 예외를 일으킨다.
+      x86은 이 두 수준을 링 0(커널)과 링 3(사용자)이라고 부른다. <a data-ref="operating-system/paging-tlb">페이지 테이블</a> 위치를 가리키는 레지스터(CR3)를 바꾸는 명령, 인터럽트를 끄는 명령 같은 것이 특권 명령이다.
+    </p>
+    <p>
+      명령만 막아서는 다른 프로세스나 커널의 메모리까지 막지 못한다. 그래서 페이지 테이블 항목마다 사용자 모드에서 접근해도 되는지를 적는 비트가 따로 있고,
+      커널 영역으로 표시된 페이지는 사용자 모드에서 읽기만 해도 폴트가 난다(<a href="virtual-memory.html">가상 메모리</a>).
+    </p>
+
+    <h3>커널로 넘어가는 통로는 정해진 자리에만 열려 있다</h3>
+    <p>경계를 넘는 자리는 시스템 콜, 인터럽트, 예외 셋뿐이다. 셋 다 커널 모드로 넘어가는 사건이지만 누가 일으키는가가 다르다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>시스템 콜</th><th>인터럽트</th><th>예외</th></tr></thead>
+        <tbody>
+          <tr><td>누가</td><td>실행 중인 프로그램이 스스로</td><td>장치나 타이머가 바깥에서</td><td>실행한 명령 자체가</td></tr>
+          <tr><td>시점</td><td>코드가 정한 지점 (동기)</td><td>언제 올지 모른다 (비동기)</td><td>그 명령을 실행하는 순간 (동기)</td></tr>
+          <tr><td>예</td><td>파일 읽기, 소켓 전송, 메모리 요청</td><td>네트워크 패킷 도착, 디스크 완료, 타이머 만료</td><td><a data-ref="operating-system/page-fault-thrashing">페이지 폴트</a>, 0으로 나누기, 잘못된 메모리 접근</td></tr>
+          <tr><td>처리 뒤</td><td>요청한 다음 명령으로 돌아간다</td><td>하던 일을 이어가거나, <a data-ref="operating-system/scheduling">스케줄러</a>가 다른 흐름으로 바꾼다</td><td>고칠 수 있으면(페이지 폴트) 그 명령부터 다시. 아니면 프로세스에 오류를 전달한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      타이머 인터럽트가 특히 중요하다. 응용이 CPU를 스스로 내놓지 않아도, 타이머가 주기적으로 커널을 깨워 스케줄러가 CPU를 다른 흐름에 넘길 수 있다. 선점형 멀티태스킹의 바탕이다.
+    </p>
+
+    <h3>시스템 콜은 함수 호출보다 비싸다</h3>
+    <p>
+      시스템 콜은 전용 명령(x86-64의 <code>syscall</code>)으로 모드를 바꾸고, 커널 스택으로 옮겨 가고, 레지스터를 저장했다가 돌아올 때 복원한다.
+      여기에 보안 대책 비용이 더해진다. Meltdown 취약점에 영향을 받는 CPU에서는 커널과 사용자의 페이지 테이블을 분리(KPTI)해서, 경계를 넘을 때마다 주소 변환 정보를 바꾸는 비용이 추가됐다. 이 취약점이 없는 최신 CPU에서는 KPTI를 켜지 않는다.
+    </p>
+    <p>
+      규모로 보면, 같은 프로세스 안의 함수 호출은 몇 나노초인데 가장 단순한 시스템 콜도 그보다 수십 배 이상 걸린다. 한 번은 작아도 패킷·로그마다 부르면 쌓인다.
+    </p>
+    <p>
+      그래서 자주 부르는 일부 기능은 커널에 들어가지 않고 처리하도록 만들어 둔다. 예를 들어 Linux의 현재 시각 조회는 vDSO라는 사용자 공간 코드로 처리되고, Windows의 <code>QueryPerformanceCounter</code>도 대부분 사용자 모드에서 끝난다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <p><strong>작은 입출력을 여러 번 하지 말고 모아서 한 번에 한다.</strong> 시스템 콜 횟수가 처리량을 정하는 경우가 많다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>시스템 콜이 많은 방식</th><th>줄이는 방식</th></tr></thead>
+        <tbody>
+          <tr><td>패킷 여러 개 전송</td><td>패킷마다 <code>Send</code></td><td>송신 버퍼에 모아 한 번에 보내거나, 버퍼 목록을 한 번에 넘긴다(scatter/gather)</td></tr>
+          <tr><td>로그 기록</td><td>줄마다 파일에 쓰고 flush</td><td>메모리에 모았다가 주기적으로 쓴다</td></tr>
+          <tr><td>파일 읽기</td><td>몇 바이트씩 읽기</td><td>버퍼를 둔 스트림으로 큰 단위로 읽는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>모은 만큼 지연은 늘어난다. 실시간성이 중요한 패킷은 모으는 시간에 상한을 둔다.</p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>.NET API 뒤에 시스템 콜이 숨어 있다.</strong> <code>Socket.Send</code>, <code>FileStream.Flush</code>, <code>Console.WriteLine</code>은 호출마다 커널로 들어갈 수 있다.
+        특히 <code>Console.WriteLine</code>으로 로그를 남기면 출력이 동기화되고 시스템 콜이 매번 일어나서, 부하가 걸린 서버에서는 로그 자체가 병목이 된다. 비동기 로거를 쓴다.
+      </li>
+      <li>
+        <strong>세션마다 작은 패킷을 바로 보내지 않는다.</strong> 한 틱 동안 세션에 보낼 패킷을 송신 버퍼에 모았다가 틱 끝에 한 번에 보내면, 접속자 수 × 패킷 수만큼 들던 시스템 콜이 접속자 수만큼으로 줄어든다.
+      </li>
+      <li>
+        <strong>CPU 사용률의 "커널" 비율을 본다.</strong> 작업 관리자나 <code>top</code>에서 커널(sys) 시간 비율이 높으면, 로직이 아니라 시스템 콜·인터럽트 처리에 CPU를 쓰고 있다는 뜻이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>운영체제가 하는 일은 하드웨어 관리만이 아니다.</strong> 추상을 제공하는 일도 그만큼 중요하다. 파일·프로세스·소켓은 하드웨어에 없는 개념이고, 응용이 장치 종류를 몰라도 되게 해 주는 수단이다.
+      </li>
+      <li>
+        <strong>시스템 콜을 함수 호출과 같은 것으로 보면 비용을 놓친다.</strong> 모드 전환과 레지스터 저장·복원, 보안 대책 비용이 붙는다.
+      </li>
+      <li>
+        <strong>시스템 콜은 모드 전환이지 컨텍스트 스위칭이 아니다.</strong> 같은 스레드가 커널 모드로 들어갔다 나오는 것이다. 시스템 콜 안에서 기다리게 되어(블로킹) 다른 스레드로 넘어갈 때만 <a href="pcb-context-switch.html">컨텍스트 스위칭</a>이 일어난다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
