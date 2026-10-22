@@ -204,7 +204,63 @@ window.CATALOG = [
     dir: "system-programming",
     title: "시스템 프로그래밍",
     desc: "시스템 콜, 파일 디스크립터와 핸들, 메모리 매핑, 프로세스 간 통신, 링커와 로더",
-    topics: [],
+    tags: ["빌드", "링커와 로더", "메모리 관리", "커널 인터페이스", "런타임"],
+    topics: [
+      {
+        slug: "compile-link",
+        title: "컴파일과 링킹",
+        importance: "핵심",
+        summary: "소스가 실행 파일이 되기까지 네 단계. 어느 단계에서 난 오류인지 알면 고칠 곳이 정해진다.",
+        tags: ["빌드", "링커와 로더"],
+      },
+      {
+        slug: "program-loading",
+        title: "프로그램이 올라가는 과정",
+        summary: "실행 파일이 프로세스가 되기까지. 두 번 실행하면 무엇을 나눠 쓰고 무엇을 따로 갖는가.",
+        tags: ["링커와 로더"],
+      },
+      {
+        slug: "call-stack",
+        title: "호출 스택",
+        importance: "핵심",
+        summary: "함수가 돌아갈 곳을 기억하는 자료구조. 넘치면 프로세스가 죽는다.",
+        tags: ["메모리 관리"],
+      },
+      {
+        slug: "virtual-vs-resident",
+        title: "할당과 실제 확보",
+        importance: "핵심",
+        summary: "할당이 성공해도 물리 페이지는 처음 그 주소에 접근할 때 붙는다. VIRT와 RES는 그래서 벌어진다.",
+        tags: ["메모리 관리"],
+      },
+      {
+        slug: "memory-allocator",
+        title: "메모리 할당자",
+        importance: "핵심",
+        summary: "할당 요청과 커널 사이에 한 층이 더 있다. 그 층이 어떻게 관리하느냐가 성능과 단편화를 정한다.",
+        tags: ["메모리 관리"],
+      },
+      {
+        slug: "kernel-object-handle",
+        title: "커널 오브젝트와 핸들",
+        summary: "커널이 들고 있는 자원을 응용은 번호표로만 가리킨다. 그 번호표가 핸들이다.",
+        tags: ["커널 인터페이스"],
+      },
+      {
+        slug: "syscall-cost",
+        title: "시스템 콜 비용",
+        importance: "핵심",
+        summary: "함수 호출과 비용이 다르다. 경계를 넘는 비용보다 넘고 난 뒤에 남는 비용이 크다.",
+        tags: ["커널 인터페이스"],
+      },
+      {
+        slug: "inline-codegen",
+        title: "인라인과 코드 생성",
+        importance: "참고",
+        summary: "인라인이 다른 최적화의 문을 연다. 그리고 실행 중에 알아내는 대신 빌드 때 만들어 두는 길.",
+        tags: ["빌드", "런타임"],
+      },
+    ],
   },
   {
     dir: "data-structure",
@@ -228,7 +284,15 @@ window.CATALOG = [
     dir: "csharp",
     title: "C# 언어와 런타임",
     desc: "CLR 내부(GC, JIT), async/await 메커니즘, Span/Memory 제로 할당 패턴, 소스 제너레이터",
-    topics: [],
+    tags: ["런타임"],
+    topics: [
+      {
+        slug: "jit-aot",
+        title: "JIT와 AOT",
+        summary: "언제 기계어로 바꾸느냐의 차이. 시작 속도와 최고 성능이 맞바뀐다.",
+        tags: ["런타임"],
+      },
+    ],
   },
   {
     dir: "server",
@@ -270,7 +334,15 @@ window.CATALOG = [
     dir: "cpp",
     title: "C++",
     desc: "객체 수명과 RAII, 이동 의미론, 템플릿, 메모리 모델과 atomic, 스마트 포인터",
-    topics: [],
+    tags: ["빌드"],
+    topics: [
+      {
+        slug: "build-time",
+        title: "빌드 시간",
+        summary: "C++ 빌드가 느린 것은 구현이 아니라 구조 때문이다. 헤더가 파일마다 다시 컴파일된다.",
+        tags: ["빌드"],
+      },
+    ],
   },
   {
     dir: "unity",

@@ -81,7 +81,7 @@
         <thead><tr><th>지표</th><th>뜻</th><th>판단에 쓰나</th></tr></thead>
         <tbody>
           <tr><td>가상 크기 (VSZ, Virtual Size)</td><td>예약하거나 매핑한 주소 공간 전체</td><td>메모리 부족 판단에는 쓰지 않는다. 64비트에서는 매우 커도 정상이다</td></tr>
-          <tr><td>상주 크기 (RSS, Working Set)</td><td>지금 물리 메모리에 올라와 있는 페이지</td><td>실제 메모리 사용량 판단에 쓴다</td></tr>
+          <tr><td><a data-ref="system-programming/virtual-vs-resident">상주 크기</a> (RSS, Working Set)</td><td>지금 물리 메모리에 올라와 있는 페이지</td><td>실제 메모리 사용량 판단에 쓴다</td></tr>
           <tr><td>커밋 크기 (Private Bytes, Commit)</td><td>물리 메모리나 페이지 파일로 보장해 둔 양</td><td>Windows에서 메모리 누수를 볼 때 쓴다</td></tr>
         </tbody>
       </table>

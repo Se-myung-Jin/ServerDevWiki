@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>컴파일과 링킹 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="system-programming/compile-link">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../operating-system/process-memory-layout.html">프로세스 메모리 구성</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      C·C++ 소스는 <span class="blank">전처리 · 컴파일 · 어셈블 · 링킹</span> 네 단계를 거쳐 실행 파일이 된다. 앞의 셋은 소스 파일 하나씩 따로 처리하고, 링킹에서 처음 하나로 합친다.
+    </p>
+    <p>
+      단계를 아는 것이 실용적인 이유는 오류 때문이다. 어느 단계에서 났는지 알면 고칠 곳이 정해진다. 타입 오류는 컴파일, 정의를 못 찾는 오류는 링킹, 실행할 때 라이브러리를 못 찾는 오류는 적재 단계다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>파일마다 따로 만들고 마지막에 합친다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="소스 두 개가 각각 전처리, 컴파일, 어셈블을 거쳐 목적 파일이 되고, 링커가 목적 파일과 라이브러리를 합쳐 실행 파일을 만든다">
+        <defs><marker id="cl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-pad" x="10" y="20" width="520" height="160" rx="10"/>
+        <text class="f-sub" x="24" y="40">여기까지는 파일 하나씩 따로 (번역 단위)</text>
+        <rect class="f-box" x="24" y="56" width="80" height="40" rx="6"/><text class="f-text" x="64" y="81" text-anchor="middle">a.cpp</text>
+        <rect class="f-box" x="124" y="56" width="90" height="40" rx="6"/><text class="f-text" x="169" y="81" text-anchor="middle">전처리</text>
+        <rect class="f-box" x="234" y="56" width="90" height="40" rx="6"/><text class="f-text" x="279" y="81" text-anchor="middle">컴파일</text>
+        <rect class="f-box" x="344" y="56" width="90" height="40" rx="6"/><text class="f-text" x="389" y="81" text-anchor="middle">어셈블</text>
+        <rect class="f-hit" x="454" y="56" width="64" height="40" rx="6"/><text class="f-strong" x="486" y="81" text-anchor="middle">a.o</text>
+        <rect class="f-box" x="24" y="124" width="80" height="40" rx="6"/><text class="f-text" x="64" y="149" text-anchor="middle">b.cpp</text>
+        <rect class="f-box" x="124" y="124" width="90" height="40" rx="6"/><text class="f-text" x="169" y="149" text-anchor="middle">전처리</text>
+        <rect class="f-box" x="234" y="124" width="90" height="40" rx="6"/><text class="f-text" x="279" y="149" text-anchor="middle">컴파일</text>
+        <rect class="f-box" x="344" y="124" width="90" height="40" rx="6"/><text class="f-text" x="389" y="149" text-anchor="middle">어셈블</text>
+        <rect class="f-hit" x="454" y="124" width="64" height="40" rx="6"/><text class="f-strong" x="486" y="149" text-anchor="middle">b.o</text>
+        <line class="f-line" x1="104" y1="76" x2="122" y2="76" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="214" y1="76" x2="232" y2="76" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="324" y1="76" x2="342" y2="76" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="434" y1="76" x2="452" y2="76" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="104" y1="144" x2="122" y2="144" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="214" y1="144" x2="232" y2="144" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="324" y1="144" x2="342" y2="144" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="434" y1="144" x2="452" y2="144" marker-end="url(#cl-a)"/>
+        <rect class="f-box" x="544" y="196" width="110" height="40" rx="6"/><text class="f-text" x="599" y="221" text-anchor="middle">라이브러리</text>
+        <rect class="f-miss" x="560" y="90" width="80" height="48" rx="6"/><text class="f-on" x="600" y="119" text-anchor="middle">링커</text>
+        <rect class="f-hit" x="670" y="90" width="80" height="48" rx="6"/><text class="f-strong" x="710" y="113" text-anchor="middle">실행</text><text class="f-strong" x="710" y="129" text-anchor="middle">파일</text>
+        <line class="f-line" x1="518" y1="80" x2="558" y2="104" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="518" y1="140" x2="558" y2="124" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="600" y1="196" x2="600" y2="140" marker-end="url(#cl-a)"/>
+        <line class="f-line" x1="640" y1="114" x2="668" y2="114" marker-end="url(#cl-a)"/>
+      </svg>
+      <figcaption>점선 안은 소스 파일마다 따로 처리된다. 링커가 목적 파일과 라이브러리를 처음으로 한자리에 모아, 서로 부르는 함수의 주소를 확정한다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>단계</th><th>하는 일</th><th>여기서 나는 오류</th></tr></thead>
+        <tbody>
+          <tr><td>전처리</td><td><code>#include</code>를 펼치고 매크로를 치환한다</td><td>헤더를 찾을 수 없다</td></tr>
+          <tr><td>컴파일</td><td>문법과 타입을 확인하고 어셈블리를 만든다</td><td>문법 오류, 타입 불일치, 선언되지 않은 이름</td></tr>
+          <tr><td>어셈블</td><td>어셈블리를 기계어 목적 파일로 바꾸고, 아직 모르는 주소는 재배치 항목으로 남긴다</td><td>드물다</td></tr>
+          <tr><td>링킹</td><td>목적 파일과 라이브러리를 모아 심볼(함수·전역 변수 이름)을 해석하고 주소를 확정한다</td><td>정의를 찾을 수 없다(undefined reference, LNK2019), 중복 정의(LNK2005)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      컴파일 단계는 파일 하나만 보기 때문에 선언과 정의를 나눠 쓴다. 다른 파일의 함수가 어떻게 생겼는지(선언)만 알면 목적 파일을 만들 수 있고, 실제 위치는 링커가 채운다.
+    </p>
+    <p>
+      반대로 헤더에 함수 본문을 넣고 여러 소스에서 포함하면, 목적 파일마다 같은 심볼이 생겨 링킹에서 중복 정의가 된다. 정의를 소스로 옮기거나 <code>inline</code>을 붙여 "여러 개 있어도 하나로 친다"고 알려 준다.
+    </p>
+
+    <h3>링킹 시점을 언제로 잡느냐</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>정적 링킹</th><th>동적 링킹</th></tr></thead>
+        <tbody>
+          <tr><td>언제 합치나</td><td>빌드할 때 실행 파일 안으로</td><td>실행할 때(적재 시점이나 첫 호출 때) 메모리에서</td></tr>
+          <tr><td>함수 호출</td><td>직접 호출</td><td>주소 표를 거치는 간접 호출(Linux는 PLT·GOT, Windows는 IAT)</td></tr>
+          <tr><td>실행 파일 크기</td><td>커진다</td><td>작다</td></tr>
+          <tr><td>라이브러리 수정</td><td>다시 빌드해야 한다</td><td>파일만 바꾸면 된다</td></tr>
+          <tr><td>여러 프로그램이 쓸 때</td><td>각자 사본을 갖는다</td><td>물리 메모리에 하나만 두고 나눠 쓴다</td></tr>
+          <tr><td>배포</td><td>파일 하나면 끝난다</td><td>의존 라이브러리가 대상 환경에 함께 있어야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      동적 라이브러리는 실행할 때마다 다른 주소에 올라갈 수 있어서, 호출하는 쪽 코드에 주소를 미리 적어 둘 수 없다. 그래서 주소를 별도의 표에 두고 코드는 그 표를 거쳐 간접 호출한다.
+      코드를 고치지 않고 표만 고치기 때문에 코드 페이지를 여러 프로세스가 그대로 나눠 쓸 수 있다. 실제로 표를 채우는 과정은 <a href="program-loading.html">프로그램이 올라가는 과정</a>에서 다룬다.
+    </p>
+
+    <h3>C#에는 링킹 단계가 따로 없다</h3>
+    <p>
+      C# 컴파일러는 소스를 기계어가 아니라 IL로 바꿔 어셈블리(.dll)에 담는다. 다른 어셈블리의 타입은 이름과 시그니처로만 기록해 두고, 실제로 찾아 연결하는 일은 실행 중에 런타임이 한다.
+      그래서 C#의 "링크 오류"는 실행 중에 난다. 참조한 어셈블리가 없으면 <code>FileNotFoundException</code>, 버전이 달라 메서드가 없으면 <code>MissingMethodException</code>·<code>TypeLoadException</code>이 처음 그 코드를 실행하는 순간 터진다.
+      동적 링킹의 버전 불일치와 같은 성질의 문제다.
+    </p>
+    <p>
+      반대로 .NET의 Native <a data-ref="csharp/jit-aot">AOT</a> 배포는 정적 링킹에 가깝다. 쓰는 코드만 남기고(trimming) 런타임까지 실행 파일 하나에 넣는다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>우선하는 것</th><th>고를 것</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>배포 단순함, 대상 환경 무관</td><td>정적 링킹</td><td>파일이 커지고, 라이브러리 보안 패치마다 다시 빌드해 배포해야 한다</td></tr>
+          <tr><td>라이브러리만 교체, 메모리 공유</td><td>동적 링킹</td><td>대상 환경에 맞는 버전이 없으면 시작조차 못 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      컨테이너로 배포하면 환경을 통째로 싣고 가므로 동적 링킹의 약점이 줄어든다. 반대로 실행 파일 하나로 묶어 배포하는 흐름(Go, Rust, .NET Native AOT)도 있다. 어느 쪽이 기본인지는 언어와 배포 방식에 달렸다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>Linux C++ 서버의 단골 배포 사고는 glibc 버전이다.</strong> 최신 배포판에서 빌드한 실행 파일을 오래된 서버에 올리면 <code>GLIBC_2.34 not found</code> 같은 메시지와 함께 시작하지 못한다. 빌드 환경을 운영 환경과 같은 베이스 이미지로 맞추거나, 가장 오래된 대상 환경에서 빌드한다.
+      </li>
+      <li>
+        <strong>Windows에서는 런타임 DLL이 빠진다.</strong> C++ 서버를 새 머신에 올렸더니 <code>vcruntime140.dll</code>이 없다며 뜨지 않는 경우다. Visual C++ 재배포 패키지를 설치 단계에 넣거나 런타임을 정적으로 링크(<code>/MT</code>)한다.
+      </li>
+      <li>
+        <strong>.NET 서버는 빌드가 통과해도 실행 중에 깨질 수 있다.</strong> 같은 패키지의 다른 버전을 프로젝트마다 참조하면, 서버가 그 코드 경로를 처음 탈 때 <code>MissingMethodException</code>이 난다. 시작 시점이 아니라 특정 기능을 처음 쓸 때 터지므로, 패키지 버전은 솔루션 전체에서 한곳(<code>Directory.Packages.props</code>)으로 묶는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>"정의를 찾을 수 없다"는 컴파일러가 아니라 링커가 내는 메시지다.</strong> 그 메시지가 나왔다면 컴파일은 이미 통과했다. 헤더를 포함했다는 것과 구현을 링커에 넘겼다는 것은 다른 이야기라, 그 함수가 들어 있는 소스나 라이브러리가 링크 대상에 들어갔는지를 확인한다.
+      </li>
+      <li>
+        <strong>C++ 이름 장식(name mangling)이 원인일 때도 있다.</strong> C++ 컴파일러는 오버로딩을 위해 심볼 이름에 인자 타입을 섞어 넣는다. C로 만든 라이브러리를 C++에서 부를 때 <code>extern "C"</code>가 빠지면 이름이 달라져 정의를 못 찾는다.
+      </li>
+      <li>
+        <strong>동적 라이브러리 버전 문제는 빌드 때 드러나지 않는다.</strong> 실행할 때 비로소 나타나므로, 빌드 환경과 배포 환경이 다르면 배포한 뒤에야 알게 된다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

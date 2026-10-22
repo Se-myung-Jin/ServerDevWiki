@@ -5,38 +5,9 @@ const path = require("path");
 const [root, flag] = process.argv.slice(2);
 const apply = flag === "--apply";
 
-// 개념어 → 대상 문서. 긴 말부터 검사한다. 아직 없는 문서도 미리 걸어 둘 수 있다.
-const TERMS = [
-  ["컨텍스트 스위칭", "operating-system/pcb-context-switch"],
-  ["문맥 교환", "operating-system/pcb-context-switch"],
-  ["시스템 콜", "operating-system/kernel-boundary"],
-  ["스레드 풀", "operating-system/thread-pool"],
-  ["가상 메모리", "operating-system/virtual-memory"],
-  ["페이지 테이블", "operating-system/paging-tlb"],
-  ["TLB", "operating-system/paging-tlb"],
-  ["페이지 폴트", "operating-system/page-fault-thrashing"],
-  ["우선순위 역전", "operating-system/starvation"],
-  ["데드락", "operating-system/deadlock"],
-  ["뮤텍스", "operating-system/sync-primitives"],
-  ["세마포어", "operating-system/sync-primitives"],
-  ["스케줄러", "operating-system/scheduling"],
-  ["단편화", "operating-system/fragmentation"],
-  ["공유 메모리", "operating-system/ipc"],
-  ["false sharing", "computer-architecture/cache-coherence"],
-  ["캐시 라인", "computer-architecture/memory-hierarchy"],
-  ["메모리 배리어", "computer-architecture/atomics-memory-order"],
-  ["원자적 연산", "computer-architecture/atomics-memory-order"],
-  ["분기 예측", "computer-architecture/pipeline-branch-prediction"],
-  ["엔디안", "computer-architecture/endianness"],
-  ["참조 지역성", "computer-architecture/locality"],
-  ["SMT", "computer-architecture/logical-hybrid-cores"],
-  ["Interlocked", "csharp/volatile-interlocked"],
-  ["async/await", "csharp/async-basics"],
-  ["GC", "csharp/gc-basics"],
-  ["IOCP", "server/completion-port"],
-  ["epoll", "server/io-models"],
-  ["ECS", "game-patterns/ecs-storage"],
-];
+// 개념어 → 대상 문서 목록은 tools/terms.json 에 둔다. 긴 말부터 검사한다.
+const TERMS = JSON.parse(fs.readFileSync(path.join(__dirname, "terms.json"), "utf8"))
+  .sort((x, y) => y[0].length - x[0].length);
 
 // 이 태그 안의 글자는 건드리지 않는다.
 const SKIP = ["a", "code", "pre", "svg", "h1", "h2", "h3", "h4", "th", "figcaption", "script", "style", "summary"];
@@ -98,6 +69,7 @@ for (const c of window.CATALOG) {
   for (const t of c.topics) {
     const ref = c.dir + "/" + t.slug;
     const file = path.join(root, ref + ".html");
+    if (!fs.existsSync(file)) continue;
     const { out, hits } = linkPage(file, ref);
     if (!hits.length) continue;
     total += hits.length;

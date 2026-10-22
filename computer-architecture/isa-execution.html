@@ -87,7 +87,7 @@ for (; j &lt; a.Length; j++) s0 += a[j];
 double sum4 = (s0 + s1) + (s2 + s3);</code></pre>
     <p>
       어느 쪽이 나은지는 사슬이 실제로 병목이었는지에 달렸다. 재 보지 않고 고르면 명령만 늘려 놓고 아무 효과도 얻지 못한다.
-      그리고 <strong>실수에서는 누산기를 나누면 합산 순서가 바뀌어 결과가 미세하게 달라진다</strong>(<a href="number-representation.html">수의 표현</a>). 그래서 컴파일러와 JIT는 실수 합산을 스스로 이렇게 바꾸지 않는다. 결과의 마지막 자리가 달라져도 되는 곳에서만 손으로 쓴다.
+      그리고 <strong>실수에서는 누산기를 나누면 합산 순서가 바뀌어 결과가 미세하게 달라진다</strong>(<a href="number-representation.html">수의 표현</a>). 그래서 컴파일러와 <a data-ref="csharp/jit-aot">JIT</a>는 실수 합산을 스스로 이렇게 바꾸지 않는다. 결과의 마지막 자리가 달라져도 되는 곳에서만 손으로 쓴다.
     </p>
 
     <h2>게임 서버에서는</h2>

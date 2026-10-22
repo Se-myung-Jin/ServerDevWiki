@@ -16,6 +16,7 @@ for (const c of window.CATALOG) {
   for (const t of c.topics) {
     const rel = c.dir + "/" + t.slug;
     const file = path.join(root, rel + ".html");
+    if (!fs.existsSync(file)) { report(rel, "페이지 파일 없음"); continue; }
     const s = fs.readFileSync(file, "utf8");
     const body = s.replace(/<!--[\s\S]*?-->/g, "");
 

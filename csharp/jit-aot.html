@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JIT와 AOT · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/jit-aot">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../system-programming/compile-link.html">컴파일과 링킹</a> · <a href="../system-programming/program-loading.html">프로그램이 올라가는 과정</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">JIT</span>(Just-In-Time)는 실행하면서 중간 코드(.NET의 IL)를 기계어로 바꾸고, <span class="blank">AOT</span>(Ahead-Of-Time)는 실행 전에 미리 바꿔 둔다.
+    </p>
+    <p>
+      JIT는 시작이 느린 대신 실제로 실행되는 모습을 보고 다시 최적화할 수 있다. AOT는 시작이 빠르고 예측 가능한 대신 그 정보를 쓰지 못하고, 실행 중에 코드를 만들어 내는 기능을 잃는다.
+      <strong>시작 속도와 최고 성능이 맞바뀐다.</strong> 오래 도는 게임 서버는 JIT 쪽이 기본이고, 시작이 잦거나 JIT를 금지하는 플랫폼은 AOT를 쓴다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>언제 기계어로 바꾸느냐가 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>JIT</th><th>AOT</th></tr></thead>
+        <tbody>
+          <tr><td>언제 바꾸나</td><td>메서드가 처음 불릴 때</td><td>빌드(게시)할 때</td></tr>
+          <tr><td>시작 속도</td><td>느리다. 바꾸면서 시작한다</td><td>빠르다. 이미 기계어다</td></tr>
+          <tr><td>최고 성능</td><td>실행 정보를 보고 다시 최적화해 더 높아질 수 있다</td><td>빌드 때 정해진 그대로다</td></tr>
+          <tr><td>배포물</td><td>플랫폼과 무관한 IL. 실행할 곳에 런타임이 있어야 한다</td><td>대상 플랫폼별 기계어. 런타임을 함께 담아 단일 파일로 낼 수 있다</td></tr>
+          <tr><td>실행 중 코드 생성</td><td>된다</td><td>안 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      JIT가 AOT보다 빠를 수 있는 이유는 실행 중에만 아는 정보가 있기 때문이다. 어떤 분기가 주로 참인지, 인터페이스 호출에 실제로 어떤 타입이 오는지를 보면, 자주 오는 타입을 먼저 확인하고 그 메서드를 <a data-ref="system-programming/inline-codegen">인라인</a>하는 식으로 코드를 좁게 만들 수 있다.
+      정적 컴파일은 모든 경우를 감당해야 해서 보수적으로 만든다.
+    </p>
+    <p>
+      그 정보는 저절로 생기지 않는다. 처음 만든 코드에 계측을 넣어 분기 방향과 호출 대상 타입을 모으고, 다시 컴파일할 때 그 기록을 쓴다. .NET에서는 이것을 <strong>동적 PGO</strong>(Profile-Guided Optimization)라 부르고, .NET 8부터 기본으로 켜져 있다.
+    </p>
+
+    <h3>.NET은 같은 메서드를 여러 번 컴파일한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="시간에 따른 실행 속도: JIT는 Tier0로 느리게 시작해 Tier1로 올라가고, ReadyToRun은 중간에서 시작해 같은 곳으로 올라가며, Native AOT는 처음부터 일정하다">
+        <line class="f-line" x1="90" y1="200" x2="720" y2="200"/>
+        <line class="f-line" x1="90" y1="200" x2="90" y2="30"/>
+        <text class="f-sub" x="84" y="44" text-anchor="end">빠름</text>
+        <text class="f-sub" x="84" y="196" text-anchor="end">느림</text>
+        <text class="f-sub" x="720" y="220" text-anchor="end">시간 →</text>
+        <text class="f-sub" x="90" y="220">프로세스 시작</text>
+        <rect class="f-pad" x="92" y="32" width="196" height="166" rx="4"/>
+        <text class="f-sub" x="190" y="186" text-anchor="middle">워밍업 구간</text>
+        <polyline class="f-barrier" fill="none" points="120,150 290,150 290,62 720,62"/>
+        <polyline class="f-inval" fill="none" points="100,108 290,108 290,66"/>
+        <polyline class="f-line" fill="none" stroke-width="2.5" points="96,84 720,84"/>
+        <text class="f-strong" x="712" y="54" text-anchor="end">JIT · ReadyToRun → Tier1 (동적 PGO)</text>
+        <text class="f-text" x="712" y="100" text-anchor="end">Native AOT</text>
+        <text class="f-sub" x="190" y="142" text-anchor="middle">JIT: Tier0 (빨리 만든 코드)</text>
+        <text class="f-sub" x="190" y="100" text-anchor="middle">ReadyToRun: 미리 만든 코드</text>
+        <text class="f-sub" x="298" y="128">자주 불린 메서드만</text>
+        <text class="f-sub" x="298" y="144">다시 컴파일</text>
+      </svg>
+      <figcaption>높이는 같은 코드를 실행하는 속도를 뜻하는 개념도이고 실측값이 아니다. JIT와 ReadyToRun은 결국 같은 최적화 코드로 수렴한다. Native AOT는 처음부터 일정하지만 실행 정보로 다시 최적화하는 단계가 없다.</figcaption>
+    </figure>
+    <p>
+      .NET은 <strong>티어드 컴파일</strong>을 쓴다. 메서드가 처음 불리면 최적화를 거의 하지 않고 빨리 만든 코드(Tier0)로 실행한다. 자주 불리는 메서드만 골라 계측 정보를 반영해 제대로 최적화한 코드(Tier1)로 다시 컴파일하고 바꿔 끼운다.
+      오래 도는 루프는 실행 도중에 최적화 코드로 갈아타는 방식(OSR)으로 같은 혜택을 받는다.
+    </p>
+    <p>
+      <strong>ReadyToRun</strong>은 빌드할 때 미리 기계어를 만들어 어셈블리에 함께 담는 방식이다. 시작할 때 JIT를 거의 건너뛰지만 런타임과 JIT는 그대로 있어서, 자주 불리는 메서드는 나중에 Tier1로 다시 컴파일된다.
+      <strong>Native AOT</strong>는 JIT를 아예 빼고 실행 파일 하나로 만든다. 시작과 메모리 사용량은 가장 작지만, 실행 정보로 다시 최적화하는 단계도 함께 없어진다.
+    </p>
+
+    <h3>AOT는 실행 중에 정해지는 것을 미리 알아야 한다</h3>
+    <p>
+      Native AOT와 Unity의 IL2CPP(IL을 C++로 바꿔 미리 컴파일한다)는 빌드 때 필요한 기계어를 전부 만들어 둔다. 그래서 실행 중에 새 코드가 필요한 기능이 막힌다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>막히거나 달라지는 것</th><th>왜</th><th>대응</th></tr></thead>
+        <tbody>
+          <tr><td><code>Reflection.Emit</code>, 동적 프록시</td><td>만들 코드가 빌드 때 없다</td><td>빌드 때 코드를 만드는 소스 생성기로 바꾼다</td></tr>
+          <tr><td><code>Expression.Compile</code></td><td>같은 이유</td><td>인터프리터로 돌아 느려지거나 동작하지 않는다. 뜨거운 경로에서 쓰지 않는다</td></tr>
+          <tr><td>실행 중에 정해지는 값 타입 제네릭(<code>MakeGenericType</code> 등)</td><td>값 타입은 인자마다 기계어가 따로 필요한데, 어떤 조합이 올지 빌드 때 모른다</td><td>쓰는 조합을 코드에 드러내 둔다. Unity는 2022부터 느린 공용 경로(full generic sharing)로 실패를 줄였다</td></tr>
+          <tr><td>문자열로 타입을 찾아 쓰는 코드</td><td>코드에 참조가 안 보여 쓰지 않는 코드를 지우는 단계(trimming, code stripping)에서 잘려 나간다</td><td>.NET은 <code>[DynamicallyAccessedMembers]</code>와 게시 때 나오는 trim 경고, Unity는 <code>link.xml</code>·<code>[Preserve]</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      실무에서 가장 자주 터지는 곳은 직렬화다. 리플렉션으로 타입을 훑는 직렬화 라이브러리는 필요한 타입이 잘려 나가 <strong>빌드는 통과하고 실행할 때</strong> 실패한다.
+      System.Text.Json의 소스 생성 모드나 MessagePack의 코드 생성처럼 직렬화 코드를 빌드 때 만들어 두는 방식으로 바꾼다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>오래 켜 두는 게임 서버</td><td>JIT (필요하면 ReadyToRun 추가)</td><td>시작은 한 번이고, 이후 내내 실행 정보로 최적화된 코드가 돈다</td></tr>
+          <tr><td>배포 직후 첫 몇 분의 지연이 문제다</td><td>ReadyToRun + 워밍업</td><td>JIT를 유지하면서 시작 구간만 줄인다</td></tr>
+          <tr><td>짧게 자주 뜨는 도구, 서버리스 함수, 사이드카</td><td>Native AOT</td><td>최적화가 무르익을 시간이 없고, 시작 속도와 메모리가 중요하다</td></tr>
+          <tr><td>iOS·콘솔처럼 실행 중 코드 생성을 금지하는 플랫폼</td><td>AOT(IL2CPP) 외에 선택지가 없다</td><td>제약을 피하도록 코드 생성 방식을 바꾼다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>배포 직후 첫 접속자가 Tier0 코드를 만난다.</strong> 패킷 처리, 직렬화, AI 틱처럼 뜨거운 경로가 처음 몇 분은 덜 최적화된 코드로 돌아 틱이 튄다.
+        포트를 열기 전에 뜨거운 경로를 가짜 입력으로 몇천 번 돌려 두고, 그 뒤에 readiness 체크를 통과시켜 트래픽을 받는다. <code>PublishReadyToRun</code>을 켜면 이 구간이 더 짧아진다.
+      </li>
+      <li>
+        <strong>벤치마크는 워밍업 뒤에 잰다.</strong> 초반 구간을 섞어 재면 Tier0 코드가 섞여 실제보다 느리게 나온다. BenchmarkDotNet이 측정 전에 워밍업을 돌리는 이유다. 직접 만든 측정 코드도 같은 메서드를 충분히 돌린 뒤의 구간만 본다.
+      </li>
+      <li>
+        <strong>클라이언트와 서버가 같은 코드를 쓰면 AOT 제약을 기준으로 맞춘다.</strong> Unity 클라이언트(IL2CPP)와 .NET 서버가 패킷 정의와 직렬화 코드를 공유한다면, 리플렉션·<code>Reflection.Emit</code>에 기대는 방식은 클라이언트에서 깨진다. 공유 코드는 소스 생성 방식으로 짠다(<a data-ref="unity/unity-vs-dotnet">Unity와 .NET</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>JIT가 느린 것은 시작 구간뿐이다.</strong> 오래 도는 프로그램에서는 실행 정보로 다시 최적화하는 JIT가 오히려 빠를 수 있다. 어느 지점에서 뒤집히는지는 재 봐야 안다.</li>
+      <li><strong>AOT로 바꾼다고 처리량이 오르지는 않는다.</strong> 오르는 것은 시작 속도와 메모리다. 정상 구간의 처리량은 같거나 오히려 떨어질 수 있다.</li>
+      <li><strong>trim 경고를 무시하지 않는다.</strong> Native AOT로 게시할 때 나오는 경고는 실행 중에 깨질 자리를 미리 알려 주는 것이다. 경고가 남은 채 배포하면 그 기능을 처음 쓰는 순간 실패한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

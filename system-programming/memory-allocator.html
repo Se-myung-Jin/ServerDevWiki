@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>메모리 할당자 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="system-programming/memory-allocator">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="virtual-vs-resident.html">할당과 실제 확보</a> · <a href="../operating-system/fragmentation.html">단편화</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <code>malloc</code>이나 <code>new</code>가 매번 커널까지 가지 않는다. 사이에 <strong>사용자 공간 할당자</strong>가 있어서, 커널에서 큰 블록을 받아 두고 그 안을 잘라 준다.
+      <a href="../operating-system/kernel-boundary.html">시스템 콜</a>은 비싸고 할당은 아주 자주 일어나기 때문이다.
+    </p>
+    <p>
+      그래서 해제한 메모리가 곧바로 운영체제로 돌아가지 않는다. 할당자가 <span class="blank">다음 요청에 쓰려고 들고 있고</span>, 조건이 맞을 때만 돌려준다. 그동안 프로세스의 RES는 줄지 않는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>할당은 세 층을 거친다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 270" role="img" aria-label="작은 할당은 스레드 캐시, 공용 영역, 커널 순으로 내려가고 큰 할당은 바로 커널에 매핑을 받는다">
+      <defs><marker id="ma-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <rect class="f-box" x="30" y="18" width="140" height="36" rx="6"/><text class="f-text" x="100" y="41" text-anchor="middle">스레드 1 · malloc(48)</text>
+      <line class="f-line" x1="100" y1="54" x2="100" y2="78" marker-end="url(#ma-a)"/>
+      <rect class="f-hit" x="30" y="80" width="140" height="40" rx="6"/><text class="f-strong" x="100" y="105" text-anchor="middle">스레드 캐시</text>
+      <line class="f-line f-dash" x1="100" y1="120" x2="100" y2="146" marker-end="url(#ma-a)"/>
+      <rect class="f-box" x="190" y="18" width="140" height="36" rx="6"/><text class="f-text" x="260" y="41" text-anchor="middle">스레드 2 · malloc(48)</text>
+      <line class="f-line" x1="260" y1="54" x2="260" y2="78" marker-end="url(#ma-a)"/>
+      <rect class="f-hit" x="190" y="80" width="140" height="40" rx="6"/><text class="f-strong" x="260" y="105" text-anchor="middle">스레드 캐시</text>
+      <line class="f-line f-dash" x1="260" y1="120" x2="260" y2="146" marker-end="url(#ma-a)"/>
+      <rect class="f-box" x="350" y="18" width="140" height="36" rx="6"/><text class="f-text" x="420" y="41" text-anchor="middle">스레드 3 · malloc(48)</text>
+      <line class="f-line" x1="420" y1="54" x2="420" y2="78" marker-end="url(#ma-a)"/>
+      <rect class="f-hit" x="350" y="80" width="140" height="40" rx="6"/><text class="f-strong" x="420" y="105" text-anchor="middle">스레드 캐시</text>
+      <line class="f-line f-dash" x1="420" y1="120" x2="420" y2="146" marker-end="url(#ma-a)"/>
+      <text class="f-sub" x="500" y="104">여기서 대부분 끝</text>
+      <rect class="f-box" x="30" y="148" width="460" height="46" rx="6"/><text class="f-text" x="260" y="169" text-anchor="middle">공용 영역 · 크기 등급별 빈칸 목록</text><text class="f-sub" x="260" y="186" text-anchor="middle">캐시가 비면 여기서 채운다 (락)</text>
+      <line class="f-line f-dash" x1="260" y1="194" x2="260" y2="214" marker-end="url(#ma-a)"/>
+      <rect class="f-miss" x="30" y="216" width="680" height="44" rx="6"/><text class="f-on" x="370" y="236" text-anchor="middle">커널 · brk / mmap</text><text class="f-on" x="370" y="253" text-anchor="middle">공용 영역이 모자랄 때만. 시스템 콜</text>
+      <rect class="f-box" x="580" y="18" width="130" height="36" rx="6"/><text class="f-text" x="645" y="41" text-anchor="middle">malloc(1MB)</text>
+      <line class="f-line" x1="645" y1="54" x2="645" y2="214" marker-end="url(#ma-a)"/><text class="f-sub" x="637" y="150" text-anchor="end">큰 요청은</text><text class="f-sub" x="637" y="166" text-anchor="end">바로 매핑</text>
+      </svg>
+      <figcaption>대부분의 요청은 맨 위 스레드 캐시에서 끝나 락도 시스템 콜도 없다. 캐시가 비면 공용 영역에서 채우고, 공용 영역이 모자랄 때만 커널에 간다. 큰 요청은 처음부터 커널에 따로 매핑을 받는다.</figcaption>
+    </figure>
+    <p>
+      커널에서 메모리를 받는 길은 둘이다. 힙 끝을 늘리는 <code>brk</code>와, 원하는 크기의 영역을 따로 받는 <code>mmap</code>(Windows는 <code>VirtualAlloc</code>)이다. 할당자는 작은 요청을 위해 큰 덩어리를 받아 두고, 큰 요청은 따로 매핑한다.
+    </p>
+
+    <h3>빈칸을 관리하는 방법이 성능을 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>어떻게</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>빈칸 목록</td><td>해제된 조각을 목록으로 잇는다</td><td>맞는 크기를 찾느라 목록을 훑어야 한다</td></tr>
+          <tr><td>크기 등급(size class)</td><td>16, 32, 48바이트처럼 구간마다 목록을 따로 둔다</td><td>찾기는 바로 되지만, 요청을 구간 크기로 올려 주므로 안쪽이 남는다</td></tr>
+          <tr><td>버디 시스템</td><td>2의 거듭제곱으로 나누고 짝끼리 합친다</td><td>합치기는 쉽지만 내부 단편화가 크다</td></tr>
+          <tr><td>슬랩</td><td>같은 크기 객체를 한 페이지에 모아 둔다</td><td>크기가 정해진 객체에만 맞는다. 커널이 자기 자료구조에 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>요즘 범용 할당자는 대부분 크기 등급을 기본으로 한다. 단편화의 종류와 원인은 <a href="../operating-system/fragmentation.html">단편화</a>에서 다뤘다.</p>
+
+    <h3>스레드가 많으면 할당자가 경합 지점이 된다</h3>
+    <p>
+      빈칸 목록이 하나뿐이면 모든 스레드가 그 목록의 락을 두고 다툰다. 그래서 요즘 할당자는 <strong>스레드마다 작은 캐시</strong>를 두고 거기서 먼저 처리한다. glibc의 tcache, jemalloc·tcmalloc·mimalloc의 스레드 캐시가 모두 이 구조다.
+    </p>
+    <p>
+      까다로운 것은 <strong>다른 스레드가 할당한 것을 해제할 때</strong>다. 받은 쪽 캐시에 그냥 넣으면 메모리가 소비하는 스레드 쪽으로 계속 몰린다. 원래 주인에게 돌려주거나, 스레드 사이를 오가는 조각만 따로 모아 처리한다.
+      서버는 IO 스레드가 받은 버퍼를 로직 스레드가 해제하는 일이 흔해서 이 경로가 실제로 많이 쓰인다.
+    </p>
+
+    <h3>큰 요청은 따로 다룬다</h3>
+    <p>
+      일정 크기를 넘는 요청은 블록에서 자르지 않고 커널에 따로 매핑을 받고, 해제할 때 바로 돌려준다. 큰 것을 블록 안에 두면 빈칸이 크게 벌어져 관리가 어려워지기 때문이다.
+      경계값은 할당자마다 다르다. glibc는 기본 128KB에서 시작해, 실제 해제 패턴을 보고 위로 조정한다. 크기가 그 경계 근처에서 오르내리면 비용이 갑자기 달라질 수 있다.
+    </p>
+
+    <h3>.NET의 <code>new</code>는 포인터를 밀어 주는 것이다</h3>
+    <p>
+      .NET 관리 힙은 해제를 개별로 하지 않는다. 각 스레드는 <strong>할당 컨텍스트</strong>라는 빈 구간을 받아 두고, <code>new</code>를 하면 그 구간의 포인터를 객체 크기만큼 밀기만 한다(bump pointer). 빈칸 목록을 찾지 않으니 할당은 아주 싸다.
+    </p>
+    <p>
+      비용은 나중에 낸다. 구간이 다 차면 새 구간을 받고, 0세대 예산이 다 차면 <a data-ref="csharp/gc-basics">GC</a>가 돌아 살아남은 객체를 옮기고 빈 공간을 한꺼번에 되찾는다.
+      그래서 .NET에서 줄여야 하는 것은 할당 한 번의 비용이 아니라 <strong>할당량(초당 바이트)</strong>이다. 할당량이 GC 빈도를 정한다. <code>dotnet-counters</code>의 <code>alloc-rate</code>로 본다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>할당자를 바꾸거나 직접 만드는 경우는 정해져 있다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>무엇을 하나</th></tr></thead>
+        <tbody>
+          <tr><td>스레드가 많고 네이티브 할당이 잦다</td><td>스레드 캐시가 강한 할당자(jemalloc, mimalloc, tcmalloc)로 바꾼다</td></tr>
+          <tr><td>같은 크기 객체를 대량으로 만들고 버린다</td><td>객체 풀을 둔다. .NET은 <code>ObjectPool&lt;T&gt;</code>(Microsoft.Extensions.ObjectPool)</td></tr>
+          <tr><td>버퍼를 자주 빌리고 돌려준다</td><td>.NET은 <code>ArrayPool&lt;T&gt;.Shared</code>, <code>MemoryPool&lt;T&gt;</code></td></tr>
+          <tr><td>수명이 한꺼번에 끝난다</td><td>아레나에 담고 통째로 버린다</td></tr>
+          <tr><td>지연이 엄격한 경로</td><td>그 경로에서 할당 자체를 없앤다. 값 타입, <code>Span&lt;T&gt;</code>, 미리 잡아 둔 버퍼(<a data-ref="csharp/ref-span">Span과 Memory</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>아레나</strong>는 한 블록에 이어 붙여 할당하고, 다 쓰면 블록을 통째로 되돌린다. 개별 해제가 없으니 할당은 포인터를 미는 것뿐이고 해제는 사실상 공짜다. 대신 담은 것의 수명이 같아야 한다. 하나만 오래 살아도 아레나 전체를 버리지 못한다.
+    </p>
+    <p>바꾸기 전에 할당이 실제 병목인지 잰다. 대개는 아니고, 아닌데 바꾸면 복잡도와 의존만 늘어난다.</p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 단위 임시 데이터는 아레나처럼 다룬다.</strong> 한 틱 동안 만들고 버릴 이벤트 목록, 시야 계산 결과, 송신 패킷 조각은 수명이 같다. 틱마다 새로 할당하지 말고, 미리 잡아 둔 버퍼를 틱 시작에 비우고 재사용한다(C#이면 <code>List&lt;T&gt;.Clear()</code> 후 재사용, 큰 배열은 <code>ArrayPool</code>).
+      </li>
+      <li>
+        <strong>패킷 버퍼는 풀에서 빌린다.</strong> 세션마다 수신·송신 버퍼를 새로 만들면 할당량이 접속자 수에 비례해 늘고, 85,000바이트를 넘으면 LOH로 가서 단편화까지 남긴다. 고정 크기 버퍼를 풀로 돌린다.
+      </li>
+      <li>
+        <strong>Linux에서 네이티브 메모리가 이유 없이 크면 glibc 아레나를 본다.</strong> glibc는 스레드 경합을 줄이려고 할당용 아레나를 코어 수의 여러 배까지 만든다. 스레드가 많은 서버는 아레나마다 들고 있는 빈 메모리가 쌓여 RES가 크게 보인다. <code>MALLOC_ARENA_MAX</code> 환경 변수로 개수를 줄이거나 jemalloc으로 바꾸면 줄어드는 경우가 많다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>해제했는데 메모리가 안 줄어드는 것은 누수가 아니다.</strong> 할당자가 다음 요청에 쓰려고 들고 있는 것이다. 누수인지는 같은 부하에서 RES가 계속 오르는지로 본다(<a href="virtual-vs-resident.html">할당과 실제 확보</a>).
+      </li>
+      <li>
+        <strong>할당자를 바꾼다고 늘 빨라지지는 않는다.</strong> 할당이 자주 도는 경로에 있고 경합이 측정으로 확인될 때만 이득이 난다.
+      </li>
+      <li>
+        <strong>풀에서 빌린 것은 반드시 돌려주고, 돌려준 뒤에는 쓰지 않는다.</strong> 돌려준 배열을 계속 쓰면 다른 곳이 빌려 간 같은 배열을 덮어써 재현하기 어려운 버그가 된다. <code>ArrayPool</code>에서 받은 배열은 요청한 크기보다 클 수 있으니 길이는 따로 들고 다닌다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

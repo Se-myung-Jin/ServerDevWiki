@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>인라인과 코드 생성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="system-programming/inline-codegen">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="compile-link.html">컴파일과 링킹</a> · 함께 보면 좋은 것: <a data-ref="csharp/jit-aot">JIT와 AOT</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>인라인</strong>은 함수 호출을 그 자리에 본문으로 펼쳐 넣는 최적화다. 호출 비용이 사라지는 것보다 <span class="blank">다른 최적화가 걸릴 수 있게 되는 것</span>이 더 크다.
+    </p>
+    <p>
+      <strong>코드 생성</strong>은 다른 방향의 같은 생각이다. 실행 중에 타입을 탐색해 알아내는 대신(리플렉션), 빌드 때 필요한 코드를 만들어 둔다(소스 제너레이터). 탐색 비용이 사라지고 AOT에서도 동작한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>호출 경계가 사라지면 다른 최적화가 걸린다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 170" role="img" aria-label="인라인 전에는 호출 경계 너머를 몰라 모든 경우를 처리하고, 인라인 후에는 상수 전파와 죽은 코드 제거로 계산이 사라진다">
+        <defs><marker id="ic-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-text" x="20" y="24">인라인 전</text>
+        <rect class="f-box" x="20" y="36" width="190" height="44" rx="6"/><text class="f-text" x="115" y="63" text-anchor="middle">Clamp(x, 0, 100)</text>
+        <line class="f-barrier" x1="226" y1="30" x2="226" y2="88"/>
+        <rect class="f-box" x="242" y="36" width="210" height="44" rx="6"/><text class="f-sub" x="347" y="56" text-anchor="middle">min·max가 뭘지 모른다</text><text class="f-sub" x="347" y="72" text-anchor="middle">모든 경우를 처리하는 코드</text>
+        <text class="f-sub" x="234" y="104">호출 경계: 컴파일러가 너머를 보지 않는다</text>
+        <text class="f-text" x="20" y="134">인라인 후</text>
+        <rect class="f-hit" x="100" y="116" width="230" height="40" rx="6"/><text class="f-strong" x="215" y="141" text-anchor="middle">x &lt; 0 ? 0 : x &gt; 100 ? 100 : x</text>
+        <line class="f-line" x1="330" y1="136" x2="378" y2="136" marker-end="url(#ic-a)"/>
+        <rect class="f-hit" x="380" y="116" width="320" height="40" rx="6"/><text class="f-strong" x="540" y="134" text-anchor="middle">상수 전파 · 분기 정리 · 벡터화</text><text class="f-sub" x="540" y="149" text-anchor="middle">x가 늘 0~100임이 보이면 통째로 사라진다</text>
+      </svg>
+      <figcaption>호출이 남아 있으면 컴파일러는 인자에 무엇이 올지 몰라 일반적인 코드를 만든다. 펼쳐 넣으면 인자가 상수라는 것, 조건이 항상 참이라는 것이 드러나 뒤따르는 최적화가 연달아 걸린다.</figcaption>
+    </figure>
+    <p>
+      그래서 인라인이 막히면 그 뒤의 최적화가 줄줄이 사라진다. 가상 호출이 비싼 것도 대개 간접 점프 자체보다 펼치지 못해서다.
+      .NET JIT는 실행 중에 한 타입만 오는 것을 관측하면 그 타입으로 가정하고 펼친 뒤, 아니면 원래 경로로 돌아가는 코드를 만든다(guarded devirtualization, .NET 8부터 동적 PGO가 기본). C++도 <code>final</code>이나 링크 시간 최적화(LTO)·PGO로 일부 가상 호출을 펼친다.
+    </p>
+    <p>
+      언제나 펼치지는 않는다. 본문이 크면 코드가 불어나 명령 캐시 적중률이 떨어지므로, 컴파일러는 크기와 호출 빈도를 보고 판단한다. <code>[MethodImpl(MethodImplOptions.AggressiveInlining)]</code>이나 C++ <code>inline</code>은 요청이지 명령이 아니다.
+    </p>
+
+    <h3>실행 중에 탐색하는 쪽과 빌드 때 만들어 두는 쪽</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>리플렉션</th><th>소스 제너레이터</th></tr></thead>
+        <tbody>
+          <tr><td>언제 알아내나</td><td>실행 중에 타입을 탐색한다</td><td>빌드 때 그 타입 전용 코드를 만든다</td></tr>
+          <tr><td>실행 중 비용</td><td>탐색과 동적 호출 비용이 든다</td><td>일반 코드라 추가 비용이 없다</td></tr>
+          <tr><td>AOT·트리밍</td><td>참조가 정적으로 안 보여 잘려 나갈 수 있다</td><td>그대로 동작한다</td></tr>
+          <tr><td>오류 시점</td><td>실행 중에 드러난다</td><td>대개 컴파일에서 걸린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      직렬화가 대표적인 자리다. <code>System.Text.Json</code>의 소스 생성 모드나 MessagePack-CSharp의 AOT 코드 생성은, 실행 중에 속성을 탐색하는 대신 빌드 때 그 타입 전용 읽기·쓰기 코드를 만들어 둔다.
+      반대로 대상 타입이 몇 개 없고 호출도 드물면, 늘어난 <a data-ref="cpp/build-time">빌드 시간</a>과 구성 복잡도를 회수하지 못한다.
+    </p>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>인라인은 호출 비용을 없애려고 하는 것이 아니다.</strong> 요즘 CPU에서 호출 자체는 비싸지 않다. 실제로 빨라지는 것은 그 뒤에 걸리는 최적화 때문이다.</li>
+      <li><strong>게임 서버의 패킷 직렬화는 코드 생성 쪽이 기본이다.</strong> 매 패킷 리플렉션으로 필드를 찾으면 할당과 탐색 비용이 쌓인다. 직렬화 라이브러리의 코드 생성 기능을 쓰고, Native AOT로 배포할 계획이 있으면 처음부터 리플렉션 의존을 피한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
