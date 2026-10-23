@@ -74,7 +74,7 @@
       <figcaption>상태를 만지는 것은 가운데 로직 스레드뿐이다. 다른 스레드는 일을 큐에 넣거나 결과를 큐로 돌려보낼 뿐 상태를 직접 고치지 않는다.</figcaption>
     </figure>
     <p>
-      I/O 스레드(<a href="completion-port.html">완료 알림 기반 서버</a>의 작업 스레드)는 바이트를 받아 패킷으로 자른 뒤 작업 큐에 넣고 바로 돌아간다. 로직 스레드는 큐에서 하나씩 꺼내 처리한다. 정해진 간격(틱)마다 이동, 전투, AI를 한 번씩 돌리는 루프와 함께 쓰는 경우가 많다.
+      I/O 스레드(<a href="completion-port.html">완료 알림 기반 서버</a>의 작업 스레드)는 바이트를 받아 패킷으로 자른 뒤 작업 큐에 넣고 바로 돌아간다. 로직 스레드는 큐에서 하나씩 꺼내 처리한다. 정해진 간격(틱)마다 이동, 전투, AI를 한 번씩 돌리는 루프와 함께 쓰는 경우가 많다(<a href="tick-loop.html">서버 틱 루프</a>).
     </p>
     <p>이렇게 하면 세 가지를 얻는다.</p>
     <ul>
@@ -129,7 +129,7 @@
         <strong>틱 초과를 지표로 남긴다.</strong> 틱 하나가 정한 시간(예: 50ms)을 넘긴 횟수와 가장 오래 걸린 작업을 기록해 둔다. 상한에 다가가는 것은 평균 CPU 사용률보다 이 값에서 먼저 보인다.
       </li>
       <li>
-        <strong>큐는 여러 스레드가 넣고 하나가 뺀다.</strong> 이 모양에 맞는 다중 생산자·단일 소비자 큐를 쓴다. .NET이라면 <code>System.Threading.Channels</code>의 <code>SingleReader = true</code> 옵션이나 <code>ConcurrentQueue</code>가 출발점이다(<a href="../data-structure/stack-queue.html">스택과 큐</a>).
+        <strong>큐는 여러 스레드가 넣고 하나가 뺀다.</strong> 이 모양에 맞는 다중 생산자·단일 소비자 큐를 쓴다. .NET이라면 <code>System.Threading.Channels</code>의 <code>SingleReader = true</code> 옵션이나 <code>ConcurrentQueue</code>가 출발점이다(<a href="../data-structure/stack-queue.html">스택과 큐</a>, <a href="../data-structure/concurrent-structures.html">동시성 자료구조</a>).
       </li>
       <li>
         <strong>작업 하나의 길이가 응답 시간을 정한다.</strong> 길드 전체 순회나 대량 아이템 지급처럼 한 번에 오래 걸리는 작업은 여러 틱에 나눠 처리한다. 그동안 다른 요청이 같은 대상을 바꿀 수 있으니 중간 상태를 고려해 설계한다.

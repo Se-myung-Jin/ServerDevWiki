@@ -93,6 +93,13 @@ window.CATALOG = [
         summary: "CISC냐 RISC냐는 인코딩 이야기이고, 실제 실행은 둘 다 micro-op으로 나눠 순서를 바꿔 처리한다.",
         tags: ["CPU 실행"],
       },
+      {
+        slug: "simd",
+        title: "SIMD와 벡터 연산",
+        importance: "참고",
+        summary: "명령 하나로 여러 값을 한꺼번에 계산한다. 데이터가 나란히 놓여 있어야 효과가 난다.",
+        tags: ["CPU 실행"],
+      },
     ],
   },
   {
@@ -138,6 +145,12 @@ window.CATALOG = [
         slug: "scheduling",
         title: "스케줄링 알고리즘",
         summary: "무엇을 좋게 만들지 먼저 정해야 한다. 응답 시간과 처리량은 같이 좋아지지 않는다.",
+        tags: ["스케줄링"],
+      },
+      {
+        slug: "clocks-timers",
+        title: "시계와 타이머",
+        summary: "벽시계는 뒤로 갈 수 있고 타이머는 정한 시각보다 늦게 깨운다. 시간을 재는 시계와 시각을 아는 시계는 다르다.",
         tags: ["스케줄링"],
       },
       {
@@ -204,7 +217,7 @@ window.CATALOG = [
     dir: "system-programming",
     title: "시스템 프로그래밍",
     desc: "시스템 콜, 파일 디스크립터와 핸들, 메모리 매핑, 프로세스 간 통신, 링커와 로더",
-    tags: ["빌드", "링커와 로더", "메모리 관리", "커널 인터페이스", "런타임"],
+    tags: ["빌드", "링커와 로더", "메모리 관리", "커널 인터페이스", "런타임", "디버깅"],
     topics: [
       {
         slug: "compile-link",
@@ -241,6 +254,12 @@ window.CATALOG = [
         tags: ["메모리 관리"],
       },
       {
+        slug: "memory-mapped-file",
+        title: "메모리 맵 파일",
+        summary: "파일을 주소 공간에 붙여 배열처럼 읽는다. 읽기 호출 대신 페이지 폴트가 데이터를 가져온다.",
+        tags: ["메모리 관리"],
+      },
+      {
         slug: "kernel-object-handle",
         title: "커널 오브젝트와 핸들",
         summary: "커널이 들고 있는 자원을 응용은 번호표로만 가리킨다. 그 번호표가 핸들이다.",
@@ -254,11 +273,24 @@ window.CATALOG = [
         tags: ["커널 인터페이스"],
       },
       {
+        slug: "crash-dump",
+        title: "크래시 덤프와 심볼",
+        summary: "죽는 순간의 메모리를 파일로 남기고, 빌드 때 만든 심볼로 주소를 함수 이름과 줄 번호로 되돌린다.",
+        tags: ["디버깅"],
+      },
+      {
         slug: "inline-codegen",
         title: "인라인과 코드 생성",
         importance: "참고",
         summary: "인라인이 다른 최적화의 문을 연다. 그리고 실행 중에 알아내는 대신 빌드 때 만들어 두는 길.",
         tags: ["빌드", "런타임"],
+      },
+      {
+        slug: "signals",
+        title: "시그널과 프로세스 종료",
+        importance: "참고",
+        summary: "커널이 프로세스에 보내는 비동기 알림. 처리하지 않으면 대부분 프로세스를 끝낸다.",
+        tags: ["커널 인터페이스"],
       },
     ],
   },
@@ -266,7 +298,7 @@ window.CATALOG = [
     dir: "data-structure",
     title: "자료구조",
     desc: "배열/리스트/해시/트리/힙, 캐시 친화적 자료구조, 공간 분할(그리드, 쿼드트리)",
-    tags: ["선형 구조", "해시", "트리", "그래프", "공간 분할", "메모리 배치"],
+    tags: ["선형 구조", "해시", "트리", "그래프", "공간 분할", "메모리 배치", "동시성"],
     topics: [
       {
         slug: "array-list",
@@ -303,6 +335,12 @@ window.CATALOG = [
         tags: ["트리"],
       },
       {
+        slug: "timer-structures",
+        title: "타이머 자료구조",
+        summary: "예약된 일을 시각 순으로 꺼낸다. 힙은 정확하고 타이머 휠은 대량에서 빠르다.",
+        tags: ["트리", "선형 구조"],
+      },
+      {
         slug: "graphs",
         title: "그래프 표현과 탐색",
         summary: "밀도가 표현을 정한다. 희소하면 인접 리스트, 조밀하면 인접 행렬이다.",
@@ -323,6 +361,12 @@ window.CATALOG = [
         tags: ["메모리 배치"],
       },
       {
+        slug: "concurrent-structures",
+        title: "동시성 자료구조",
+        summary: "락 없이 여러 스레드가 함께 쓰려면 원자적 비교 교환 하나에 모든 변경을 걸어야 한다. 그 틈에서 ABA가 생긴다.",
+        tags: ["동시성"],
+      },
+      {
         slug: "probabilistic",
         title: "트라이와 블룸 필터",
         importance: "참고",
@@ -335,7 +379,7 @@ window.CATALOG = [
     dir: "algorithm",
     title: "알고리즘",
     desc: "정렬과 탐색, 그래프와 길찾기, 복잡도 분석, 매칭/랭킹 알고리즘",
-    tags: ["복잡도", "정렬과 탐색", "설계 기법", "그래프", "문자열"],
+    tags: ["복잡도", "정렬과 탐색", "설계 기법", "그래프", "문자열", "난수"],
     topics: [
       {
         slug: "complexity",
@@ -371,6 +415,12 @@ window.CATALOG = [
         importance: "핵심",
         summary: "다익스트라는 모든 방향으로 퍼지고 A*는 목표 쪽으로 치우친다. 휴리스틱이 조건을 어기면 답이 틀린다.",
         tags: ["그래프"],
+      },
+      {
+        slug: "random",
+        title: "난수 생성",
+        summary: "의사 난수는 시드가 같으면 같은 수열을 낸다. 재현에는 장점이고 예측당하면 약점이다.",
+        tags: ["난수"],
       },
       {
         slug: "strings-limits",
@@ -479,6 +529,13 @@ window.CATALOG = [
         title: "게임 서버 스레딩 모델",
         importance: "핵심",
         summary: "상태를 한 스레드만 쓰게 하면 락이 사라지지만 그 스레드가 한 코어의 상한이 된다.",
+        tags: ["스레딩"],
+      },
+      {
+        slug: "tick-loop",
+        title: "서버 틱 루프",
+        importance: "핵심",
+        summary: "정해진 간격으로 세상을 한 단계씩 진행한다. 한 틱이 예산을 넘기면 뒤 틱이 밀린다.",
         tags: ["스레딩"],
       },
       {

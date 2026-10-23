@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>동시성 자료구조 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="data-structure/concurrent-structures">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a> · <a href="../operating-system/sync-primitives.html">동기화 객체</a> · <a href="stack-queue.html">스택과 큐</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      여러 스레드가 함께 쓰는 자료구조를 만드는 길은 둘이다. 락으로 한 번에 한 스레드만 들어오게 하거나, 락 없이 <strong>원자적 비교 교환(CAS)</strong> 하나로 변경을 확정하는 것이다. 락 없는 구조의 요령은 변경 전체를 <span class="blank">포인터 하나를 바꾸는 순간</span>으로 줄이는 데 있다. 그 순간까지 만든 것은 나만 보고, CAS가 성공하는 순간 모두에게 보인다. 실패하면 다른 스레드가 먼저 바꾼 것이니 다시 읽고 다시 시도한다.
+    </p>
+    <p>
+      락이 없다고 빠른 것은 아니다. 여러 코어가 같은 머리 포인터에 CAS를 걸면 그 <a data-ref="computer-architecture/memory-hierarchy">캐시 라인</a>을 두고 다투느라 재시도가 늘어난다. 실무에서 큰 차이를 내는 것은 락이냐 아니냐보다 <strong>누가 넣고 누가 빼는지</strong>를 좁히는 일이다. 소비자가 하나뿐인 큐는 범용 큐보다 훨씬 단순하고 빠르다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>락 프리 스택: 머리 포인터 하나만 바꾼다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 220" role="img" aria-label="락 프리 스택에 A를 넣는 과정. head를 읽고 A의 다음을 B로 둔 뒤, head가 아직 B면 CAS로 A로 바꾼다">
+        <defs><marker id="cs-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker><marker id="cs-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="150" y="24" text-anchor="middle">① head를 읽고 A.next = B</text>
+        <rect class="f-cell" x="30" y="50" width="56" height="32"/><text class="f-text" x="58" y="71" text-anchor="middle">head</text>
+        <rect class="f-box" x="120" y="50" width="50" height="32"/><text class="f-text" x="145" y="71" text-anchor="middle">B</text>
+        <rect class="f-box" x="200" y="50" width="50" height="32"/><text class="f-text" x="225" y="71" text-anchor="middle">C</text>
+        <line class="f-line" x1="86" y1="66" x2="116" y2="66" marker-end="url(#cs-a)"/>
+        <line class="f-line" x1="170" y1="66" x2="196" y2="66" marker-end="url(#cs-a)"/>
+        <rect class="f-hit" x="120" y="122" width="50" height="32"/><text class="f-strong" x="145" y="143" text-anchor="middle">A</text>
+        <line class="f-line" x1="145" y1="122" x2="145" y2="86" marker-end="url(#cs-a)"/>
+        <text class="f-sub" x="184" y="143">아직 나만 본다</text>
+
+        <text class="f-strong" x="545" y="24" text-anchor="middle">② CAS(head: B → A)</text>
+        <rect class="f-cell" x="390" y="50" width="56" height="32"/><text class="f-text" x="418" y="71" text-anchor="middle">head</text>
+        <rect class="f-hit" x="476" y="50" width="50" height="32"/><text class="f-strong" x="501" y="71" text-anchor="middle">A</text>
+        <rect class="f-box" x="556" y="50" width="50" height="32"/><text class="f-text" x="581" y="71" text-anchor="middle">B</text>
+        <rect class="f-box" x="636" y="50" width="50" height="32"/><text class="f-text" x="661" y="71" text-anchor="middle">C</text>
+        <line class="f-line" x1="446" y1="66" x2="472" y2="66" marker-end="url(#cs-b)"/>
+        <line class="f-line" x1="526" y1="66" x2="552" y2="66" marker-end="url(#cs-a)"/>
+        <line class="f-line" x1="606" y1="66" x2="632" y2="66" marker-end="url(#cs-a)"/>
+        <text class="f-sub" x="545" y="122" text-anchor="middle">head가 아직 B일 때만 바뀐다</text>
+        <text class="f-sub" x="545" y="140" text-anchor="middle">바뀌는 순간 모든 스레드에 A가 보인다</text>
+
+        <text class="f-sub" x="360" y="200" text-anchor="middle">다른 스레드가 그사이 head를 바꿨다면 CAS가 실패하고 ①부터 다시 한다</text>
+      </svg>
+      <figcaption>트라이버(Treiber) 스택에 넣기. 새 노드를 준비하는 동안에는 공유 상태를 건드리지 않고, 마지막에 head 하나를 CAS로 바꿔 확정한다. 빼기도 같다. head와 그 다음 노드를 읽고, head가 아직 그대로면 다음 노드로 바꾼다.</figcaption>
+    </figure>
+    <p>
+      CAS 루프 자체는 <a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>에서 다뤘다. 자료구조로 넘어오면 문제가 하나 커진다. CAS는 값이 같은지만 보므로, 내가 읽은 뒤 누군가 노드를 빼고 같은 노드를 다시 넣으면 그사이의 변화를 놓친다(ABA). 빼기 도중 head가 B이고 "B의 다음은 C"라고 읽어 두었는데, 그사이 다른 스레드가 B와 C를 빼고 B만 다시 넣었다고 하자. head는 다시 B이니 CAS는 성공하고, head는 이미 빠진 C를 가리킨다.
+    </p>
+    <p>
+      C++에서는 노드 메모리가 해제되고 같은 주소로 다시 할당되면서 이 일이 생긴다. 포인터에 버전 번호를 붙여 함께 비교하거나(태그 포인터), 다른 스레드가 아직 읽는 중인 노드는 해제를 미루는 회수 기법(위험 포인터, 에포크)을 쓴다. .NET은 누군가 참조를 쥐고 있는 객체를 <a data-ref="csharp/gc-basics">GC</a>가 재사용하지 않으므로 대부분 피해 간다. 다만 할당을 줄이려고 <strong>노드를 풀에 돌려 다시 쓰면</strong> 같은 객체가 돌아오면서 ABA가 다시 생긴다.
+    </p>
+
+    <h3>락 프리 큐는 꼬리를 두 단계로 옮긴다</h3>
+    <p>
+      큐는 넣는 쪽(꼬리)과 빼는 쪽(머리)이 따로라 스택보다 어렵다. 마이클-스콧(Michael-Scott) 큐는 빈 더미 노드로 시작해 머리와 꼬리가 같은 노드를 가리키지 않게 한다. 넣을 때는 CAS를 두 번 한다. 먼저 마지막 노드의 next를 새 노드로 잇고, 그다음 꼬리 포인터를 새 노드로 옮긴다. 두 번째 CAS 전에 다른 스레드가 오면 꼬리가 한 칸 뒤처진 것을 보고 대신 옮겨 준다. 누가 멈춰도 다른 스레드가 일을 마무리할 수 있게 만든 것이다.
+    </p>
+
+    <h3>진행 보장은 세 단계로 나뉜다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>보장하는 것</th><th>멈춘 스레드가 있으면</th></tr></thead>
+        <tbody>
+          <tr><td>락 기반(blocking)</td><td>없다. 락을 쥔 스레드가 진행해야 나머지도 진행한다</td><td>락을 쥔 채 멈추면(선점, <a data-ref="operating-system/page-fault-thrashing">페이지 폴트</a>) 모두 기다린다</td></tr>
+          <tr><td>락 프리(lock-free)</td><td>전체 중 누군가는 항상 진행한다</td><td>나머지는 계속 진행한다. 다만 한 스레드가 계속 CAS에 져서 굶을 수는 있다</td></tr>
+          <tr><td>웨이트 프리(wait-free)</td><td>모든 스레드가 정해진 단계 안에 끝난다</td><td>누구도 굶지 않는다. 구현이 복잡하고 대개 더 느리다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      락 프리는 "빠르다"가 아니라 "누가 멈춰도 막히지 않는다"는 보장이다. 경합이 없을 때 짧은 락은 CAS 한두 번과 비용이 비슷하다. 경합이 심해지면 락 프리 쪽은 재시도가 늘고, 락 쪽은 스레드가 잠들었다 깨어나는 비용이 는다. 어느 쪽이 빠른지는 경합 정도에 따라 뒤집힌다.
+    </p>
+
+    <h3>넣고 빼는 쪽 수를 줄이면 단순해진다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>넣는 쪽 · 빼는 쪽</th><th>필요한 것</th></tr></thead>
+        <tbody>
+          <tr><td>SPSC</td><td>하나 · 하나</td><td>CAS가 필요 없다. 넣는 쪽만 꼬리를, 빼는 쪽만 머리를 쓰므로 원자적 읽기·쓰기(release·acquire)면 된다. 링 버퍼로 만든다</td></tr>
+          <tr><td>MPSC</td><td>여럿 · 하나</td><td>넣는 쪽만 원자적 교환이나 CAS로 꼬리를 다툰다. 빼는 쪽은 경쟁자가 없어 단순하다</td></tr>
+          <tr><td>MPMC</td><td>여럿 · 여럿</td><td>양쪽 모두 다툰다. 범용 구현이 이 경우를 감당하느라 가장 복잡하다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      머리와 꼬리를 같은 캐시 라인에 두면, 넣는 코어와 빼는 코어가 서로 다른 값을 쓰는데도 라인을 빼앗아 간다. 두 포인터 사이를 캐시 라인 크기만큼 띄워 두는 것이 이런 큐의 기본이다(<a href="../computer-architecture/cache-coherence.html">캐시 일관성과 false sharing</a>).
+    </p>
+
+    <h3>.NET의 동시성 컬렉션은 각자 구조가 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>타입</th><th>안의 구조</th><th>맞는 자리와 함정</th></tr></thead>
+        <tbody>
+          <tr><td><code>ConcurrentQueue&lt;T&gt;</code></td><td>배열 조각(세그먼트)을 이어 붙인 MPMC 큐. 칸마다 순번을 두어 넣기·빼기를 CAS로 조율하고, 조각을 바꿀 때만 짧게 락을 잡는다</td><td>범용 작업 큐. <code>Count</code>는 조각을 훑으므로 비어 있는지만 볼 때는 <code>IsEmpty</code>를 쓴다</td></tr>
+          <tr><td><code>ConcurrentStack&lt;T&gt;</code></td><td>트라이버 스택</td><td>넣을 때마다 노드를 할당한다</td></tr>
+          <tr><td><code>ConcurrentDictionary&lt;K,V&gt;</code></td><td>버킷을 여러 구간으로 나눠 구간마다 락을 둔다(락 분할). 읽기는 락을 잡지 않는다</td><td>읽기가 많은 공유 표(세션 ID → 세션). <code>Count</code>·<code>ToArray</code>·크기 늘리기는 모든 락을 잡는다</td></tr>
+          <tr><td><code>ConcurrentBag&lt;T&gt;</code></td><td>스레드마다 자기 리스트를 두고, 비면 남의 것을 훔친다</td><td>넣은 스레드가 다시 꺼내는 경우(<a data-ref="data-structure/memory-layout">객체 풀</a>)에 맞다. 생산자·소비자 큐로 쓰면 매번 훔쳐 오느라 느리다</td></tr>
+          <tr><td><code>Channel&lt;T&gt;</code></td><td>큐에 비동기 대기와 상한을 얹은 것</td><td>생산자·소비자 파이프라인. <code>SingleReader</code>·<code>SingleWriter</code>를 알려 주면 단순한 구현을 고른다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <ul>
+      <li><strong>먼저 공유를 없앨 수 있는지 본다.</strong> 상태를 한 스레드만 고치게 하면 동시성 자료구조가 필요한 곳은 그 스레드로 들어가는 입구 하나로 줄어든다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).</li>
+      <li><strong>남은 공유는 모양을 좁힌다.</strong> 소비자가 하나면 MPSC, 생산자도 하나면 SPSC를 쓴다. 범용 MPMC는 정말 양쪽이 여럿일 때만 쓴다.</li>
+      <li><strong>직접 만들기 전에 검증된 구현을 쓴다.</strong> 락 프리 구조의 버그는 메모리 순서와 회수 문제에서 나오고, 몇 주에 한 번 재현된다. 직접 만들어야 한다면 범위를 SPSC 링 버퍼 정도로 좁힌다.</li>
+    </ul>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>로직 스레드의 작업 큐는 MPSC다.</strong> I/O 스레드 여럿이 넣고 로직 스레드 하나가 뺀다. <code>Channel.CreateUnbounded</code>에 <code>SingleReader = true</code>를 주거나, 틱마다 한꺼번에 비우는 구조라면 <code>ConcurrentQueue</code>로도 충분하다. 상한과 넘칠 때의 정책은 <a href="../server/backpressure.html">큐와 백프레셔</a>에서 다룬다.
+      </li>
+      <li>
+        <strong>세션 송신 큐도 넣는 쪽은 여럿, 보내는 쪽은 하나다.</strong> 로직 스레드와 다른 시스템이 패킷을 넣고, 송신은 세션마다 한 번에 하나만 진행한다. 송신 중 여부는 <code>Interlocked.CompareExchange</code>로 세운 플래그 하나로 고른다. 플래그를 세운 스레드만 송신을 시작한다.
+      </li>
+      <li>
+        <strong>세션 표는 <code>ConcurrentDictionary</code>가 맞지만 <code>Count</code>를 매 틱 부르지 않는다.</strong> 모든 구간의 락을 잡는다. 접속자 수는 <code>Interlocked</code>로 따로 센다.
+      </li>
+      <li>
+        <strong><code>GetOrAdd(key, factory)</code>의 factory는 여러 번 돌 수 있다.</strong> 두 스레드가 동시에 없는 키를 만들면 둘 다 factory를 실행하고 한쪽 결과만 저장된다. factory가 DB를 읽거나 세션을 만드는 일이면 중복 실행이 그대로 부작용이 된다. 값을 <code>Lazy&lt;T&gt;</code>로 감싸 한 번만 만들게 한다. <code>AddOrUpdate</code>의 갱신 함수도 같다.
+      </li>
+      <li>
+        <strong>순회는 스냅숏이 아니다.</strong> <code>ConcurrentDictionary</code>를 <code>foreach</code>로 돌면 예외는 나지 않지만 도는 도중의 추가·삭제가 보일 수도, 안 보일 수도 있다. 한 시점의 목록이 필요하면 <code>ToArray</code>로 복사하고 그 비용(모든 락)을 감수한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>연산 하나하나가 안전해도 둘을 이으면 안전하지 않다.</strong> <code>if (!dict.ContainsKey(k)) dict.TryAdd(k, v)</code>는 두 호출 사이에 다른 스레드가 끼어든다. 한 번에 끝내는 메서드(<code>GetOrAdd</code>, <code>TryAdd</code>, <code>TryUpdate</code>)를 쓴다.</li>
+      <li><strong>락 프리 구조가 락 구조보다 항상 빠르지 않다.</strong> 모든 스레드가 같은 머리 포인터를 다투면 CAS 재시도와 캐시 라인 이동이 늘어난다. 경합을 줄이는 것은 구조를 나누는 쪽(스레드별 버퍼, 구간 분할)이다.</li>
+      <li><strong>노드를 재사용하면 GC가 막아 주던 ABA가 돌아온다.</strong> 할당을 줄이려고 락 프리 구조의 노드를 풀에서 꺼내 쓴다면 버전 번호를 함께 비교한다.</li>
+      <li>C#의 <code>volatile</code>, <code>Interlocked</code>, <code>lock</code>의 쓰임과 비용은 <a data-ref="csharp/volatile-interlocked">volatile과 Interlocked</a>, <a data-ref="csharp/lock-csharp">C#의 lock</a>에서 다룬다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

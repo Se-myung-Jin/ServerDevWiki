@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>시그널과 프로세스 종료 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="system-programming/signals">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../operating-system/ipc.html">프로세스 간 통신</a> · <a href="crash-dump.html">크래시 덤프와 심볼</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      시그널은 커널이 프로세스에 보내는 번호 하나짜리 알림이다. 프로세스가 무엇을 하고 있든 끼어든다. 시그널마다 <strong>기본 동작</strong>이 정해져 있고, 대부분은 프로세스를 끝내는 것이다. 처리기를 등록하면 기본 동작 대신 내 코드가 돈다. <code>SIGKILL</code>과 <code>SIGSTOP</code>만은 막을 수 없다.
+    </p>
+    <p>
+      서버가 챙길 것은 셋이다. <code>SIGTERM</code>을 받아 <span class="blank">정상 종료 경로</span>로 내려가기, 끊긴 소켓에 썼다고 <code>SIGPIPE</code>로 죽지 않기, 죽은 프로세스의 종료 코드에서 어떤 시그널로 죽었는지 읽어 내기다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>시그널마다 기본 동작이 있다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>시그널</th><th>언제 오나</th><th>기본 동작</th><th>잡을 수 있나</th></tr></thead>
+        <tbody>
+          <tr><td><code>SIGTERM</code> (15)</td><td>"끝내 달라"는 요청. <code>kill</code>의 기본값, 컨테이너 종료</td><td>종료</td><td>있다</td></tr>
+          <tr><td><code>SIGINT</code> (2)</td><td>터미널에서 Ctrl+C</td><td>종료</td><td>있다</td></tr>
+          <tr><td><code>SIGKILL</code> (9)</td><td><code>kill -9</code>, OOM killer, 유예 시간이 끝난 컨테이너</td><td>즉시 종료</td><td>없다</td></tr>
+          <tr><td><code>SIGHUP</code> (1)</td><td>터미널이 끊김. 데몬에서는 "설정을 다시 읽어라"로 쓰는 관례</td><td>종료</td><td>있다</td></tr>
+          <tr><td><code>SIGPIPE</code> (13)</td><td>읽는 쪽이 닫힌 파이프·소켓에 썼다</td><td>종료</td><td>있다</td></tr>
+          <tr><td><code>SIGSEGV</code> (11)</td><td>잘못된 메모리 접근</td><td>종료 + 코어 덤프</td><td>있지만 대개 이어 갈 수 없다</td></tr>
+          <tr><td><code>SIGABRT</code> (6)</td><td><code>abort()</code>. 런타임이 회복할 수 없는 오류를 만났다</td><td>종료 + 코어 덤프</td><td>있다</td></tr>
+          <tr><td><code>SIGBUS</code> (7)</td><td>매핑된 파일 끝 너머 접근 등(<a href="memory-mapped-file.html">메모리 맵 파일</a>)</td><td>종료 + 코어 덤프</td><td>있지만 대개 이어 갈 수 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      코어 덤프를 남기는 시그널로 죽으면 설정에 따라 덤프가 생긴다(<a href="crash-dump.html">크래시 덤프와 심볼</a>). <code>SIGKILL</code>은 덤프 없이 바로 끝난다.
+    </p>
+
+    <h3>처리기 안에서는 거의 아무것도 못 한다</h3>
+    <p>
+      시그널은 아무 지점에나 끼어든다. <code>malloc</code>이 내부 락을 잡고 있는 도중일 수도 있다. 그때 처리기에서 다시 <code>malloc</code>이나 <code>printf</code>, 락을 쓰는 함수를 부르면 자기 자신을 기다리며 멈추거나 자료구조가 깨진다. 처리기 안에서 불러도 되는 것은 <strong>async-signal-safe</strong>로 정해진 몇몇 함수(<code>write</code>, <code>_exit</code> 등)뿐이다.
+    </p>
+    <p>
+      그래서 처리기는 표시만 남기고 바로 돌아오는 것이 정석이다. <code>volatile sig_atomic_t</code> 플래그를 세우거나, 파이프나 <code>eventfd</code>에 1바이트를 써서 메인 루프가 깨어나게 한다. Linux의 <code>signalfd</code>는 시그널 자체를 <a data-ref="system-programming/kernel-object-handle">파일 디스크립터</a>로 읽게 해 준다. .NET 런타임은 이 일을 안에서 대신 하고, 등록한 처리기는 보통 스레드에서 불러 준다. 그래서 C# 처리기에서는 일반 코드를 써도 된다.
+    </p>
+
+    <h3>끊긴 소켓에 쓰면 프로세스가 죽을 수 있다</h3>
+    <p>
+      상대가 연결을 끊은(RST를 보낸) 소켓에 다시 쓰면 쓰기 호출은 <code>EPIPE</code>로 실패하고, 그와 함께 <code>SIGPIPE</code>가 온다. 기본 동작이 종료라서, 처리하지 않은 네이티브 서버는 클라이언트 하나가 끊긴 탓에 통째로 죽는다. 로그에는 아무것도 남지 않는다.
+    </p>
+    <p>
+      막는 방법은 세 가지다. 시작할 때 <code>signal(SIGPIPE, SIG_IGN)</code>으로 무시하거나, Linux에서는 <code>send</code>에 <code>MSG_NOSIGNAL</code>을 주거나, macOS·BSD에서는 소켓에 <code>SO_NOSIGPIPE</code>를 켠다. 그러면 오류만 돌아오고 프로세스는 산다. .NET 런타임은 시작할 때 <code>SIGPIPE</code>를 무시하도록 해 두므로 <code>SocketException</code>으로 받는다. Windows에는 이 시그널이 없고 오류 코드만 온다.
+    </p>
+
+    <h3>종료 코드로 죽은 이유를 읽는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 215" role="img" aria-label="SIGTERM을 받은 뒤 유예 시간 안에 정리를 마치면 종료 코드 0으로 끝나고, 정리가 길어지면 유예 시간이 끝날 때 SIGKILL로 강제 종료되어 종료 코드 137이 된다">
+        <text class="f-strong" x="80" y="20" text-anchor="middle">SIGTERM</text>
+        <line class="f-tick" x1="80" y1="28" x2="80" y2="186"/>
+        <line class="f-line" x1="80" y1="44" x2="640" y2="44"/><line class="f-line" x1="640" y1="38" x2="640" y2="50"/>
+        <text class="f-sub" x="360" y="36" text-anchor="middle">유예 시간 · Kubernetes 기본 30초</text>
+
+        <text class="f-text" x="88" y="70">정리가 제때 끝나면</text>
+        <rect class="f-hit" x="80" y="78" width="300" height="34" rx="4"/><text class="f-text" x="230" y="100" text-anchor="middle">새 접속 거절 · 저장 · 연결 종료</text>
+        <text class="f-strong" x="394" y="100">정상 종료 · 코드 0</text>
+
+        <text class="f-text" x="88" y="140">정리가 길어지면</text>
+        <rect class="f-pad" x="80" y="148" width="560" height="34" rx="4"/><text class="f-sub" x="360" y="170" text-anchor="middle">아직 저장 중</text>
+        <rect class="f-miss" x="640" y="148" width="96" height="34" rx="4"/><text class="f-on" x="688" y="170" text-anchor="middle">SIGKILL</text>
+        <text class="f-sub" x="688" y="204" text-anchor="middle">코드 137 · 정리 못 함</text>
+      </svg>
+      <figcaption>컨테이너를 내릴 때의 순서다. 먼저 <code>SIGTERM</code>이 오고, 프로세스는 유예 시간 안에 스스로 끝나야 한다. 시간을 넘기면 <code>SIGKILL</code>이 와서 정리하던 일이 그 자리에서 사라진다.</figcaption>
+    </figure>
+    <p>
+      프로세스가 스스로 끝나면 <code>exit</code>에 넘긴 값(0~255)이 종료 코드다. 시그널로 끝나면 셸과 컨테이너 런타임은 <strong>128 + 시그널 번호</strong>로 보여 준다. 그래서 숫자만 보고 원인을 가를 수 있다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종료 코드</th><th>뜻</th><th>먼저 볼 것</th></tr></thead>
+        <tbody>
+          <tr><td>137</td><td><code>SIGKILL</code>(128 + 9)</td><td>메모리 부족으로 OOM killer가 끝냈는지(Kubernetes의 <code>OOMKilled</code>, <code>dmesg</code>), 종료 유예 시간을 넘겼는지. SIGTERM이 서버까지 전달되지 않아도(아래 PID 1 문제) 유예 시간 뒤 이렇게 끝난다</td></tr>
+          <tr><td>143</td><td><code>SIGTERM</code>(128 + 15)을 처리하지 않아 기본 동작으로 끝남</td><td>신호는 왔지만 받아서 정리한 뒤 스스로 끝내는 코드가 없다</td></tr>
+          <tr><td>139</td><td><code>SIGSEGV</code>(128 + 11)</td><td>네이티브 라이브러리의 잘못된 메모리 접근. 덤프의 네이티브 스택</td></tr>
+          <tr><td>134</td><td><code>SIGABRT</code>(128 + 6)</td><td>런타임이 스스로 중단했다. Linux에서 처리되지 않은 .NET 예외가 흔히 이렇게 끝난다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>SIGTERM을 정상 종료 경로에 잇는다.</strong> .NET Generic Host는 <code>SIGTERM</code>을 받아 <code>IHostApplicationLifetime.ApplicationStopping</code>을 알리고 각 서비스의 <code>StopAsync</code>를 부른다. 기다리는 상한은 <code>HostOptions.ShutdownTimeout</code>이다. Host 없이 짠 서버는 <code>PosixSignalRegistration.Create(PosixSignal.SIGTERM, ...)</code>로 받고, 처리기에서 <code>context.Cancel = true</code>를 주면 기본 종료가 일어나지 않아 내 순서대로 정리할 수 있다. 무엇을 어떤 순서로 정리하는지는 <a data-ref="operations/draining">드레이닝</a>에서 다룬다.
+      </li>
+      <li>
+        <strong>유예 시간을 넘기지 않게 정리 순서를 잡는다.</strong> Kubernetes는 <code>SIGTERM</code>을 보내고 <code>terminationGracePeriodSeconds</code>(기본 30초)가 지나면 <code>SIGKILL</code>을 보낸다. 잃으면 안 되는 저장부터 하고, 오래 걸리는 정리는 뒤로 둔다. 정리가 본래 길다면 유예 시간과 <code>ShutdownTimeout</code>을 함께 늘린다.
+      </li>
+      <li>
+        <strong>컨테이너의 PID 1은 시그널을 다르게 받는다.</strong> PID 1은 처리기를 등록하지 않은 시그널의 기본 동작이 적용되지 않는다. <code>ENTRYPOINT</code>를 셸 형식으로 쓰면 셸이 PID 1로 남는 경우가 많고, 셸은 <code>SIGTERM</code>을 자식인 서버에 넘겨주지 않는다. 서버는 신호를 못 받은 채 30초 뒤 <code>SIGKILL</code>로 죽는다. exec 형식(<code>["dotnet", "Server.dll"]</code>)으로 서버를 PID 1로 두거나, <code>tini</code> 같은 작은 init(<code>docker run --init</code>)을 앞에 둔다.
+      </li>
+      <li>
+        <strong>Windows에는 시그널 대신 다른 통로가 있다.</strong> 콘솔 프로그램은 Ctrl+C·창 닫기·로그오프·종료를 콘솔 컨트롤 이벤트(<code>SetConsoleCtrlHandler</code>, .NET의 <code>Console.CancelKeyPress</code>)로 받고, 서비스는 서비스 제어 관리자의 중지 요청으로 받는다. .NET의 <code>PosixSignalRegistration</code>은 Windows에서 <code>SIGINT</code>·<code>SIGQUIT</code>·<code>SIGTERM</code>을 콘솔 이벤트에 대응시켜, 같은 코드로 양쪽을 받게 해 준다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>정리 코드가 반드시 돈다고 믿지 않는다.</strong> <code>SIGKILL</code>, 전원 차단, 커널 패닉에서는 아무것도 돌지 않는다. 잃으면 안 되는 상태는 종료 때가 아니라 평소에 저장한다.</li>
+      <li><strong><code>kill -9</code>를 습관으로 쓰지 않는다.</strong> 서버를 내릴 때는 기본 <code>kill</code>(<code>SIGTERM</code>)을 보내고 기다린다. 처음부터 <code>-9</code>를 쓰면 정상 종료 경로가 한 번도 쓰이지 않아, 그 코드가 망가져도 아무도 모른다.</li>
+      <li><strong>같은 시그널은 쌓이지 않는다.</strong> 처리하기 전에 같은 표준 시그널이 여러 번 오면 한 번으로 합쳐진다. 시그널 횟수를 세는 설계는 하지 않는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

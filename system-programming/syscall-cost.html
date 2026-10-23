@@ -110,7 +110,7 @@
     <h2>주의 사항</h2>
     <ul>
       <li><strong>시스템 콜은 무조건 피할 대상이 아니다.</strong> 필요한 요청은 해야 한다. 문제는 한 번에 1바이트씩 읽는 것처럼 필요 없이 잦은 호출이다.</li>
-      <li><strong>메모리 매핑은 시스템 콜을 없애지 않는다.</strong> 명시적인 <code>read</code> 호출이 <a href="../operating-system/page-fault-thrashing.html">페이지 폴트</a>로 모양을 바꿨을 뿐이고, 폴트도 커널로 들어가는 일이다. 파일 전체를 한 번 훑는다면 큰 버퍼로 읽는 쪽이 더 빠를 때가 많다.</li>
+      <li><strong>메모리 매핑은 시스템 콜을 없애지 않는다.</strong> 명시적인 <code>read</code> 호출이 <a href="../operating-system/page-fault-thrashing.html">페이지 폴트</a>로 모양을 바꿨을 뿐이고, 폴트도 커널로 들어가는 일이다. 파일 전체를 한 번 훑는다면 큰 버퍼로 읽는 쪽이 더 빠를 때가 많다(<a href="memory-mapped-file.html">메모리 맵 파일</a>).</li>
       <li><strong>시스템 콜 횟수를 줄이면 지연이 늘 수 있다.</strong> 모으는 동안 데이터가 기다린다. 틱 단위로 모으는 것처럼, 모으는 시간에 상한을 둔다.</li>
     </ul>
 

@@ -194,7 +194,7 @@ for (int c = 0; c &lt; Cols; c++)
 
     <h2>게임 서버에서는</h2>
     <p>
-      게임 서버의 틱 루프는 "많은 원소를 한 번씩 훑는" 패턴의 전형이다. 여기서 C#의 <code>class</code>와 <code>struct</code> 차이가 그대로 지역성 차이가 된다.
+      게임 서버의 <a data-ref="server/tick-loop">틱 루프</a>는 "많은 원소를 한 번씩 훑는" 패턴의 전형이다. 여기서 C#의 <code>class</code>와 <code>struct</code> 차이가 그대로 지역성 차이가 된다.
     </p>
 <pre><code class="language-csharp">// class 배열: 배열에는 참조(8바이트)만 연속으로 놓이고,
 // 실제 객체는 힙 여기저기에 있을 수 있다. 원소마다 포인터를 한 번 더 따라간다.

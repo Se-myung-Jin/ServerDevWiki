@@ -166,7 +166,7 @@ if (Volatile.Read(ref _ready))     // acquire: 뒤의 읽기가 앞으로 당겨
         ABA 문제와 안전한 메모리 회수라는 난제도 따라온다. 다만 .NET에서는 <a data-ref="csharp/gc-basics">GC</a>가 참조가 남아 있는 객체를 재사용하지 않으므로, 참조 기반 자료구조의 ABA와 메모리 회수 문제가 C++보다 훨씬 작다.
       </li>
       <li>
-        <strong>배리어를 다 붙이면 느려지고, 빼면 재현되지 않는 버그가 된다.</strong> 이 사이의 폭이 좁아서 lock-free를 제대로 구현하기 어렵다. 직접 만들기 전에 <code>ConcurrentQueue</code>, <code>Channel</code> 같은 검증된 구현을 먼저 쓴다.
+        <strong>배리어를 다 붙이면 느려지고, 빼면 재현되지 않는 버그가 된다.</strong> 이 사이의 폭이 좁아서 lock-free를 제대로 구현하기 어렵다. 직접 만들기 전에 <code>ConcurrentQueue</code>, <code>Channel</code> 같은 검증된 구현(<a href="../data-structure/concurrent-structures.html">동시성 자료구조</a>)을 먼저 쓴다.
       </li>
     </ul>
 

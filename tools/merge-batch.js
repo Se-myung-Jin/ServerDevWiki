@@ -25,9 +25,13 @@ const blocks = [];
 let total = 0, added = 0;
 for (const t of category.topics) {
   const f = path.join(outDir, t.slug + ".json");
-  if (!fs.existsSync(f)) throw new Error("missing " + f);
+  const merged = new RegExp('^    topic: "' + dir + "/" + t.slug + '"', "m").test(quiz);
+  if (!fs.existsSync(f)) {
+    if (merged) continue; // 이미 합친 토픽이면 건너뛴다. 기존 분야에 토픽을 더할 때 쓴다
+    throw new Error("missing " + f);
+  }
   if (!fs.existsSync(path.join(root, dir, t.slug + ".html"))) throw new Error("missing page " + t.slug);
-  if (new RegExp('^    topic: "' + dir + "/" + t.slug + '"', "m").test(quiz)) throw new Error("already merged " + t.slug);
+  if (merged) throw new Error("already merged " + t.slug);
   const d = JSON.parse(fs.readFileSync(f, "utf8"));
 
   if (d.summary) {
@@ -56,4 +60,4 @@ quiz = quiz.slice(0, end) + "\n\n" + blocks.join("\n\n") + quiz.slice(end);
 fs.writeFileSync(catFile, cat);
 fs.writeFileSync(quizFile, quiz);
 fs.writeFileSync(termsFile, "[\n" + terms.map((x) => "  " + JSON.stringify(x)).join(",\n") + "\n]\n");
-console.log("merged", category.topics.length, "topics,", total, "questions,", added, "terms");
+console.log("merged", blocks.length, "topics,", total, "questions,", added, "terms");

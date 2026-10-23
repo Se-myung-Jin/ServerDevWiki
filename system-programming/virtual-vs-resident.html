@@ -87,7 +87,7 @@
       <table>
         <thead><tr><th>세는 것</th><th>Linux (<code>top</code>, <code>/proc</code>)</th><th>Windows (작업 관리자, 성능 카운터)</th><th>커지는 이유</th></tr></thead>
         <tbody>
-          <tr><td>예약한 주소 공간 전체</td><td>VIRT (VSZ)</td><td>Virtual Bytes</td><td>큰 영역을 예약만 해도, 파일을 매핑만 해도 커진다</td></tr>
+          <tr><td>예약한 주소 공간 전체</td><td>VIRT (VSZ)</td><td>Virtual Bytes</td><td>큰 영역을 예약만 해도, <a href="memory-mapped-file.html">파일을 매핑</a>만 해도 커진다</td></tr>
           <tr><td>물리 메모리에 붙은 양</td><td>RES (RSS)</td><td>Working Set</td><td>실제로 접근한 만큼 커진다</td></tr>
           <tr><td>그중 다른 프로세스와 나눠 쓰는 것</td><td>SHR</td><td>Shared Working Set</td><td>공유 라이브러리, 매핑한 파일</td></tr>
           <tr><td>나만 쓰는 것</td><td>USS</td><td>Private Working Set</td><td>힙, 스택, 쓰기한 페이지</td></tr>

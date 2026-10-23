@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>서버 틱 루프 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/tick-loop">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="threading-model.html">게임 서버 스레딩 모델</a> · <a href="../operating-system/clocks-timers.html">시계와 타이머</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      틱 루프는 정해진 간격마다 게임 세상을 <strong>한 단계씩</strong> 진행하는 루프다. 한 틱 안에서 그동안 쌓인 입력을 반영하고, 이동·전투·AI를 정해진 시간 간격(dt)만큼 계산하고, 바뀐 것을 모아 보낸다. 초당 틱 수가 틱레이트이고, 20Hz면 틱 하나에 <span class="blank">50ms</span>가 주어진다.
+    </p>
+    <p>
+      그 50ms가 <strong>틱 예산</strong>이다. 한 틱의 일이 예산 안에 끝나면 남는 시간을 쉬고, 넘기면 다음 틱이 밀린다. 밀림을 어떻게 처리하느냐, 쉬는 시간을 얼마나 정확히 지키느냐가 틱 루프 설계의 대부분이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>한 틱 안에서 하는 일</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>순서</th><th>하는 일</th><th>주의할 점</th></tr></thead>
+        <tbody>
+          <tr><td>1. 입력 반영</td><td>I/O 스레드가 넣어 둔 작업 큐를 비우며 이동 요청, 스킬 사용 같은 입력을 꺼낸다</td><td>틱 시작 시점까지 들어온 것만 처리한다. 처리하는 동안 새로 온 것은 다음 틱 몫이다</td></tr>
+          <tr><td>2. 시뮬레이션</td><td>이동, 충돌, 전투 판정, 버프 만료, AI를 고정된 dt로 한 단계 진행한다</td><td>틱 안에서는 모두가 같은 "현재 시각"(틱 번호 × dt)을 쓴다</td></tr>
+          <tr><td>3. 비동기 결과 반영</td><td>DB 조회처럼 다른 스레드에 넘겼던 일의 결과를 받아 적용한다</td><td>그사이 대상이 사라졌을 수 있으니 다시 확인한다(<a href="threading-model.html">스레딩 모델</a>)</td></tr>
+          <tr><td>4. 송신</td><td>이번 틱에 바뀐 상태를 세션별로 모아 한 번에 보낸다</td><td>관찰자마다 보낼 범위를 고른다(<a href="aoi-broadcast.html">관심 영역과 브로드캐스트</a>)</td></tr>
+          <tr><td>5. 대기</td><td>다음 틱 목표 시각까지 쉰다</td><td>"적어도 그만큼"만 지켜지므로 목표 시각 기준으로 계산한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      시뮬레이션이 쓰는 시각은 벽시계가 아니라 <strong>틱 번호</strong>다. 버프가 "3초 뒤 만료"라면 60틱(20Hz 기준) 뒤에 만료된다. 같은 틱에 일어난 일은 모두 같은 시각에 일어난 것으로 친다. 이렇게 하면 입력을 기록해 두고 같은 순서로 다시 넣었을 때 같은 결과가 나와, 재현과 리플레이가 쉬워진다.
+    </p>
+
+    <h3>목표 시각을 기준으로 쉬고, 밀리면 따라잡는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="20Hz 틱 루프에서 두 번째 틱이 예산 50ms를 넘겨 70ms가 걸리자 세 번째 틱은 쉬지 않고 바로 시작해 목표 시각을 따라잡는다">
+        <defs><marker id="tl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="20" y="24">목표 시각 = 시작 + n × 50ms</text>
+        <line class="f-line" x1="60" y1="140" x2="700" y2="140" marker-end="url(#tl-a)"/>
+        <line class="f-tick" x1="80" y1="72" x2="80" y2="150"/><text class="f-sub" x="80" y="168" text-anchor="middle">0</text>
+        <line class="f-tick" x1="230" y1="72" x2="230" y2="150"/><text class="f-sub" x="230" y="168" text-anchor="middle">50ms</text>
+        <line class="f-tick" x1="380" y1="72" x2="380" y2="150"/><text class="f-sub" x="380" y="168" text-anchor="middle">100ms</text>
+        <line class="f-tick" x1="530" y1="72" x2="530" y2="150"/><text class="f-sub" x="530" y="168" text-anchor="middle">150ms</text>
+        <line class="f-tick" x1="680" y1="72" x2="680" y2="150"/><text class="f-sub" x="680" y="168" text-anchor="middle">200ms</text>
+
+        <rect class="f-bar" x="80" y="80" width="90" height="34"/><text class="f-text" x="125" y="102" text-anchor="middle">틱 1 · 30ms</text>
+        <rect class="f-pad" x="170" y="80" width="60" height="34"/><text class="f-sub" x="200" y="102" text-anchor="middle">쉰다</text>
+
+        <rect class="f-miss" x="230" y="80" width="210" height="34"/><text class="f-on" x="335" y="102" text-anchor="middle">틱 2 · 70ms (예산 초과)</text>
+
+        <rect class="f-bar" x="440" y="80" width="75" height="34"/><text class="f-text" x="477" y="102" text-anchor="middle">틱 3 · 25ms</text>
+        <rect class="f-pad" x="515" y="80" width="15" height="34"/>
+        <rect class="f-bar" x="530" y="80" width="90" height="34"/><text class="f-text" x="575" y="102" text-anchor="middle">틱 4 · 30ms</text>
+        <rect class="f-pad" x="620" y="80" width="60" height="34"/><text class="f-sub" x="650" y="102" text-anchor="middle">쉰다</text>
+
+        <text class="f-sub" x="440" y="64" text-anchor="middle">목표 100ms를 이미 지나 바로 시작</text>
+        <text class="f-sub" x="530" y="196" text-anchor="middle">150ms에 다시 제자리</text>
+        <text class="f-sub" x="410" y="196" text-anchor="middle">20ms 늦음</text>
+        <text class="f-strong" x="380" y="230" text-anchor="middle">"지금 + 50ms"로 잡았다면 틱 3 이후가 모두 20ms씩 밀린 채로 간다</text>
+      </svg>
+      <figcaption>틱 2가 예산을 20ms 넘겼다. 다음 틱의 시각을 "시작 + n × 간격"으로 계산하면 틱 3은 쉬지 않고 바로 시작하고, 틱 3이 짧게 끝나 150ms의 틱 4부터 제자리로 돌아온다. 깨어난 시각에 간격을 더하는 방식이었다면 밀린 20ms가 그대로 남는다.</figcaption>
+    </figure>
+<pre><code class="language-csharp">const int TickRate = 20;
+long tickTicks = Stopwatch.Frequency / TickRate;     // 한 틱의 길이(Stopwatch 단위)
+long start = Stopwatch.GetTimestamp();
+long tick = 0;
+
+while (running)
+{
+    long target = start + tick * tickTicks;          // 이번 틱의 목표 시각
+    long now = Stopwatch.GetTimestamp();
+
+    if (now - target &gt; tickTicks * MaxCatchUpTicks)  // 너무 밀렸다: 따라잡기를 포기한다
+    {
+        skipped += (now - target) / tickTicks;
+        start = now - tick * tickTicks;              // 기준을 지금으로 다시 잡는다
+        target = now;
+    }
+
+    if (now &lt; target)
+        WaitUntil(target);                           // 남은 시간만 쉰다
+
+    long begin = Stopwatch.GetTimestamp();
+    RunTick(tick);                                   // 입력 → 시뮬레이션 → 송신
+    RecordTick(Stopwatch.GetElapsedTime(begin),      // 틱에 걸린 시간
+               lateBy: begin - target);              // 목표보다 늦게 시작한 정도
+    tick++;
+}</code></pre>
+    <p>
+      밀린 틱을 어떻게 처리할지는 세 가지가 있다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>어떻게</th><th>맞는 곳</th><th>위험</th></tr></thead>
+        <tbody>
+          <tr><td>따라잡기</td><td>쉬지 않고 밀린 틱을 연달아 돌려 목표 시각을 회복한다</td><td>가끔 한 번 튀는 경우. 시뮬레이션 시간이 실제 시간과 맞는다</td><td>틱마다 예산을 넘기면 따라잡을수록 더 밀린다</td></tr>
+          <tr><td>건너뛰기</td><td>밀린 틱을 버리고 기준 시각을 지금으로 다시 잡는다</td><td>계속 과부하일 때. 게임 시간이 잠깐 느려지는 쪽을 택한다</td><td>그 구간만큼 게임 안 시간이 실제보다 덜 흐른다</td></tr>
+          <tr><td>dt 늘리기</td><td>늦은 만큼 다음 틱의 dt를 키운다</td><td>클라이언트 렌더링 루프</td><td>dt가 바뀌면 결과가 실행 시간에 따라 달라진다. 서버에는 맞지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      따라잡기만 쓰면 <strong>죽음의 나선</strong>에 빠질 수 있다. 틱 하나가 늘 예산보다 오래 걸리면 밀린 틱을 연달아 돌리는 동안 또 밀리고, 따라잡을 틱 수가 계속 늘어난다. 서버는 쉬지 않고 돌지만 게임은 점점 뒤처진다. 그래서 따라잡을 틱 수에 상한을 두고, 넘으면 건너뛰기로 바꾼다. 위 코드의 <code>MaxCatchUpTicks</code>가 그 상한이다.
+    </p>
+
+    <h3>고정 간격이어야 결과가 정해진다</h3>
+    <p>
+      dt가 틱마다 다르면 같은 입력에도 결과가 달라진다. 빠르게 움직이는 물체는 dt가 크면 벽을 뚫고 지나가고, 가속도를 쓰는 계산은 dt를 어떻게 나눴느냐에 따라 최종 위치가 조금씩 다르다. 서버가 고정 dt를 쓰면 실행 속도와 상관없이 같은 입력에서 같은 결과가 나온다. 클라이언트가 서버 결과를 예측하고 맞추는 일도 이 고정 간격 위에서 성립한다(<a data-ref="game-patterns/state-sync">상태 동기화</a>).
+    </p>
+
+    <h3>쉬는 시간을 정확히 지키려면</h3>
+    <p>
+      남은 시간만큼 <code>Thread.Sleep</code>을 부르면 Windows 기본 해상도에서는 최대 15ms 넘게 늦게 깬다(<a href="../operating-system/clocks-timers.html">시계와 타이머</a>). 50ms 틱이면 틱 하나에 30%가 흔들린다. 흔한 대처는 다음과 같다.
+    </p>
+    <ul>
+      <li><strong>조금 일찍 깨서 나머지를 기다린다.</strong> 목표보다 몇 ms 앞까지만 자고, 남은 짧은 시간은 <code>Thread.Yield</code>나 <code>SpinWait</code>로 시계를 보며 기다린다. 정확하지만 그동안 코어 하나를 쓴다.</li>
+      <li><strong>고해상도 타이머를 쓴다.</strong> Windows의 고해상도 대기 타이머나 프로세스 단위 <code>timeBeginPeriod(1)</code>로 오차를 1ms 근처로 줄인다. Linux는 기본 타이머가 이미 정밀한 편이다.</li>
+      <li><strong>오차를 받아들이고 목표 시각만 지킨다.</strong> 매 틱이 몇 ms씩 흔들려도 목표 시각 기준으로 계산하면 평균 간격은 정확하다. 10~20Hz 틱에서는 이것으로 충분한 경우가 많다.</li>
+    </ul>
+    <p>
+      <code>Task.Delay</code>나 <code>PeriodicTimer</code>로 틱을 돌리면 깨어난 뒤 <a href="../operating-system/thread-pool.html">스레드 풀</a> 차례까지 기다려야 하고, 매 틱 다른 스레드에서 돌 수 있다. 상태를 한 스레드만 만지는 구조라면 틱 루프는 전용 스레드에서 직접 돈다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>틱레이트는 반응성과 비용을 맞바꾼다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>틱레이트</th><th>틱 예산</th><th>흔히 쓰는 곳</th><th>특징</th></tr></thead>
+        <tbody>
+          <tr><td>10~20Hz</td><td>100~50ms</td><td>MMORPG, 필드 이동 위주</td><td>한 틱에 많은 대상을 처리할 여유가 있다. 클라이언트가 보간으로 부드럽게 보인다</td></tr>
+          <tr><td>20~30Hz</td><td>50~33ms</td><td>액션, MOBA, 배틀로얄</td><td>판정 지연과 서버 비용의 절충</td></tr>
+          <tr><td>60~128Hz</td><td>17~8ms</td><td>경쟁 FPS, 격투</td><td>입력이 결과에 빨리 반영된다. 서버 CPU와 대역폭이 틱레이트에 비례해 든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      틱레이트를 두 배로 올리면 입력이 다음 틱을 기다리는 시간은 절반으로 줄지만, 시뮬레이션 횟수와 송신량이 두 배가 되어 서버 한 대가 맡을 수 있는 인원이 거의 절반이 된다. 사람이 느끼는 지연에는 망 왕복과 클라이언트 쪽 버퍼도 들어가므로, 틱레이트만 올려서 얻는 차이는 생각보다 작을 수 있다.
+    </p>
+    <p>
+      예산을 다 쓰도록 잡지도 않는다. 평소 틱 시간이 예산의 절반에서 70% 정도에 머물러야 순간적인 몰림과 <a data-ref="csharp/gc-basics">GC</a> 멈춤을 흡수한다. 평소에 90%를 쓰는 서버는 이벤트 한 번에 밀리기 시작한다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 시간을 분포로 남긴다.</strong> 틱마다 걸린 시간, 예산을 넘긴 횟수, 목표 시각보다 늦게 시작한 정도, 건너뛴 틱 수를 기록한다. 평균 틱 시간이 낮아도 가끔 튀는 틱이 사용자에게는 "렉"이다. 예산을 넘긴 틱에서는 어느 단계(입력, 시뮬레이션, 송신)가 오래 걸렸는지도 같이 남긴다.
+      </li>
+      <li>
+        <strong>입력에 틱 번호를 붙인다.</strong> 클라이언트가 "몇 번째 틱에 낸 입력"인지 적어 보내면, 서버는 망 흔들림으로 몰려 온 입력을 원래 틱에 맞춰 반영하거나 적은 수를 버퍼에 쌓아 고르게 꺼낸다. 너무 늦게 온 입력은 버리는 기준도 정해 둔다.
+      </li>
+      <li>
+        <strong>여러 존을 한 루프에 태울 때는 무거운 존이 다른 존을 끌어내린다.</strong> 존 열 개를 한 스레드의 틱 루프에서 차례로 돌리면, 공성전이 벌어진 존 하나가 예산을 다 써서 나머지 아홉 존까지 늦어진다. 존마다 루프를 따로 두거나, 존 단위로 틱 시간을 재서 무거운 존을 다른 스레드나 서버로 옮긴다.
+      </li>
+      <li>
+        <strong>시스템마다 주기를 다르게 둔다.</strong> 모든 일을 매 틱 할 필요는 없다. 이동과 전투는 매 틱, AI 판단은 두세 틱에 한 번, 저장 예약과 통계는 몇 초에 한 번처럼 나눈다. 같은 주기의 일이 한 틱에 몰리지 않도록 대상마다 시작 틱을 흩어 둔다.
+      </li>
+      <li>
+        <strong>긴 일은 여러 틱에 나눈다.</strong> 수천 명에게 보상 지급하기처럼 한 번에 하면 예산을 넘는 일은 틱마다 일정량씩 처리한다. 클라이언트의 프레임 루프와는 목적이 다르다. 클라이언트는 화면 갱신에 맞춰 돌고 dt가 매번 바뀐다(<a data-ref="unity/execution-loop">Unity 실행 순서</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>틱 안에서 벽시계를 읽지 않는다.</strong> 같은 틱의 판정마다 <code>DateTime.UtcNow</code>를 읽으면 같은 순간에 일어난 일이 서로 다른 시각을 갖고, 재현도 안 된다. 틱 시작에 한 번 정한 시각을 모두가 쓴다.</li>
+      <li><strong>쉬는 동안 받은 입력은 다음 틱에 처리된다.</strong> 입력이 반영되기까지 평균 반 틱, 최대 한 틱을 기다린다. 틱레이트가 낮을수록 이 대기가 길다.</li>
+      <li><strong>틱 루프 스레드에서 기다리는 호출을 하지 않는다.</strong> 동기 DB 호출이나 <code>Task.Result</code> 하나가 그 틱을 통째로 늘린다. 기다림은 다른 스레드에 맡기고 결과를 큐로 받는다.</li>
+      <li><strong>CPU 사용률로 여유를 판단하지 않는다.</strong> 틱 루프는 쉬는 시간이 있어서 CPU 사용률이 낮게 나온다. 여유는 틱 시간이 예산의 몇 퍼센트인지로 본다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

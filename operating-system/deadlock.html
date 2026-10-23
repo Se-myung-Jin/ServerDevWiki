@@ -126,7 +126,7 @@ void Trade(Player a, Player b)
         <strong>sync-over-async도 데드락이다.</strong> 한 스레드에서만 이어 실행하는 <code>SynchronizationContext</code>를 쓰는 서버(<a data-ref="server/threading-model">로직 스레드</a> 하나에 continuation을 몰아주는 구조)에서 <code>task.Result</code>나 <code>.Wait()</code>를 부르면, 그 스레드가 결과를 기다리느라 멈추고 결과를 만들 continuation은 같은 스레드를 기다려 영원히 멈춘다. 비동기 메서드는 끝까지 <code>await</code>한다.
       </li>
       <li>
-        <strong>덤프로 찾는다.</strong> 서버가 멈추면 <code>dotnet-dump collect</code>로 덤프를 뜨고 <code>dotnet-dump analyze</code>의 <code>syncblk</code>(누가 어떤 락을 쥐었나)와 <code>clrstack -all</code>(누가 무엇을 기다리나)로 고리를 확인한다.
+        <strong>덤프로 찾는다.</strong> 서버가 멈추면 <code>dotnet-dump collect</code>로 덤프를 뜨고 <code>dotnet-dump analyze</code>의 <code>syncblk</code>(누가 어떤 락을 쥐었나)와 <code>clrstack -all</code>(누가 무엇을 기다리나)로 고리를 확인한다(<a href="../system-programming/crash-dump.html">크래시 덤프와 심볼</a>).
       </li>
     </ul>
 

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>크래시 덤프와 심볼 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="system-programming/crash-dump">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="compile-link.html">컴파일과 링킹</a> · <a href="call-stack.html">호출 스택</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      운영 중인 서버가 죽으면 로그에는 대개 마지막 몇 줄만 남는다. <strong>크래시 덤프</strong>는 죽는 순간 프로세스의 메모리, 레지스터, 스레드마다의 스택을 파일로 남긴 것이다. 디버거로 열면 그 순간에 멈춰 선 프로그램을 들여다볼 수 있다.
+    </p>
+    <p>
+      덤프에 있는 것은 주소와 바이트뿐이다. 주소를 함수 이름과 소스 줄 번호로 되돌리는 표가 <strong>심볼</strong>이고, 빌드할 때 따로 만들어진다. 심볼은 <span class="blank">정확히 그 빌드의 것</span>이어야 맞는다. 그래서 배포할 때마다 심볼을 보관해 두지 않으면 덤프는 숫자 덩어리가 된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>덤프와 심볼은 따로 만들어져 분석할 때 만난다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 290" role="img" aria-label="빌드 때 실행 파일과 심볼 파일이 같은 빌드 ID로 짝지어 만들어지고, 운영 중 죽으면 덤프가 남으며, 분석기가 덤프와 심볼을 합쳐 주소를 함수와 줄 번호로 바꾼다">
+        <defs><marker id="cd-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="40" y="22">빌드할 때</text>
+        <rect class="f-box" x="40" y="32" width="230" height="48" rx="4"/><text class="f-text" x="155" y="53" text-anchor="middle">실행 파일 · 서버에 배포</text><text class="f-sub" x="155" y="70" text-anchor="middle">심볼을 빼서 작다</text>
+        <rect class="f-hit" x="490" y="32" width="230" height="48" rx="4"/><text class="f-strong" x="605" y="53" text-anchor="middle">심볼 파일 · 보관소</text><text class="f-sub" x="605" y="70" text-anchor="middle">PDB · DWARF</text>
+        <line class="f-pad" x1="270" y1="56" x2="490" y2="56"/><text class="f-sub" x="380" y="48" text-anchor="middle">같은 빌드 ID로 짝</text>
+
+        <line class="f-line" x1="155" y1="80" x2="155" y2="128" marker-end="url(#cd-a)"/><text class="f-sub" x="167" y="102">운영 중 죽는 순간</text><text class="f-sub" x="167" y="118">메모리·레지스터·스택을 남긴다</text>
+        <rect class="f-box" x="40" y="132" width="230" height="48" rx="4"/><text class="f-text" x="155" y="153" text-anchor="middle">덤프 파일</text><text class="f-sub" x="155" y="170" text-anchor="middle">0x7ff6a2c41b3e … 주소만 있다</text>
+
+        <line class="f-line" x1="200" y1="180" x2="290" y2="214" marker-end="url(#cd-a)"/>
+        <line class="f-line" x1="605" y1="80" x2="480" y2="214" marker-end="url(#cd-a)"/>
+        <rect class="f-miss" x="225" y="218" width="320" height="40" rx="4"/><text class="f-on" x="385" y="243" text-anchor="middle">분석기 · WinDbg · lldb · dotnet-dump</text>
+        <text class="f-strong" x="385" y="282" text-anchor="middle">→ Session.OnReceive(…) Session.cs 212번째 줄</text>
+      </svg>
+      <figcaption>배포하는 실행 파일에서는 심볼을 빼고, 심볼은 빌드 ID와 함께 따로 보관한다. 덤프에는 주소만 있으므로, 분석기는 덤프에 적힌 모듈의 빌드 ID로 맞는 심볼을 찾아 주소를 함수와 줄로 바꾼다.</figcaption>
+    </figure>
+
+    <h3>덤프에 무엇을 담을지 고른다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>담는 것</th><th>크기</th><th>알 수 있는 것</th></tr></thead>
+        <tbody>
+          <tr><td>미니덤프 (Windows)</td><td>스레드 스택, 레지스터, 로드된 모듈 목록. 옵션에 따라 힙 일부</td><td>수 MB</td><td>어느 스레드가 어디서 죽었나. 변수 값과 객체 내용은 대부분 없다</td></tr>
+          <tr><td>전체 덤프 · 코어 덤프</td><td>프로세스 메모리 전부</td><td>프로세스 메모리만큼(수 GB~수십 GB)</td><td>모든 객체와 변수. 메모리 누수와 꼬인 상태 분석</td></tr>
+          <tr><td>.NET <code>Heap</code> 덤프</td><td>스택, 모듈, 관리 힙. 실행 코드 이미지는 뺀다</td><td>관리 힙 크기 근처</td><td>관리 객체, 예외, 락 상태. .NET 서버 분석의 보통 선택</td></tr>
+          <tr><td>.NET <code>Triage</code> 덤프</td><td>미니덤프에서 개인 정보가 될 만한 경로·문자열을 걷어 낸 것</td><td>작다</td><td>밖으로 보내도 되는 최소한의 스택 정보</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      .NET 서버를 미니덤프로만 뜨면 관리 힙이 없어서 예외 객체나 컬렉션 내용을 보지 못한다. 관리 코드를 분석하려면 <code>Heap</code> 이상이 필요하다.
+    </p>
+
+    <h3>심볼은 그 빌드의 것이어야 한다</h3>
+    <p>
+      컴파일러는 기계어와 함께 "이 주소 구간은 이 함수, 이 소스 줄"이라는 표를 만든다. Windows는 이것을 실행 파일 밖의 <strong>PDB</strong> 파일에 둔다. Linux는 ELF 파일 안의 <strong>DWARF</strong> 섹션에 넣는데, 배포본에서는 <code>strip</code>으로 빼고 <code>objcopy --only-keep-debug</code>로 따로 떼어 보관하는 것이 보통이다. .NET은 Portable PDB를 만든다.
+    </p>
+    <p>
+      실행 파일과 심볼은 빌드마다 붙는 식별자로 짝을 맞춘다. ELF는 빌드 ID, PDB는 GUID와 age다. 같은 소스라도 다시 빌드하면 주소 배치가 달라질 수 있어서, 식별자가 다른 심볼은 디버거가 쓰지 않거나 엉뚱한 이름을 보여 준다. 그래서 배포한 빌드의 심볼을 그때 보관해 두어야 한다. 모아 두는 곳이 <strong>심볼 서버</strong>다(Windows는 <code>symstore</code>와 심볼 서버 경로, Linux는 <code>debuginfod</code>). OS와 .NET 런타임의 심볼은 Microsoft 심볼 서버에서 받는다.
+    </p>
+    <p>
+      Source Link를 켜면 PDB에 저장소 주소와 커밋이 기록된다. 디버거가 그 커밋의 소스를 직접 받아 와서, 덤프의 줄 번호가 정확히 그 버전의 코드를 가리킨다.
+    </p>
+
+    <h3>릴리스 빌드의 스택은 소스와 다르게 보인다</h3>
+    <ul>
+      <li><strong>인라인된 함수는 프레임이 없다.</strong> 작은 함수가 호출한 쪽에 펼쳐지면 스택에서 그 단계가 사라진다. 심볼에 인라인 정보가 있으면 디버거가 가상 프레임으로 보여 주기도 한다(<a href="inline-codegen.html">인라인과 코드 생성</a>).</li>
+      <li><strong>프레임 포인터를 생략하면 스택을 거꾸로 걷기 어렵다.</strong> 최적화 빌드는 프레임 포인터 레지스터를 일반 용도로 쓴다. 디버거는 심볼에 든 되감기 정보로 스택을 복원하는데, 그 정보가 없으면 중간부터 스택이 끊기거나 틀린다(<a href="call-stack.html">호출 스택</a>).</li>
+      <li><strong>꼬리 호출은 호출한 함수를 지운다.</strong> 마지막에 다른 함수를 부르고 끝나는 함수는 자기 프레임을 넘겨주고 사라진다.</li>
+      <li><strong>지역 변수가 "최적화되어 없음"으로 나온다.</strong> 레지스터에만 있다가 덮어쓰인 값은 덤프에 남지 않는다.</li>
+    </ul>
+    <p>
+      .NET의 <a data-ref="csharp/jit-aot">JIT</a>도 인라인을 하므로 관리 스택에서도 같은 일이 생긴다. 스택에 꼭 남아야 하는 함수는 <code>[MethodImpl(MethodImplOptions.NoInlining)]</code>으로 막을 수 있다.
+    </p>
+
+    <h2>수집을 켜 두는 방법</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>대상</th><th>죽을 때 남기기</th><th>살아 있는 프로세스에서 뜨기</th></tr></thead>
+        <tbody>
+          <tr><td>Linux 네이티브</td><td><code>ulimit -c unlimited</code>(기본이 0이면 남지 않는다). 위치는 <code>/proc/sys/kernel/core_pattern</code>이 정하고, <code>systemd-coredump</code>가 받으면 <code>coredumpctl</code>로 꺼낸다</td><td><code>gcore</code>(gdb)</td></tr>
+          <tr><td>Windows 네이티브</td><td>WER의 <code>LocalDumps</code> 레지스트리(폴더, 덤프 종류), 또는 <code>procdump -e</code></td><td><code>procdump -ma</code>, 작업 관리자의 "덤프 파일 만들기"</td></tr>
+          <tr><td>.NET</td><td><code>DOTNET_DbgEnableMiniDump=1</code>, <code>DOTNET_DbgMiniDumpType</code>(1 Mini, 2 Heap, 3 Triage, 4 Full), <code>DOTNET_DbgMiniDumpName</code>(경로). 런타임이 <code>createdump</code>로 남긴다</td><td><code>dotnet-dump collect -p &lt;PID&gt; --type Heap</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      .NET 덤프는 <code>dotnet-dump analyze</code>로 연다. <code>clrstack -all</code>(모든 스레드의 관리 스택), <code>pe</code>(마지막 예외), <code>dumpheap -stat</code>(타입별 객체 수와 크기), <code>syncblk</code>(누가 락을 쥐었나)가 자주 쓰는 명령이다. 네이티브 스택까지 함께 보려면 WinDbg나 lldb에 SOS 확장을 얹는다. JIT가 만든 코드는 심볼 파일에 없어서, 관리 프레임은 SOS가 런타임의 자료구조를 읽어 이름을 붙인다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>죽으면 저절로 남고 저절로 모이게 한다.</strong> 덤프 수집을 서버 설정의 기본값으로 켜 두고, 덤프와 빌드 버전, 시각, 서버 이름을 수집 서버로 올린다. 프로세스를 자동으로 다시 띄우는 감시자가 덤프를 다 쓰기 전에 다음 프로세스를 시작하거나 파일을 지우지 않게 순서를 맞춘다. 컨테이너는 다시 시작하면 내부 파일 시스템이 사라지므로 덤프 경로를 볼륨에 둔다.
+      </li>
+      <li>
+        <strong>빌드마다 심볼을 올린다.</strong> CI가 배포 산출물을 만들 때 심볼을 심볼 서버에 함께 올리게 한다. 사람 손으로 하면 급한 핫픽스 빌드에서 반드시 빠지고, 그 빌드에서 난 덤프만 읽지 못한다.
+      </li>
+      <li>
+        <strong>멈췄을 때도 덤프부터 뜬다.</strong> 서버가 죽지 않고 응답만 없으면, 프로세스를 내리기 전에 살아 있는 상태로 덤프를 뜬다. 다시 띄우면 원인이 사라진다. 틱이 일정 시간 넘게 멈추면 감시 스레드가 덤프를 뜨고 재시작하게 해 두면 새벽 장애에도 증거가 남는다(<a href="../operating-system/deadlock.html">데드락</a>).
+      </li>
+      <li>
+        <strong>덤프는 개인 정보다.</strong> 전체·힙 덤프에는 메모리에 있던 세션 토큰, 계정 정보, 결제 데이터, 암호 키가 그대로 들어 있다. 접근할 수 있는 사람을 제한하고, 보관 기간을 정하고, 외부 업체에 넘길 때는 Triage 덤프처럼 걸러 낸 것을 쓴다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>심볼이 맞지 않는다는 경고를 넘기지 않는다.</strong> 다른 빌드의 심볼로 읽으면 그럴듯한데 틀린 함수 이름이 나와 엉뚱한 곳을 고치게 된다.</li>
+      <li><strong>살아 있는 서버의 덤프는 서버를 멈춘다.</strong> 덤프를 쓰는 동안 프로세스가 정지한다. 메모리가 수십 GB인 서버의 전체 덤프는 수십 초가 걸릴 수 있어 그동안 접속이 끊긴다. 이미 장애인 서버가 아니면 Heap 덤프나 사람이 적은 시간을 고른다.</li>
+      <li><strong>덤프가 남지 않는 죽음도 있다.</strong> 메모리가 모자라 OS의 OOM killer가 <code>SIGKILL</code>로 끝낸 프로세스는 덤프를 쓸 기회가 없다(<a href="signals.html">시그널과 프로세스 종료</a>). 이때는 종료 코드와 커널 로그(<code>dmesg</code>), 메모리 지표로 원인을 좁힌다.</li>
+      <li><strong>디스크가 모자라면 덤프가 잘린다.</strong> 덤프 폴더의 여유 공간과 개수 상한을 정해 둔다. 같은 원인으로 반복해서 죽는 서버가 디스크를 덤프로 채워 다른 서비스까지 멈추게 할 수 있다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

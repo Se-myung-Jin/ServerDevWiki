@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SIMD와 벡터 연산 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="computer-architecture/simd">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="memory-hierarchy.html">메모리 계층과 캐시</a> · <a href="isa-execution.html">명령어 집합과 실행 모델</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      SIMD(Single Instruction, Multiple Data)는 넓은 레지스터 하나에 값 여러 개를 나란히 담고, <strong>명령 하나로 그 값들을 한꺼번에 계산</strong>하는 방식이다. 128비트 레지스터라면 32비트 정수 네 개를 한 번에 더한다. 명령 수가 줄어드는 만큼 빨라진다.
+    </p>
+    <p>
+      조건이 있다. 같은 연산을 할 값들이 <span class="blank">메모리에 연달아 놓여 있어야</span> 한 번에 레지스터로 읽어 올 수 있다. 그래서 SIMD의 효과는 계산 코드보다 자료 배치가 먼저 정한다. 원소마다 분기가 갈리는 코드도 잘 맞지 않는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>한 칸씩 더하기와 네 칸을 한 번에 더하기</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 300" role="img" aria-label="스칼라 덧셈은 명령 네 번, SIMD 덧셈은 128비트 레지스터에 네 값을 담아 명령 한 번으로 더한다">
+        <text class="f-strong" x="20" y="24">스칼라 · 명령 4번</text>
+        <rect class="f-cell" x="20" y="40" width="60" height="30"/><text class="f-text" x="50" y="60" text-anchor="middle">a0</text>
+        <text class="f-sub" x="92" y="60" text-anchor="middle">+</text>
+        <rect class="f-cell" x="104" y="40" width="60" height="30"/><text class="f-text" x="134" y="60" text-anchor="middle">b0</text>
+        <text class="f-sub" x="190" y="60">→ add 1번</text>
+        <rect class="f-cell" x="20" y="80" width="60" height="30"/><text class="f-text" x="50" y="100" text-anchor="middle">a1</text>
+        <text class="f-sub" x="92" y="100" text-anchor="middle">+</text>
+        <rect class="f-cell" x="104" y="80" width="60" height="30"/><text class="f-text" x="134" y="100" text-anchor="middle">b1</text>
+        <text class="f-sub" x="190" y="100">→ add 1번</text>
+        <rect class="f-cell" x="20" y="120" width="60" height="30"/><text class="f-text" x="50" y="140" text-anchor="middle">a2</text>
+        <text class="f-sub" x="92" y="140" text-anchor="middle">+</text>
+        <rect class="f-cell" x="104" y="120" width="60" height="30"/><text class="f-text" x="134" y="140" text-anchor="middle">b2</text>
+        <text class="f-sub" x="190" y="140">→ add 1번</text>
+        <rect class="f-cell" x="20" y="160" width="60" height="30"/><text class="f-text" x="50" y="180" text-anchor="middle">a3</text>
+        <text class="f-sub" x="92" y="180" text-anchor="middle">+</text>
+        <rect class="f-cell" x="104" y="160" width="60" height="30"/><text class="f-text" x="134" y="180" text-anchor="middle">b3</text>
+        <text class="f-sub" x="190" y="180">→ add 1번</text>
+
+        <line class="f-grid" x1="300" y1="20" x2="300" y2="200"/>
+
+        <text class="f-strong" x="330" y="24">SIMD · 명령 1번 (128비트 = 32비트 × 4)</text>
+        <rect class="f-bar" x="330" y="50" width="240" height="34"/>
+        <line class="f-line" x1="390" y1="50" x2="390" y2="84"/><line class="f-line" x1="450" y1="50" x2="450" y2="84"/><line class="f-line" x1="510" y1="50" x2="510" y2="84"/>
+        <text class="f-text" x="360" y="72" text-anchor="middle">a0</text><text class="f-text" x="420" y="72" text-anchor="middle">a1</text><text class="f-text" x="480" y="72" text-anchor="middle">a2</text><text class="f-text" x="540" y="72" text-anchor="middle">a3</text>
+        <text class="f-sub" x="582" y="72">레지스터 A</text>
+        <text class="f-sub" x="450" y="104" text-anchor="middle">+</text>
+        <rect class="f-bar" x="330" y="114" width="240" height="34"/>
+        <line class="f-line" x1="390" y1="114" x2="390" y2="148"/><line class="f-line" x1="450" y1="114" x2="450" y2="148"/><line class="f-line" x1="510" y1="114" x2="510" y2="148"/>
+        <text class="f-text" x="360" y="136" text-anchor="middle">b0</text><text class="f-text" x="420" y="136" text-anchor="middle">b1</text><text class="f-text" x="480" y="136" text-anchor="middle">b2</text><text class="f-text" x="540" y="136" text-anchor="middle">b3</text>
+        <text class="f-sub" x="582" y="136">레지스터 B</text>
+        <text class="f-strong" x="450" y="178" text-anchor="middle">paddd 한 번에 네 쌍을 더한다</text>
+
+        <line class="f-grid" x1="20" y1="214" x2="700" y2="214"/>
+        <text class="f-strong" x="20" y="240">값이 연달아 있어야 한 번에 읽는다</text>
+        <text class="f-sub" x="20" y="266">AoS</text>
+        <rect class="f-hit" x="60" y="250" width="40" height="24"/><text class="f-text" x="80" y="267" text-anchor="middle">x</text>
+        <rect class="f-cell" x="100" y="250" width="40" height="24"/><text class="f-sub" x="120" y="267" text-anchor="middle">y</text>
+        <rect class="f-cell" x="140" y="250" width="40" height="24"/><text class="f-sub" x="160" y="267" text-anchor="middle">z</text>
+        <rect class="f-hit" x="180" y="250" width="40" height="24"/><text class="f-text" x="200" y="267" text-anchor="middle">x</text>
+        <rect class="f-cell" x="220" y="250" width="40" height="24"/><text class="f-sub" x="240" y="267" text-anchor="middle">y</text>
+        <rect class="f-cell" x="260" y="250" width="40" height="24"/><text class="f-sub" x="280" y="267" text-anchor="middle">z</text>
+        <text class="f-sub" x="60" y="292">x가 흩어져 있어 모아 오는 일이 따로 든다</text>
+        <text class="f-sub" x="400" y="266">SoA</text>
+        <rect class="f-hit" x="440" y="250" width="40" height="24"/><text class="f-text" x="460" y="267" text-anchor="middle">x</text>
+        <rect class="f-hit" x="480" y="250" width="40" height="24"/><text class="f-text" x="500" y="267" text-anchor="middle">x</text>
+        <rect class="f-hit" x="520" y="250" width="40" height="24"/><text class="f-text" x="540" y="267" text-anchor="middle">x</text>
+        <rect class="f-hit" x="560" y="250" width="40" height="24"/><text class="f-text" x="580" y="267" text-anchor="middle">x</text>
+        <text class="f-sub" x="440" y="292">한 번 읽기로 네 개가 레지스터에 들어간다</text>
+      </svg>
+      <figcaption>위는 같은 덧셈 네 번을 명령 네 번으로 하느냐, 한 번으로 하느냐의 차이다. 아래는 그 한 번이 가능하려면 같은 필드가 붙어 있어야 한다는 뜻이다. 구조체 배열(AoS)에서는 x가 띄엄띄엄 있고, 필드별 배열(SoA)에서는 x끼리 붙어 있다.</figcaption>
+    </figure>
+    <p>
+      SIMD 레지스터 하나에 몇 칸이 들어가는지는 레지스터 폭을 원소 크기로 나눈 값이다. 이 칸 하나를 <strong>레인(lane)</strong>이라고 부른다. 레인끼리는 서로 독립이라, 한 레인의 계산이 옆 레인에 넘어가지 않는다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>명령어 집합</th><th>레지스터 폭</th><th>float 몇 개</th><th>어디에 있나</th></tr></thead>
+        <tbody>
+          <tr><td>SSE ~ SSE4.2</td><td>128비트 (XMM)</td><td>4</td><td>x64 CPU라면 SSE2까지는 반드시 있다</td></tr>
+          <tr><td>AVX, AVX2</td><td>256비트 (YMM)</td><td>8</td><td>최근 10년 안의 x64 서버·데스크톱 대부분. 정수 256비트 연산은 AVX2부터</td></tr>
+          <tr><td>AVX-512</td><td>512비트 (ZMM)</td><td>16</td><td>일부 Intel 서버 CPU, AMD Zen 4 이후. 레인별로 켜고 끄는 마스크 레지스터가 따로 있다</td></tr>
+          <tr><td>NEON</td><td>128비트</td><td>4</td><td>ARM64(모바일, Apple Silicon, Graviton 같은 ARM 서버)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>분기는 마스크로 바꾼다</h3>
+    <p>
+      SIMD에는 "이 레인만 if 안으로 들어간다"가 없다. 모든 레인이 같은 명령을 실행한다. 그래서 조건문은 비교 결과를 마스크(조건이 참인 레인은 비트가 모두 1, 거짓이면 0)로 만들고, 양쪽 결과를 다 계산한 뒤 마스크로 골라 담는 식으로 바꾼다. 예측이 어려운 분기를 이렇게 없애면 <a href="pipeline-branch-prediction.html">분기 예측</a> 실패도 함께 사라진다. 대신 양쪽을 다 계산하므로, 한쪽이 무거우면 손해다.
+    </p>
+
+    <h3>자동 벡터화는 조건이 까다롭다</h3>
+    <p>
+      컴파일러가 평범한 반복문을 SIMD 명령으로 바꿔 주는 것을 자동 벡터화라고 한다. C++ 컴파일러(GCC, Clang, MSVC)는 최적화를 켜면 시도하지만, 아래 조건을 만족해야 한다.
+    </p>
+    <ul>
+      <li><strong>반복 사이에 의존이 없다.</strong> <code>a[i] = a[i-1] + x</code>처럼 앞 결과를 쓰면 나란히 계산할 수 없다.</li>
+      <li><strong>포인터가 서로 겹치지 않는다는 것을 알 수 있다.</strong> 입력과 출력이 같은 메모리를 가리킬 가능성이 있으면 컴파일러는 포기하거나 검사 코드를 넣는다.</li>
+      <li><strong>접근이 연속이다.</strong> 간접 참조(<code>a[idx[i]]</code>)나 큰 간격의 접근은 모아 오는 비용이 커서 이득이 줄어든다.</li>
+      <li><strong>반복 안에 함수 호출과 복잡한 분기가 없다.</strong> <a href="../system-programming/inline-codegen.html">인라인</a>되지 않는 호출이 있으면 거기서 막힌다.</li>
+    </ul>
+    <p>
+      .NET의 <a data-ref="csharp/jit-aot">JIT</a>는 사용자 반복문을 자동으로 벡터화하는 일이 거의 없다. C#에서 SIMD를 쓰려면 벡터 타입으로 직접 쓰거나, 이미 SIMD로 짜인 라이브러리 함수를 부른다.
+    </p>
+
+    <h2>C#에서 쓰는 법</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>API</th><th>특징</th></tr></thead>
+        <tbody>
+          <tr><td><code>Vector&lt;T&gt;</code> (System.Numerics)</td><td>크기가 실행하는 CPU에 맞춰 정해진다. <code>Vector&lt;T&gt;.Count</code>로 레인 수를 알아낸다. 한 코드로 여러 CPU에 맞출 때 쓴다</td></tr>
+          <tr><td><code>Vector128&lt;T&gt;</code>, <code>Vector256&lt;T&gt;</code>, <code>Vector512&lt;T&gt;</code></td><td>폭이 고정된 타입. <code>Vector128.IsHardwareAccelerated</code>로 가속 여부를 확인하고, 아니면 스칼라 경로로 간다. <code>Vector512</code>는 .NET 8부터</td></tr>
+          <tr><td>System.Runtime.Intrinsics.X86 / Arm</td><td><code>Avx2.IsSupported</code>처럼 CPU 기능을 확인하고 특정 명령을 직접 부른다. 가장 빠르지만 플랫폼마다 따로 짜야 한다</td></tr>
+          <tr><td>이미 벡터화된 라이브러리</td><td><code>Span&lt;T&gt;.IndexOf</code>, <code>SequenceEqual</code>, 서수 비교 문자열 검색, UTF-8 변환, Base64, 배열에 대한 LINQ <code>Sum</code>·<code>Min</code>·<code>Max</code>, <code>TensorPrimitives</code>(.NET 8)</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre><code class="language-csharp">// 두 float 배열을 원소별로 더한다. 남는 꼬리는 스칼라로 처리한다.
+static void Add(ReadOnlySpan&lt;float&gt; a, ReadOnlySpan&lt;float&gt; b, Span&lt;float&gt; dst)
+{
+    int i = 0;
+    if (Vector256.IsHardwareAccelerated)
+    {
+        for (; i &lt;= a.Length - Vector256&lt;float&gt;.Count; i += Vector256&lt;float&gt;.Count)
+        {
+            var va = Vector256.Create(a.Slice(i));
+            var vb = Vector256.Create(b.Slice(i));
+            (va + vb).CopyTo(dst.Slice(i));
+        }
+    }
+    for (; i &lt; a.Length; i++)   // 레인 수로 나눠떨어지지 않는 나머지
+        dst[i] = a[i] + b[i];
+}</code></pre>
+    <p>
+      SIMD 코드에는 늘 나머지 처리가 붙는다. 원소 수가 레인 수로 나눠떨어지지 않으면 마지막 몇 개는 스칼라로 하거나, 마지막 묶음을 겹쳐 한 번 더 처리한다. 이 경계에서 배열 끝을 넘어 읽는 버그가 잘 난다.
+    </p>
+    <p>
+      문자열 검색 같은 표준 라이브러리 함수가 직접 짠 알고리즘보다 빠른 이유가 여기에 있다. 한 글자씩 비교하는 대신 16~32바이트를 한 번에 비교하고, 맞는 레인이 있는지만 마스크로 확인한다(<a href="../algorithm/strings-limits.html">문자열 검색과 계산 한계</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>먼저 라이브러리가 해 주는지 본다.</strong> 패킷 버퍼에서 구분자 찾기, 바이트 비교, 체크섬, 문자열 처리는 <code>Span</code> API가 이미 SIMD로 돈다. 직접 루프를 짜기 전에 같은 일을 하는 API가 있는지 찾는 것이 가장 싸다.
+      </li>
+      <li>
+        <strong>대량 숫자 계산에서만 직접 쓸 가치가 있다.</strong> 수천 개 대상의 거리 검사, 일괄 버프 계산, 물리 근사처럼 같은 식을 많은 원소에 적용하는 곳이다. 이때는 위치를 <a href="../data-structure/memory-layout.html">필드별 배열(SoA)</a>로 두어야 효과가 난다. 객체 그래프를 따라가며 분기가 갈리는 일반 게임 로직은 SIMD로 얻을 것이 적다.
+      </li>
+      <li>
+        <strong>결과가 CPU마다 달라질 수 있다.</strong> 부동소수점 덧셈은 순서를 바꾸면 결과가 조금 달라진다(<a href="number-representation.html">수의 표현</a>). 레인 수가 다른 CPU에서 합계를 다른 순서로 묶으면 마지막 비트가 다르다. 서버와 클라이언트가 같은 결과를 내야 하는 결정적 시뮬레이션에서는 이 차이가 동기화 어긋남이 된다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>넓은 것이 항상 빠르지는 않다.</strong> 일부 Intel 서버 CPU는 AVX-512의 무거운 명령을 실행하는 동안 클럭을 낮춘다. 그 코어에서 같이 도는 다른 코드까지 느려진다. 그래서 이런 CPU에서는 .NET이 기본으로 512비트 경로를 쓰지 않는다. 폭을 바꿀 때는 실제 서버에서 잰다.</li>
+      <li><strong>메모리가 병목이면 소용없다.</strong> 계산이 8배 빨라져도 데이터가 캐시에 없으면 메모리를 기다리는 시간이 그대로다(<a href="memory-hierarchy.html">메모리 계층과 캐시</a>). 큰 배열을 한 번 훑고 끝나는 계산은 대역폭이 상한이다.</li>
+      <li><strong>정렬을 요구하는 명령이 있다.</strong> 정렬이 안 맞는 주소에 정렬 전용 로드를 쓰면 x86에서도 예외가 난다(<a href="alignment.html">정렬과 패딩</a>). 벡터 타입의 일반 로드는 정렬되지 않은 주소도 받는다.</li>
+      <li><strong>가속 여부를 확인하지 않으면 느려질 수 있다.</strong> 하드웨어 가속이 없는 환경에서 벡터 타입은 소프트웨어로 흉내 내므로 스칼라보다 느리다. <code>IsHardwareAccelerated</code>로 갈라 둔다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

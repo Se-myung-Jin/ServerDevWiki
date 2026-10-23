@@ -137,7 +137,7 @@ struct EntityStatePacked
       <li>
         <strong>정렬을 깼을 때 무슨 일이 생기는지는 아키텍처가 정한다.</strong>
         x86은 일반 읽기·쓰기에서 비정렬 접근을 명령 자체가 지원하고, 정렬 검사(AC 플래그)를 따로 켜지 않으면 예외도 나지 않는다.
-        단, <code>movaps</code>처럼 정렬을 요구하는 SIMD 명령은 x86에서도 정렬이 안 맞으면 예외가 난다.
+        단, <code>movaps</code>처럼 정렬을 요구하는 <a data-ref="computer-architecture/simd">SIMD</a> 명령은 x86에서도 정렬이 안 맞으면 예외가 난다.
         ARM은 정렬 검사가 켜져 있거나 정렬을 요구하는 명령(원자적 연산 등)이면 트랩이 발생하고, Linux에서는 SIGBUS로 전달된다. "느려질 뿐"이라고만 알고 있으면 다른 플랫폼에서 깨진다.
       </li>
       <li>
