@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>흐름 제어와 혼잡 제어 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="network/flow-congestion">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="tcp-connection.html">TCP 연결 관리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      둘 다 보내는 양을 줄이는 장치지만 지키는 대상이 다르다. <strong>흐름 제어</strong>는 받는 쪽 버퍼가 넘치지 않게 하고, <strong>혼잡 제어</strong>는 중간 망이 막히지 않게 한다.
+    </p>
+    <p>
+      한 번에 보낼 수 있는 양(확인을 받지 않은 채 날려 둘 수 있는 양)은 받는 쪽이 알려 준 <span class="blank">rwnd</span>와 보내는 쪽이 짐작한 <span class="blank">cwnd</span> 중 <strong>작은 쪽</strong>이 정한다. 받는 쪽이 여유가 있어도 망이 막히면 못 보내고, 망이 한가해도 받는 쪽 버퍼가 차면 못 보낸다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>받는 쪽 사정은 알려 주고, 망 사정은 짐작한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>흐름 제어</th><th>혼잡 제어</th></tr></thead>
+        <tbody>
+          <tr><td>무엇을 지키나</td><td>받는 쪽 수신 버퍼</td><td>중간 망(라우터 큐)</td></tr>
+          <tr><td>창 이름</td><td>rwnd (수신 윈도)</td><td>cwnd (혼잡 윈도)</td></tr>
+          <tr><td>사정을 어떻게 아나</td><td>받는 쪽이 매 ACK의 윈도 필드로 알려 준다</td><td>알려 주는 쪽이 없다. 손실·지연 변화를 보고 짐작한다</td></tr>
+          <tr><td>정확한가</td><td>정확하다</td><td>짐작이라 틀릴 수 있다</td></tr>
+          <tr><td>0이 되면</td><td>여유가 생겼다는 알림이 올 때까지 아예 못 보낸다(보내는 쪽은 가끔 작은 탐색 패킷을 보내 확인한다)</td><td>0이 되지는 않는다. 손실이 나면 크게 줄였다가 다시 늘린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      헤더의 윈도 필드는 16비트라 그대로는 64KB까지만 알릴 수 있다. 연결을 맺을 때 윈도 스케일 옵션을 주고받아 몇 배로 키운다. 요즘 OS는 수신 버퍼 크기도 상황에 맞춰 알아서 키운다(자동 조정).
+    </p>
+    <p>
+      전송이 정체될 때 어느 창이 좁은지에 따라 볼 곳이 다르다. rwnd가 줄었다면 받는 프로그램이 데이터를 늦게 꺼내 가는 것이고, cwnd가 작다면 경로에서 손실이 잦은 것이다.
+    </p>
+
+    <h3>혼잡 제어는 늘리다가 잃으면 줄인다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 300" role="img" aria-label="cwnd가 슬로 스타트로 빠르게 늘다가 임계값부터 천천히 늘고, 중복 ACK 손실에 절반으로, 타임아웃에 처음부터 다시 시작하는 모양">
+        <defs><marker id="fc-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <line class="f-line" x1="80" y1="262" x2="720" y2="262" marker-end="url(#fc-a)"/>
+        <line class="f-line" x1="80" y1="262" x2="80" y2="30" marker-end="url(#fc-a)"/>
+        <text class="f-sub" x="72" y="44" text-anchor="end">cwnd</text>
+        <text class="f-sub" x="716" y="282" text-anchor="end">시간 (왕복 단위)</text>
+
+        <line class="f-grid" x1="80" y1="200" x2="330" y2="200"/>
+        <text class="f-sub" x="86" y="194">ssthresh</text>
+        <line class="f-grid" x1="470" y1="190" x2="700" y2="190"/>
+        <text class="f-sub" x="640" y="184">새 ssthresh</text>
+
+        <polyline class="f-barrier" fill="none" points="82,258 110,254 140,246 170,230 200,202 330,138 330,200 470,124 470,258 500,254 530,242 560,214 575,190 700,138"/>
+
+        <text class="f-text" x="200" y="236">슬로 스타트</text>
+        <text class="f-sub" x="200" y="252">왕복마다 두 배</text>
+        <text class="f-text" x="190" y="118">혼잡 회피</text>
+        <text class="f-sub" x="190" y="134">왕복마다 조금씩</text>
+        <text class="f-strong" x="338" y="226">중복 ACK 3개</text>
+        <text class="f-sub" x="338" y="242">빠른 재전송 · 절반</text>
+        <text class="f-strong" x="480" y="104">타임아웃</text>
+        <text class="f-sub" x="480" y="120">1부터 다시</text>
+      </svg>
+      <figcaption>모양만 본 그림이다. 처음에는 왕복마다 두 배로 늘리다가(슬로 스타트) 임계값(ssthresh)에 닿으면 천천히 늘린다(혼잡 회피). 중복 ACK로 손실을 알아채면 절반쯤으로 줄이고 계속 가지만, 타임아웃까지 가면 처음부터 다시 시작한다. 줄이는 비율과 늘리는 곡선은 알고리즘마다 다르다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>단계</th><th>언제</th><th>무엇을 하나</th></tr></thead>
+        <tbody>
+          <tr><td>슬로 스타트</td><td>연결 시작, 타임아웃 뒤</td><td>작은 값(요즘은 세그먼트 10개 정도)에서 시작해 ACK마다 늘려 왕복마다 두 배가 된다. 이름과 달리 빠르게 는다</td></tr>
+          <tr><td>혼잡 회피</td><td>cwnd가 ssthresh 이상</td><td>왕복마다 조금씩(전통적으로 세그먼트 하나씩) 늘린다</td></tr>
+          <tr><td>빠른 재전송</td><td>같은 번호의 ACK가 세 번 더 온다</td><td>그 다음 세그먼트를 잃었다고 보고 타이머를 기다리지 않고 바로 다시 보낸다</td></tr>
+          <tr><td>빠른 회복</td><td>빠른 재전송 직후</td><td>슬로 스타트로 돌아가지 않고 cwnd를 절반쯤으로 줄여 혼잡 회피를 이어 간다</td></tr>
+          <tr><td>타임아웃</td><td>ACK가 아예 안 온다</td><td>심한 혼잡으로 보고 cwnd를 최소로 줄여 슬로 스타트부터 다시 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      "조금씩 늘리고 잃으면 크게 줄인다"는 이 방식을 AIMD(가산 증가, 곱셈 감소)라고 한다. 여러 연결이 한 회선을 나눠 쓸 때 서로 비슷한 몫으로 수렴하게 만드는 성질이 있다.
+    </p>
+
+    <h3>손실 기반과 모델 기반</h3>
+    <p>
+      전통적인 혼잡 제어는 <strong>패킷을 잃으면 막힌 것</strong>이라고 전제한다. 유선 망에서는 대체로 맞다. 라우터 큐가 넘치면 버리기 때문이다. 하지만 전제가 깨지는 곳이 있다.
+    </p>
+    <ul>
+      <li><strong>무선 구간</strong>은 막히지 않아도 전파 문제로 잃는다. 혼잡이 아닌데 보내는 양을 깎는다.</li>
+      <li><strong>버퍼가 큰 장비</strong>는 버리지 않고 계속 쌓아 둔다. 잃지 않으니 혼잡을 알아채지 못하고, 큐에서 기다리는 시간만 늘어난다. 큰 다운로드 중에 다른 반응이 함께 느려지는 현상이고, 버퍼블로트(bufferbloat)라 부른다.</li>
+    </ul>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>알고리즘</th><th>무엇을 보나</th><th>특징</th></tr></thead>
+        <tbody>
+          <tr><td>Reno·NewReno</td><td>손실</td><td>교과서의 AIMD. 손실에 절반으로 줄인다</td></tr>
+          <tr><td>CUBIC</td><td>손실</td><td>마지막 손실 뒤 지난 시간의 3차 곡선으로 늘린다. 대역폭이 크고 멀리 있는 경로에서도 빨리 회복한다. Linux와 최근 Windows의 기본</td></tr>
+          <tr><td>BBR</td><td>대역폭·왕복 시간 추정</td><td>병목 대역폭과 최소 왕복 시간을 재서 그만큼만 보낸다. 큐를 채우기 전에 멈춰 지연이 작고, 무작위 손실에 덜 흔들린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>대역폭과 지연은 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>대역폭</th><th>지연</th></tr></thead>
+        <tbody>
+          <tr><td>무엇인가</td><td>단위 시간에 보낼 수 있는 양</td><td>한 번 갔다 오는 데 걸리는 시간(RTT)</td></tr>
+          <tr><td>무엇이 정하나</td><td>링크 용량</td><td>거리, 거치는 장비, 큐에서 기다리는 시간</td></tr>
+          <tr><td>늘리면 빨라지는 것</td><td>큰 파일 전송</td><td>왕복이 잦은 작업(요청-응답, 게임 입력)</td></tr>
+          <tr><td>돈으로 해결되나</td><td>어느 정도 된다</td><td>거리는 줄일 수 없다. 서울과 상파울루 사이는 광섬유 속 빛으로도 왕복 180ms가 넘는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      대역폭에 왕복 시간을 곱한 값이 <strong>대역폭-지연 곱(BDP)</strong>이다. 회선 위에 동시에 떠 있을 수 있는 양이고, 창이 이보다 작으면 보내는 쪽이 확인을 기다리느라 회선을 비워 둔다.
+      예를 들어 100Mbps, 왕복 100ms 경로의 BDP는 약 1.25MB인데, 창이 64KB에 묶여 있으면 처리량은 64KB ÷ 0.1초, 약 5Mbps에서 멈춘다. 회선이 아무리 넓어도 그렇다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>느린 클라이언트 하나가 서버 메모리를 잡는다.</strong> 클라이언트가 늦게 읽으면 그 연결의 rwnd가 0이 되고, 서버 커널 송신 버퍼가 차고, 그다음은 응용의 송신 큐가 쌓인다. 세션마다 송신 큐에 상한을 두고 넘으면 끊는다(<a data-ref="server/backpressure">백프레셔</a>).
+      </li>
+      <li>
+        <strong>쉬었다가 몰아 보내면 슬로 스타트가 다시 걸린다.</strong> Linux는 기본으로 한동안 조용했던 연결의 cwnd를 처음 값으로 되돌린다(<code>net.ipv4.tcp_slow_start_after_idle</code>). 평소에는 조용하다가 전투가 시작되면 한꺼번에 보내는 게임 트래픽이 그때마다 몇 왕복 늦어진다. 게임 서버에서는 이 설정을 끄는 경우가 많다.
+      </li>
+      <li>
+        <strong>버퍼 크기를 손으로 박으면 자동 조정이 꺼진다.</strong> Linux에서 <code>Socket.ReceiveBufferSize</code>·<code>SendBufferSize</code>(SO_RCVBUF·SO_SNDBUF)를 직접 정하면 그 소켓은 커널의 자동 조정에서 빠진다. 멀리 있는 클라이언트와 큰 데이터를 주고받는 연결이면 오히려 처리량이 BDP 아래로 묶일 수 있다. 재 보고 정한다.
+      </li>
+      <li>
+        <strong>작은 패킷의 지연은 다른 장치다.</strong> 게임 패킷이 이유 없이 수십 ms씩 늦게 나가는 것은 대개 혼잡 제어가 아니라 Nagle 알고리즘과 지연 ACK의 맞물림이다(<a data-ref="server/small-packet-delay">작은 패킷 지연</a>, <a href="../system-programming/syscall-cost.html">시스템 콜 비용</a>의 <code>TCP_NODELAY</code>).
+      </li>
+      <li>
+        <strong>UDP로 만든 프로토콜은 혼잡 제어를 직접 넣는다.</strong> 손실이 늘면 보내는 주기나 크기를 줄이는 장치가 없으면, 망이 막힐 때 손실이 더 커지고 같은 회선의 다른 연결까지 해친다(<a href="tcp-vs-udp.html">TCP와 UDP</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>흐름 제어와 혼잡 제어는 같은 장치가 아니다.</strong> 보내는 양을 줄인다는 점만 같고, 무엇을 보고 줄이는지가 다르다. 한쪽만 알면 진단이 어긋난다.</li>
+      <li><strong>"느리다"는 두 가지를 가리킨다.</strong> 파일 하나가 오래 걸리는 것은 대역폭이나 창 크기 쪽이고, 클릭 반응이 느린 것은 지연 쪽이다. 대책이 다르다.</li>
+      <li><strong>손실이 곧 혼잡은 아니다.</strong> 무선 구간의 손실, 버퍼블로트처럼 손실 없이 늘어나는 지연은 손실 기반 혼잡 제어가 잘못 읽는다. 지연이 튀는데 손실이 없다면 중간 큐를 의심한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

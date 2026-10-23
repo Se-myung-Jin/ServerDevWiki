@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HTTP와 그 변천 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="network/http-versions">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="tcp-connection.html">TCP 연결 관리</a> · <a href="dns-resolution.html">이름 해석과 연결까지</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      HTTP는 요청과 응답을 주고받는 응용 계층 규칙이고, <span class="blank">상태를 기억하지 않는다(무상태)</span>. 서버는 앞 요청과 뒤 요청을 서로 모르므로, 로그인 같은 상태는 쿠키나 토큰에 실어 매 요청마다 다시 보낸다.
+    </p>
+    <p>
+      버전의 변천은 한 축으로 요약된다. <strong>한 번에 여러 요청을 어떻게 보낼 것인가</strong>, 다시 말해 앞의 하나가 늦어 뒤가 전부 기다리는 <span class="blank">head-of-line(HOL) 블로킹</span>을 어느 계층에서 없앴느냐의 역사다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>버전마다 같은 문제를 한 계층씩 아래에서 풀었다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 270" role="img" aria-label="HTTP 1.1은 요청을 한 줄로 처리하고, 2는 패킷 손실 시 모든 스트림이 멈추며, 3은 잃은 스트림만 기다린다">
+      <text class="f-strong" x="16" y="46">HTTP/1.1</text><text class="f-sub" x="16" y="64">한 줄로 세운다</text>
+      <text class="f-sub" x="240" y="36" text-anchor="end">요청 A</text>
+      <rect class="f-hit" x="251" y="24" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="301" y="24" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="351" y="24" width="48" height="16" rx="3"/>
+      <text class="f-sub" x="240" y="57" text-anchor="end">요청 B</text>
+      <rect class="f-pad" x="251" y="45" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="301" y="45" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="351" y="45" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="401" y="45" width="48" height="16" rx="3"/>
+      <text class="f-sub" x="240" y="78" text-anchor="end">요청 C</text>
+      <rect class="f-pad" x="251" y="66" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="301" y="66" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="351" y="66" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="401" y="66" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="451" y="66" width="48" height="16" rx="3"/>
+      <text class="f-strong" x="16" y="128">HTTP/2</text><text class="f-sub" x="16" y="146">TCP 손실에 모두 멈춘다</text>
+      <text class="f-sub" x="240" y="118" text-anchor="end">요청 A</text>
+      <rect class="f-hit" x="251" y="106" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="301" y="106" width="48" height="16" rx="3"/><text class="f-x" x="325" y="120" text-anchor="middle" style="font-size:15px">✕</text>
+      <rect class="f-hit" x="351" y="106" width="48" height="16" rx="3"/>
+      <text class="f-sub" x="240" y="139" text-anchor="end">요청 B</text>
+      <rect class="f-hit" x="251" y="127" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="301" y="127" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="351" y="127" width="48" height="16" rx="3"/>
+      <text class="f-sub" x="240" y="160" text-anchor="end">요청 C</text>
+      <rect class="f-hit" x="251" y="148" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="301" y="148" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="351" y="148" width="48" height="16" rx="3"/>
+      <text class="f-strong" x="16" y="210">HTTP/3</text><text class="f-sub" x="16" y="228">잃은 스트림만 기다린다</text>
+      <text class="f-sub" x="240" y="200" text-anchor="end">요청 A</text>
+      <rect class="f-hit" x="251" y="188" width="48" height="16" rx="3"/>
+      <rect class="f-pad" x="301" y="188" width="48" height="16" rx="3"/><text class="f-x" x="325" y="202" text-anchor="middle" style="font-size:15px">✕</text>
+      <rect class="f-hit" x="351" y="188" width="48" height="16" rx="3"/>
+      <text class="f-sub" x="240" y="221" text-anchor="end">요청 B</text>
+      <rect class="f-hit" x="251" y="209" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="301" y="209" width="48" height="16" rx="3"/>
+      <text class="f-sub" x="240" y="242" text-anchor="end">요청 C</text>
+      <rect class="f-hit" x="251" y="230" width="48" height="16" rx="3"/>
+      <rect class="f-hit" x="301" y="230" width="48" height="16" rx="3"/>
+      <line class="f-line" x1="250" y1="262" x2="600" y2="262"/><text class="f-sub" x="608" y="266">시간</text>
+      <rect class="f-hit" x="430" y="4" width="12" height="10" rx="2"/><text class="f-sub" x="446" y="13">전송</text><rect class="f-pad" x="486" y="4" width="12" height="10" rx="2"/><text class="f-sub" x="502" y="13">대기</text><text class="f-x" x="542" y="14" style="font-size:13px">✕</text><text class="f-sub" x="556" y="13">손실</text>
+      </svg>
+      <figcaption>점선 칸이 앞의 것을 기다리느라 멈춘 구간이다. 1.1은 한 연결에서 응답을 순서대로만 받는다. 2는 한 연결에 여러 스트림을 섞지만, TCP 패킷 하나를 잃으면 TCP가 순서를 맞추느라 모든 스트림이 함께 멈춘다. 3은 스트림마다 순서를 따로 관리해 잃은 스트림만 기다린다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>버전</th><th>여러 요청을 어떻게</th><th>바뀐 것</th><th>남은 문제</th></tr></thead>
+        <tbody>
+          <tr><td>1.0</td><td>요청마다 연결을 새로 맺는다</td><td>단순하다</td><td>매번 TCP(와 TLS) 핸드셰이크를 다시 한다</td></tr>
+          <tr><td>1.1</td><td>연결을 재사용하되(keep-alive가 기본) 한 연결에서는 한 줄로 세운다</td><td>Host 헤더로 한 IP에 여러 사이트, 청크 전송</td><td>앞 응답이 늦으면 뒤가 전부 기다린다. 파이프라이닝은 있지만 응답 순서를 지켜야 해서 같은 문제가 남아 사실상 쓰이지 않았다</td></tr>
+          <tr><td>2</td><td>한 연결에 여러 스트림을 프레임 단위로 섞어 보낸다(멀티플렉싱)</td><td>바이너리 프레임, 헤더 압축(HPACK), 스트림 우선순위</td><td>TCP가 잃은 패킷을 기다리는 동안 관계없는 스트림도 멈춘다(TCP 수준 HOL)</td></tr>
+          <tr><td>3</td><td>UDP 위의 QUIC이 스트림마다 따로 순서를 관리한다</td><td>TLS 1.3이 전송 계층 안에 들어가 연결이 더 빨리 맺힌다. 연결 ID로 IP가 바뀌어도 연결을 유지한다</td><td>UDP를 막거나 제한하는 망이 있어 TCP(HTTP/2)로 되돌아가야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      HTTP/2가 응용 계층의 줄 세우기를 없앴지만, 그 아래 TCP는 무엇을 나르는지 모르고 바이트를 순서대로만 올려 준다. 그래서 스트림을 나눠 놓아도 TCP 한 줄에서 막힌다.
+      HTTP/3은 전송 계층 자체를 QUIC으로 바꿔 이 마지막 줄을 끊었다. 왜 TCP가 잃은 것을 기다리는지는 <a href="tcp-vs-udp.html">TCP와 UDP</a>에서 다룬다.
+    </p>
+
+    <h3>1.1 시절의 우회법은 2에서 손해가 된다</h3>
+    <p>
+      한 연결에 한 줄이니 브라우저는 도메인당 연결을 여섯 개쯤 열었다. 그래서 자원을 여러 도메인에 흩어 두고(도메인 샤딩), 작은 파일을 하나로 합치고, 이미지를 한 장에 몰아 담았다.
+      HTTP/2에서는 요청이 싸져서 이 기법이 거꾸로 손해다. 연결을 여럿 열면 <a data-ref="network/flow-congestion">혼잡 제어</a>가 각자 따로 돌아 효율이 떨어지고, 합친 파일은 일부만 바뀌어도 통째로 다시 받아야 한다.
+    </p>
+
+    <h3>무상태 위에 상태를 얹는 방법</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어디에 두나</th><th>서버를 늘릴 때</th></tr></thead>
+        <tbody>
+          <tr><td>쿠키 + 서버 세션</td><td>서버(메모리나 Redis)에 세션, 클라이언트는 세션 ID만</td><td>세션 저장소를 공유해야 한다</td></tr>
+          <tr><td>토큰(JWT 등)</td><td>상태를 토큰 안에 서명해 담고 클라이언트가 들고 다닌다</td><td>어느 서버나 서명만 확인하면 된다. 대신 만료 전 강제 무효화가 어렵다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>자세한 선택은 <a data-ref="security/auth-session">인증과 세션</a>에서 다룬다.</p>
+
+    <h2>선택 기준</h2>
+
+    <h3>HTTP/2가 항상 빠르지는 않다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>유리한 쪽</th></tr></thead>
+        <tbody>
+          <tr><td>작은 자원이 많다</td><td>2나 3. 요청 하나의 비용이 싸다</td></tr>
+          <tr><td>손실이 잦은 무선·모바일 망</td><td>3. 잃은 스트림만 기다린다. 2는 한 연결에 몰아서 손실 하나에 전부 멈춘다</td></tr>
+          <tr><td>큰 파일 하나</td><td>차이가 크지 않다. 대역폭이 정한다</td></tr>
+          <tr><td>중간 장비가 UDP를 막는다</td><td>2. 3은 연결이 안 되어 TCP로 되돌아간다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>옮겨서 빨라지는 정도는 실제 사용자의 손실률과 자원 개수에 따라 뒤집힌다. 바꾸기 전에 실제 사용자 망에서 잰다.</p>
+
+    <h3>게임에서 HTTP를 쓰는 자리와 쓰지 않는 자리</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>용도</th><th>무엇을</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>로그인, 상점, 우편, 랭킹 조회, 공지</td><td>HTTP API</td><td>요청 하나에 응답 하나로 끝나고, 서버를 늘리기 쉽고, 캐시·로드 밸런서·CDN을 그대로 쓴다</td></tr>
+          <tr><td>서버 간 호출</td><td>gRPC(HTTP/2 위)</td><td>스키마가 있고, 한 연결에 여러 호출을 섞고, 양방향 스트리밍이 된다</td></tr>
+          <tr><td>실시간 전투·이동 동기화</td><td>TCP·UDP 소켓</td><td>서버가 먼저 보내야 하고 헤더 비용과 지연이 부담이다(<a data-ref="server/protocol-choice">프로토콜 선택</a>)</td></tr>
+          <tr><td>웹 클라이언트의 실시간 통신</td><td>WebSocket</td><td>HTTP로 시작해 <code>Upgrade</code>로 양방향 연결로 바꾼다. 이후는 HTTP가 아니다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>API 서버도 연결 재사용이 성능의 절반이다.</strong> 클라이언트·서버 양쪽에서 <code>HttpClient</code>를 공유해 연결을 재사용하지 않으면, 요청마다 TCP·TLS 핸드셰이크 왕복을 다시 낸다(<a href="dns-resolution.html">이름 해석과 연결까지</a>).
+      </li>
+      <li>
+        <strong>상태를 서버 메모리에 두지 않는다.</strong> 로그인 상태를 API 서버 한 대의 메모리에 두면 그 서버로만 요청이 가야 해서 늘리기 어렵다. 세션은 Redis 같은 공유 저장소에 두거나 토큰으로 들고 다니게 해, 어느 서버가 받아도 처리되게 한다.
+      </li>
+      <li>
+        <strong>재시도는 멱등한 요청만.</strong> 모바일 망에서 응답을 못 받았다고 상점 구매 요청을 그대로 다시 보내면 두 번 결제될 수 있다. GET은 다시 보내도 되지만, 결제처럼 상태를 바꾸는 요청은 요청 ID를 붙여 서버가 중복을 걸러야 한다.
+      </li>
+      <li>
+        <strong>.NET은 HTTP/2·3을 지원한다.</strong> Kestrel과 <code>HttpClient</code>는 HTTP/2를 지원하고, HTTP/3은 OS가 QUIC(msquic)을 지원하는 환경에서 켤 수 있다. gRPC는 HTTP/2가 필요하므로, 앞단 로드 밸런서가 HTTP/2를 끝까지 넘겨주는지 확인한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>무상태는 응답 뒤에 연결을 끊는다는 뜻이 아니다.</strong> 서버가 요청 사이의 문맥을 기억하지 않는다는 뜻이고, 연결 유지는 다른 축이다. 1.1부터는 연결을 재사용하는 쪽이 기본이다.</li>
+      <li><strong>로그인 상태는 서버가 기억하는 것이 아니다.</strong> 매 요청에 실려 오는 쿠키·토큰이 상태를 나른다. 그래서 서버를 늘릴 때 그 정보를 어디서 확인할지가 문제가 된다.</li>
+      <li><strong>HTTPS의 보안은 TLS가 한다.</strong> HTTP 자체에는 암호화가 없다. 인증서와 핸드셰이크는 <a data-ref="security/signature-tls">서명과 TLS</a>에서 다룬다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

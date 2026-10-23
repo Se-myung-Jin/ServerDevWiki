@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이름 해석과 연결까지 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="network/dns-resolution">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="tcp-connection.html">TCP 연결 관리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      주소창에 입력한 뒤 화면이 표시되기까지는 <span class="blank">이름 해석 → 연결 맺기 → 암호화 → 요청과 응답 → 그리기</span> 순서로 단계가 여럿이다. 면접에서 단골로 나오는 질문이고, 실무에서는 장애를 단계로 좁히는 지도가 된다.
+    </p>
+    <p>
+      첫 단계인 <strong>DNS</strong>는 이름을 IP 주소로 바꾼다. 한곳에 모아 둔 표가 아니라 이름을 마디로 나눠 아래로 맡겨 둔 분산 구조라, 처음 묻는 이름은 여러 번 되물어야 답이 나온다. 대신 단계마다 답을 <span class="blank">TTL 동안 담아 두므로</span>, 레코드를 고쳐도 바로 반영되지 않는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>가까운 캐시부터 묻고, 없으면 위임을 따라 내려간다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="브라우저 캐시, OS 캐시, 로컬 DNS 서버 순으로 찾고, 없으면 리졸버가 루트, TLD, 권한 서버에 차례로 묻는다">
+      <defs><marker id="dns-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <path class="f-line" d="M12 76 V68 H442 V76"/><text class="f-sub" x="227" y="60" text-anchor="middle">캐시 · 여기서 찾으면 끝난다</text>
+      <rect class="f-box" x="10" y="96" width="124" height="56" rx="6"/><text class="f-text" x="72" y="122" text-anchor="middle">앱 · 브라우저</text><text class="f-sub" x="72" y="139" text-anchor="middle">자체 캐시</text>
+      <line class="f-line" x1="134" y1="124" x2="158" y2="124" marker-end="url(#dns-a)"/>
+      <rect class="f-box" x="160" y="96" width="124" height="56" rx="6"/><text class="f-text" x="222" y="122" text-anchor="middle">OS</text><text class="f-sub" x="222" y="139" text-anchor="middle">캐시 · hosts 파일</text>
+      <line class="f-line" x1="284" y1="124" x2="314" y2="124" marker-end="url(#dns-a)"/><text class="f-sub" x="299" y="168" text-anchor="middle">재귀 질의</text>
+      <rect class="f-hit" x="316" y="96" width="126" height="56" rx="6"/><text class="f-strong" x="379" y="122" text-anchor="middle">로컬 DNS 서버</text><text class="f-sub" x="379" y="139" text-anchor="middle">리졸버 · 캐시</text>
+      <rect class="f-cell" x="560" y="14" width="150" height="46" rx="6"/><text class="f-text" x="635" y="35" text-anchor="middle">루트 서버</text><text class="f-sub" x="635" y="52" text-anchor="middle">다음: .com 담당</text>
+      <rect class="f-cell" x="560" y="101" width="150" height="46" rx="6"/><text class="f-text" x="635" y="122" text-anchor="middle">TLD 서버 (.com)</text><text class="f-sub" x="635" y="139" text-anchor="middle">다음: 권한 서버</text>
+      <rect class="f-cell" x="560" y="188" width="150" height="46" rx="6"/><text class="f-text" x="635" y="209" text-anchor="middle">권한 서버</text><text class="f-sub" x="635" y="226" text-anchor="middle">답: A 레코드 IP</text>
+      <line class="f-line" x1="442" y1="124" x2="556" y2="37" marker-end="url(#dns-a)"/>
+      <text class="f-strong" x="510.4" y="61.80000000000001" text-anchor="middle">①</text>
+      <line class="f-line" x1="442" y1="124" x2="556" y2="124" marker-end="url(#dns-a)"/>
+      <text class="f-strong" x="510.4" y="116" text-anchor="middle">②</text>
+      <line class="f-line" x1="442" y1="124" x2="556" y2="211" marker-end="url(#dns-a)"/>
+      <text class="f-strong" x="510.4" y="190.2" text-anchor="middle">③</text>
+      <text class="f-sub" x="500" y="246" text-anchor="middle">반복 질의</text>
+      </svg>
+      <figcaption>왼쪽 칸에서 답이 나오면 거기서 끝난다. 로컬 DNS 서버(리졸버)가 자기 캐시에도 없으면 루트 → TLD(.com) → 권한 서버 순으로 직접 되물어 내려간다. 루트와 TLD는 답 대신 "다음에 물을 곳"만 알려 준다.</figcaption>
+    </figure>
+    <p>
+      프로그램과 OS는 리졸버에게 "답을 구해서 달라"고 한 번 묻는다. 이것이 <strong>재귀 질의</strong>다. 리졸버는 그 답을 구하려고 루트, TLD, 권한 서버에 차례로 묻는데, 각 서버는 아는 데까지만 알려 주고 다음 서버를 가리킨다. 이것이 <strong>반복 질의</strong>다.
+      루트 서버는 개별 도메인의 주소를 갖고 있지 않다. 가진 것은 <code>.com</code>을 맡은 서버 목록이고, 그 위임을 따라 내려가야 답이 나온다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>레코드</th><th>담는 것</th></tr></thead>
+        <tbody>
+          <tr><td>A / AAAA</td><td>IPv4 / IPv6 주소</td></tr>
+          <tr><td>CNAME</td><td>다른 이름으로 넘긴다(별칭). 넘긴 이름을 다시 해석한다</td></tr>
+          <tr><td>NS</td><td>이 영역을 맡은 권한 서버</td></tr>
+          <tr><td>MX · TXT · SRV</td><td>메일 서버, 임의 문자열(도메인 소유 확인 등), 서비스의 호스트와 포트</td></tr>
+          <tr><td>PTR</td><td>역방향. IP에서 이름을 찾는다(<code>in-addr.arpa</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      DNS 질의는 대개 UDP 53번 포트로 한 번 주고받고 끝난다. 응답이 크거나 잘리면 TCP로 다시 묻는다. 최근에는 질의를 암호화하는 DNS over HTTPS·TLS도 쓴다.
+    </p>
+
+    <h3>TTL은 답을 주는 쪽이 정하고, 받은 쪽은 그동안 다시 묻지 않는다</h3>
+    <p>
+      답에는 TTL(초 단위)이 붙어 오고, 리졸버와 OS는 그 시간 동안 같은 이름을 다시 묻지 않는다. 그래서 TTL은 <strong>바꾼 주소가 퍼지는 데 걸리는 최대 시간</strong>이기도 하다.
+      서버를 옮길 계획이면 며칠 전에 TTL을 짧게(예: 60초) 줄여 두고, 옮긴 뒤 안정되면 다시 늘린다. 이미 긴 TTL로 퍼진 값은 고쳐도 만료될 때까지 남는다.
+    </p>
+
+    <h3>이름을 알아낸 뒤에도 왕복이 여러 번 남는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 190" role="img" aria-label="HTTPS 첫 요청은 DNS, TCP, TLS, 요청 응답 순으로 왕복이 쌓이고, 연결을 재사용하면 요청 응답만 남는다">
+      <defs><marker id="dns-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-text" x="138" y="66" text-anchor="end">첫 연결</text>
+      <rect class="f-cell" x="150" y="40" width="106" height="50" rx="6"/><text class="f-text" x="203" y="63" text-anchor="middle">DNS</text><text class="f-sub" x="203" y="80" text-anchor="middle">이름 해석</text>
+      <rect class="f-box" x="260" y="40" width="106" height="50" rx="6"/><text class="f-text" x="313" y="63" text-anchor="middle">TCP</text><text class="f-sub" x="313" y="80" text-anchor="middle">3-way</text>
+      <rect class="f-box" x="370" y="40" width="106" height="50" rx="6"/><text class="f-text" x="423" y="63" text-anchor="middle">TLS 1.3</text><text class="f-sub" x="423" y="80" text-anchor="middle">핸드셰이크</text>
+      <rect class="f-hit" x="480" y="40" width="136" height="50" rx="6"/><text class="f-strong" x="548" y="63" text-anchor="middle">요청 · 응답</text><text class="f-sub" x="548" y="80" text-anchor="middle">+ 서버 처리</text>
+      <path class="f-line" d="M152 32 V24 H474 V32"/><text class="f-sub" x="315" y="18" text-anchor="middle">요청을 보내기 전에 필요한 왕복</text>
+      <text class="f-text" x="138" y="141" text-anchor="end">연결 재사용</text>
+      <rect class="f-hit" x="150" y="115" width="136" height="50" rx="6"/><text class="f-strong" x="218" y="138" text-anchor="middle">요청 · 응답</text><text class="f-sub" x="218" y="155" text-anchor="middle">+ 서버 처리</text>
+      <line class="f-line" x1="150" y1="180" x2="630" y2="180" marker-end="url(#dns-b)"/><text class="f-sub" x="634" y="184">시간</text>
+      </svg>
+      <figcaption>HTTPS 첫 요청이 응답을 받기까지의 왕복. 칸 하나가 서버와 한 번 오가는 시간(RTT)이다. 이름 해석, TCP 3-way 핸드셰이크, TLS 핸드셰이크를 지나야 요청을 보낼 수 있다. 서버가 멀수록 칸 하나가 길어지고 전체가 칸 수만큼 늘어난다.</figcaption>
+    </figure>
+    <ol>
+      <li><strong>이름 해석.</strong> 캐시에 없으면 리졸버까지, 더 나아가 권한 서버까지 다녀온다.</li>
+      <li><strong>다음 홉 찾기.</strong> 같은 망의 게이트웨이 MAC 주소를 모르면 ARP로 묻는다(<a href="addressing.html">주소와 전달</a>).</li>
+      <li><strong>TCP 연결.</strong> 3-way 핸드셰이크로 한 번 왕복한다(<a href="tcp-connection.html">TCP 연결 관리</a>).</li>
+      <li><strong>TLS 핸드셰이크.</strong> TLS 1.3이면 한 번, 1.2면 두 번 왕복한다(<a data-ref="security/signature-tls">서명과 TLS</a>).</li>
+      <li><strong>요청과 응답.</strong> 서버 처리 시간이 여기 더해진다.</li>
+      <li><strong>그리기.</strong> 받은 문서를 해석하며 딸린 자원(스크립트, 이미지)을 다시 요청한다. 이미 연결이 있으면 1~4를 건너뛴다.</li>
+    </ol>
+    <p>
+      1~4는 거의 전부 <strong>왕복 횟수 × 거리</strong>로 정해진다. 그래서 연결을 재사용하고(keep-alive, 커넥션 풀), 사용자 가까이 서버를 두는 것(CDN, 지역 서버)이 효과가 크다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>증상으로 단계를 좁힌다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>증상</th><th>단계</th><th>먼저 볼 것</th><th>도구</th></tr></thead>
+        <tbody>
+          <tr><td>이름을 못 찾는다</td><td>이름 해석</td><td>DNS 설정, 캐시된 값, 레코드 내용과 TTL</td><td><code>nslookup</code>, <code>dig</code>(<code>+trace</code>로 위임 경로까지)</td></tr>
+          <tr><td>연결이 안 된다·시간 초과</td><td>연결 맺기</td><td>방화벽, 보안 그룹, 포트, 경로</td><td><code>telnet</code>·<code>nc</code>로 포트 확인, <code>traceroute</code></td></tr>
+          <tr><td>연결은 되는데 TLS 오류</td><td>TLS</td><td>인증서 이름·만료, 중간 인증서</td><td><code>openssl s_client</code></td></tr>
+          <tr><td>연결은 되는데 응답이 늦다</td><td>요청과 응답</td><td>서버 부하, 처리 지연, DB</td><td>서버 지표, 로그</td></tr>
+          <tr><td>응답은 오는데 화면이 느리다</td><td>그리기</td><td>문서 크기, 딸린 자원 수</td><td>브라우저 개발자 도구</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>curl -w</code>로 단계별 시간(<code>time_namelookup</code>, <code>time_connect</code>, <code>time_appconnect</code>, <code>time_starttransfer</code>)을 한 번에 찍으면 어느 칸이 길어졌는지 바로 보인다.
+      이름 대신 IP를 직접 넣어 보는 것도 빠른 확인이다. 다만 가상 호스트나 TLS 인증서 이름 때문에 이름이 멀쩡해도 IP로는 실패할 수 있으니, 그 결과만으로 단정하지 않는다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>.NET은 DNS 결과를 스스로 캐시하지 않는다.</strong> <code>Dns.GetHostAddressesAsync</code>는 OS 리졸버에 그대로 묻는다. Windows는 DNS 클라이언트 서비스가 캐시해 주지만, Linux 컨테이너는 대개 OS 캐시가 없어 호출마다 리졸버까지 간다. 외부 API를 자주 부르는 서버라면 연결을 재사용해 이름 해석 자체를 줄인다.
+      </li>
+      <li>
+        <strong><code>HttpClient</code>를 오래 쓰면 DNS 변경을 못 본다.</strong> <code>HttpClient</code>를 하나 공유하는 것은 맞지만(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>), 풀에 있는 연결은 기본적으로 계속 재사용되어 대상 서버가 IP를 바꿔도 옛 IP로 간다.
+        <code>SocketsHttpHandler.PooledConnectionLifetime</code>을 몇 분으로 잡아 연결이 주기적으로 새로 맺히게 하거나, <code>IHttpClientFactory</code>를 쓴다.
+      </li>
+      <li>
+        <strong>로그인 서버 주소를 DNS로 옮긴다.</strong> 클라이언트는 고정 IP 대신 도메인으로 로그인 서버에 붙게 하고, 서버 이전이나 장애 전환 때 레코드를 바꾼다. 이때 TTL이 곧 전환 시간이라, 전환이 잦은 레코드는 TTL을 짧게 유지한다. 대신 리졸버 부하와 해석 횟수가 는다.
+      </li>
+      <li>
+        <strong>DNS 장애가 접속 장애로 보인다.</strong> 서버는 멀쩡한데 "접속이 안 된다"는 문의가 몰리면, 특정 통신사·지역 리졸버 문제일 수 있다. 클라이언트에 마지막으로 성공한 IP를 기억해 두는 대체 경로를 두기도 한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>레코드를 고쳐도 바로 바뀌지 않는다.</strong> 리졸버, OS, 프로그램, 커넥션 풀이 각자 담아 둔 값을 만료될 때까지 쓴다. 장애 대응 중 "고쳤는데 안 바뀐다"는 대개 이것이다.</li>
+      <li><strong>루트 서버가 모든 답을 갖고 있는 것이 아니다.</strong> 루트는 TLD 서버의 위치만 안다. 답은 위임을 따라 내려간 권한 서버에 있다.</li>
+      <li><strong>IP로 붙는 것은 DNS 문제만 거른다.</strong> 인증서 이름, 가상 호스트, 로드 밸런서 규칙은 이름을 기준으로 동작하므로, IP로 실패했다고 서버 문제라고 단정하지 않는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

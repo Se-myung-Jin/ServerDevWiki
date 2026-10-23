@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>서브넷과 라우팅 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="network/subnet-routing">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="addressing.html">주소와 전달</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      패킷을 보내기 전에 장비는 먼저 <strong>목적지가 같은 망 안인가</strong>를 판단한다. 이 판단을 <span class="blank">서브넷 마스크</span>로 한다.
+      같은 망이면 ARP로 상대 MAC을 알아내 바로 보내고, 아니면 게이트웨이의 MAC을 알아내 거기에 맡긴다.
+    </p>
+    <p>
+      맡겨진 패킷은 라우터가 라우팅 표를 보고 다음 홉을 정한다. 표에서 목적지와 맞는 항목이 여럿이면 <span class="blank">가장 길게 일치하는 것</span>을 고른다. 더 구체적인 규칙이 이긴다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>마스크가 주소를 망 부분과 장비 부분으로 자른다</h3>
+    <p>
+      IP 주소는 망을 가리키는 앞부분(네트워크 부분)과 그 망 안의 장비를 가리키는 뒷부분(호스트 부분)으로 나뉜다. 어디서 자를지를 마스크가 정하고, 앞에서부터 1인 비트 수를 <code>/26</code>처럼 뒤에 붙여 적는다(CIDR 표기).
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="192.168.10.77/26의 마지막 옥텟을 비트로 풀어 망 부분 26비트와 호스트 부분 6비트로 나눈 그림">
+      <path class="f-line" d="M162 48 V40 H410 V48"/>
+      <text class="f-strong" x="287" y="32" text-anchor="middle">망 부분 26비트</text>
+      <path class="f-line" d="M414 48 V40 H626 V48"/>
+      <text class="f-sub" x="520" y="32" text-anchor="middle">호스트 부분 6비트</text>
+      <text class="f-text" x="150" y="83" text-anchor="end">주소</text>
+      <rect class="f-hit" x="160" y="60" width="170" height="34" rx="2"/>
+      <text class="f-strong" x="245" y="82" text-anchor="middle">192.168.10.</text>
+      <rect class="f-hit" x="340" y="60" width="34" height="34" rx="2"/>
+      <text class="f-strong" x="357" y="82" text-anchor="middle">0</text>
+      <rect class="f-hit" x="376" y="60" width="34" height="34" rx="2"/>
+      <text class="f-strong" x="393" y="82" text-anchor="middle">1</text>
+      <rect class="f-box" x="412" y="60" width="34" height="34" rx="2"/>
+      <text class="f-text" x="429" y="82" text-anchor="middle">0</text>
+      <rect class="f-box" x="448" y="60" width="34" height="34" rx="2"/>
+      <text class="f-text" x="465" y="82" text-anchor="middle">0</text>
+      <rect class="f-box" x="484" y="60" width="34" height="34" rx="2"/>
+      <text class="f-text" x="501" y="82" text-anchor="middle">1</text>
+      <rect class="f-box" x="520" y="60" width="34" height="34" rx="2"/>
+      <text class="f-text" x="537" y="82" text-anchor="middle">1</text>
+      <rect class="f-box" x="556" y="60" width="34" height="34" rx="2"/>
+      <text class="f-text" x="573" y="82" text-anchor="middle">0</text>
+      <rect class="f-box" x="592" y="60" width="34" height="34" rx="2"/>
+      <text class="f-text" x="609" y="82" text-anchor="middle">1</text>
+      <text class="f-strong" x="644" y="82" text-anchor="start">= .77</text>
+      <text class="f-text" x="150" y="133" text-anchor="end">망 주소</text>
+      <rect class="f-hit" x="160" y="110" width="170" height="34" rx="2"/>
+      <text class="f-strong" x="245" y="132" text-anchor="middle">192.168.10.</text>
+      <rect class="f-hit" x="340" y="110" width="34" height="34" rx="2"/>
+      <text class="f-strong" x="357" y="132" text-anchor="middle">0</text>
+      <rect class="f-hit" x="376" y="110" width="34" height="34" rx="2"/>
+      <text class="f-strong" x="393" y="132" text-anchor="middle">1</text>
+      <rect class="f-box" x="412" y="110" width="34" height="34" rx="2"/>
+      <text class="f-text" x="429" y="132" text-anchor="middle">0</text>
+      <rect class="f-box" x="448" y="110" width="34" height="34" rx="2"/>
+      <text class="f-text" x="465" y="132" text-anchor="middle">0</text>
+      <rect class="f-box" x="484" y="110" width="34" height="34" rx="2"/>
+      <text class="f-text" x="501" y="132" text-anchor="middle">0</text>
+      <rect class="f-box" x="520" y="110" width="34" height="34" rx="2"/>
+      <text class="f-text" x="537" y="132" text-anchor="middle">0</text>
+      <rect class="f-box" x="556" y="110" width="34" height="34" rx="2"/>
+      <text class="f-text" x="573" y="132" text-anchor="middle">0</text>
+      <rect class="f-box" x="592" y="110" width="34" height="34" rx="2"/>
+      <text class="f-text" x="609" y="132" text-anchor="middle">0</text>
+      <text class="f-strong" x="644" y="132" text-anchor="start">= .64</text>
+      <text class="f-text" x="150" y="183" text-anchor="end">브로드캐스트</text>
+      <rect class="f-hit" x="160" y="160" width="170" height="34" rx="2"/>
+      <text class="f-strong" x="245" y="182" text-anchor="middle">192.168.10.</text>
+      <rect class="f-hit" x="340" y="160" width="34" height="34" rx="2"/>
+      <text class="f-strong" x="357" y="182" text-anchor="middle">0</text>
+      <rect class="f-hit" x="376" y="160" width="34" height="34" rx="2"/>
+      <text class="f-strong" x="393" y="182" text-anchor="middle">1</text>
+      <rect class="f-box" x="412" y="160" width="34" height="34" rx="2"/>
+      <text class="f-text" x="429" y="182" text-anchor="middle">1</text>
+      <rect class="f-box" x="448" y="160" width="34" height="34" rx="2"/>
+      <text class="f-text" x="465" y="182" text-anchor="middle">1</text>
+      <rect class="f-box" x="484" y="160" width="34" height="34" rx="2"/>
+      <text class="f-text" x="501" y="182" text-anchor="middle">1</text>
+      <rect class="f-box" x="520" y="160" width="34" height="34" rx="2"/>
+      <text class="f-text" x="537" y="182" text-anchor="middle">1</text>
+      <rect class="f-box" x="556" y="160" width="34" height="34" rx="2"/>
+      <text class="f-text" x="573" y="182" text-anchor="middle">1</text>
+      <rect class="f-box" x="592" y="160" width="34" height="34" rx="2"/>
+      <text class="f-text" x="609" y="182" text-anchor="middle">1</text>
+      <text class="f-strong" x="644" y="182" text-anchor="start">= .127</text>
+      </svg>
+      <figcaption><code>192.168.10.77/26</code>의 마지막 옥텟을 비트로 풀었다. 앞 26비트(칠한 칸)가 망 부분이다. 호스트 부분 6비트를 전부 0으로 하면 망 주소(.64), 전부 1로 하면 브로드캐스트 주소(.127)다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>항목</th><th>값</th><th>구하는 법</th></tr></thead>
+        <tbody>
+          <tr><td>마스크</td><td><code>255.255.255.192</code></td><td>앞 26비트가 1. 마지막 옥텟은 11000000 = 192</td></tr>
+          <tr><td>블록 크기</td><td>64</td><td>호스트 비트 6개 → 2⁶ = 64 (또는 256 − 192)</td></tr>
+          <tr><td>망 주소</td><td><code>192.168.10.64</code></td><td>77을 64 단위로 내림</td></tr>
+          <tr><td>브로드캐스트</td><td><code>192.168.10.127</code></td><td>다음 블록 시작(.128) − 1</td></tr>
+          <tr><td>쓸 수 있는 장비 주소</td><td><code>.65</code> ~ <code>.126</code>, 62개</td><td>2⁶ − 2. 망 주소와 브로드캐스트는 장비에 주지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      같은 망인지는 <strong>내 주소와 목적지 주소에 각각 마스크를 AND</strong> 해서 결과가 같은지로 본다. <code>192.168.10.77/26</code>에게 <code>.100</code>은 같은 망(.64 블록)이고 <code>.130</code>은 다른 망(.128 블록)이라 게이트웨이로 보낸다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="num">접두사</th><th>마스크</th><th class="num">주소 수</th><th class="num">장비에 쓸 수 있는 수</th></tr></thead>
+        <tbody>
+          <tr><td class="num">/30</td><td>255.255.255.252</td><td class="num">4</td><td class="num">2</td></tr>
+          <tr><td class="num">/28</td><td>255.255.255.240</td><td class="num">16</td><td class="num">14</td></tr>
+          <tr><td class="num">/26</td><td>255.255.255.192</td><td class="num">64</td><td class="num">62</td></tr>
+          <tr><td class="num">/24</td><td>255.255.255.0</td><td class="num">256</td><td class="num">254</td></tr>
+          <tr><td class="num">/16</td><td>255.255.0.0</td><td class="num">65,536</td><td class="num">65,534</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>라우터는 가장 길게 일치하는 항목을 고른다</h3>
+    <p>
+      라우팅 표에는 "이 망으로 가려면 저쪽으로"가 적혀 있다. 목적지가 여러 항목에 동시에 맞으면 <strong>접두사가 가장 긴 것</strong>을 고른다(longest prefix match). /16보다 /24가 더 좁고 정확한 정보이기 때문이다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>표의 항목</th><th>다음 홉</th><th>이 항목으로 가는 목적지 예</th></tr></thead>
+        <tbody>
+          <tr><td><code>10.1.2.0/24</code></td><td>라우터 C</td><td><code>10.1.2.9</code> (세 항목에 다 맞지만 /24가 가장 길다)</td></tr>
+          <tr><td><code>10.1.0.0/16</code></td><td>라우터 B</td><td><code>10.1.9.9</code></td></tr>
+          <tr><td><code>10.0.0.0/8</code></td><td>라우터 A</td><td><code>10.9.9.9</code></td></tr>
+          <tr><td><code>0.0.0.0/0</code> (기본 경로)</td><td>기본 게이트웨이</td><td><code>8.8.8.8</code>. 길이가 0이라 다른 항목이 하나라도 맞으면 밀린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      이 규칙 덕에 넓게 잡은 경로와 좁게 잡은 예외를 한 표에 함께 둘 수 있다. 집이나 사무실 장비는 대개 "내 망은 직접"과 기본 경로 둘만 두고 나머지를 전부 게이트웨이로 넘긴다.
+    </p>
+
+    <h3>망을 나누면 무엇이 좋아지나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>이유</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>브로드캐스트를 가둔다</td><td>ARP처럼 모두에게 보내는 패킷이 그 망 안에만 머문다. 한 망에 장비가 너무 많으면 이 트래픽만으로 부담이 된다</td></tr>
+          <tr><td>통제 지점이 생긴다</td><td>망 사이를 지나려면 라우터를 거치므로 거기서 막을 수 있다</td></tr>
+          <tr><td>주소를 아껴 쓴다</td><td>필요한 크기만큼만 떼어 준다</td></tr>
+          <tr><td>장애 범위를 좁힌다</td><td>한 망의 문제가 다른 망으로 번지지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <h3>망 하나를 얼마나 크게 잡느냐</h3>
+    <p>
+      크게 잡으면 관리가 단순하고 주소가 넉넉하다. 대신 브로드캐스트 범위가 넓어지고 장애가 번질 수 있다. 잘게 나누면 통제가 쉬워지지만 망 사이 규칙이 늘고, 망마다 장비에 못 쓰는 주소(망 주소·브로드캐스트)가 생긴다.
+      정답은 장비 수와 앞으로 늘어날 양이 정한다. <strong>나중에 넓히기는 어렵다</strong>는 점이 가장 중요하다. 이미 쓰는 대역을 바꾸려면 장비 주소를 전부 바꿔야 하니, 처음에 늘어날 몫까지 넉넉히 잡는다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>클라우드 서브넷은 표보다 주소가 적다.</strong> AWS·Azure는 서브넷마다 처음 네 개와 마지막 하나, 모두 다섯 개를 예약한다. /28이면 16개 중 11개만 쓸 수 있다.
+      </li>
+      <li>
+        <strong>컨테이너가 주소를 먹는다.</strong> 일부 Kubernetes 구성(AWS의 VPC CNI 등)은 파드마다 VPC 주소를 하나씩 준다. 게임 서버 파드를 늘리다 서브넷 주소가 바닥나 새 파드가 뜨지 않는 사고가 흔하다. 파드 수 상한까지 계산해서 서브넷을 잡는다(<a data-ref="operations/orchestration">오케스트레이션</a>).
+      </li>
+      <li>
+        <strong>대역이 겹치면 연결할 수 없다.</strong> 리전 사이, 회사 망과 클라우드 사이를 VPN이나 피어링으로 붙일 때 양쪽 대역이 겹치면 라우팅이 성립하지 않는다. 서비스 초기에 전체 주소 계획을 정해 두고 환경마다 겹치지 않게 나눈다.
+      </li>
+      <li>
+        <strong>.NET에서 대역 판정을 직접 짜지 않는다.</strong> 관리자 IP만 허용하는 식의 검사는 .NET 8의 <code>IPNetwork.Parse("10.0.0.0/8").Contains(address)</code>로 한다. 문자열 접두사로 비교하면 <code>10.1.2.3</code>과 <code>101.2.3.4</code>를 섞는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"같은 대역이면 통신이 된다"는 말은 마스크가 같다는 전제다.</strong> 양쪽 마스크가 다르면 한쪽은 같은 망이라 직접 보내고 다른 쪽은 게이트웨이로 보내서, 한 방향만 되는 증상이 생긴다.</li>
+      <li><strong>게이트웨이 주소는 같은 망 안에 있어야 한다.</strong> 다른 망에 있으면 그 MAC을 ARP로 알아낼 방법이 없어 아무 데도 나가지 못한다.</li>
+      <li><strong>/31과 /32는 예외다.</strong> /32는 장비 하나를 가리키는 경로에 쓰고, /31은 양 끝 둘만 있는 연결에서 망 주소·브로드캐스트 없이 두 주소를 모두 쓴다. "2ⁿ − 2"는 일반 망에만 맞는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

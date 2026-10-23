@@ -82,7 +82,7 @@
         <tbody>
           <tr><td>버퍼링</td><td>작은 쓰기를 모아 한 번에 낸다</td><td><code>BufferedStream</code>, 송신 버퍼</td><td>지연이 늘고, 중간에 죽으면 버퍼 내용을 잃는다</td></tr>
           <tr><td>흩어진 버퍼를 한 호출로</td><td>버퍼 여러 개를 목록으로 넘긴다(scatter/gather)</td><td><code>writev</code>, <code>WSASend</code>의 버퍼 배열, .NET <code>Socket.Send(IList&lt;ArraySegment&lt;byte&gt;&gt;)</code></td><td>버퍼 목록을 관리해야 한다</td></tr>
-          <tr><td>메시지 여러 개를 한 호출로</td><td>UDP 데이터그램 여러 개를 한 번에 보내고 받는다</td><td>Linux <code>sendmmsg</code>·<code>recvmmsg</code></td><td>OS 전용이라 .NET 기본 API에는 없다</td></tr>
+          <tr><td>메시지 여러 개를 한 호출로</td><td>UDP <a data-ref="network/tcp-vs-udp">데이터그램</a> 여러 개를 한 번에 보내고 받는다</td><td>Linux <code>sendmmsg</code>·<code>recvmmsg</code></td><td>OS 전용이라 .NET 기본 API에는 없다</td></tr>
           <tr><td>완료를 한꺼번에 꺼낸다</td><td>끝난 IO 여러 개를 호출 한 번으로 받는다</td><td>Windows <code>GetQueuedCompletionStatusEx</code>, Linux <code>epoll_wait</code>의 이벤트 배열</td><td>다중화 구조가 필요하다</td></tr>
           <tr><td>제출 자체를 줄인다</td><td>커널과 공유하는 큐에 요청을 쌓고, 한 번 알리거나 아예 알리지 않는다</td><td>Linux <code>io_uring</code>, Windows Registered I/O(RIO)</td><td>API가 복잡하고 이식성이 떨어진다</td></tr>
           <tr><td>복사 없이 넘긴다</td><td>커널 안에서 파일을 소켓으로 바로 보낸다</td><td><code>sendfile</code>, <code>TransmitFile</code></td><td>응용이 데이터를 가공할 수 없다</td></tr>

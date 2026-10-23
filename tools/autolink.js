@@ -43,8 +43,10 @@ function linkPage(file, selfRef) {
     if (inPrereq || SKIP.some((t) => depth[t] > 0) || !p.trim()) continue;
 
     let text = p;
-    for (const [term, ref] of TERMS) {
+    for (const [term, ref, opt] of TERMS) {
       if (already.has(ref)) continue;
+      // 같은 말이 분야마다 다른 뜻이면 except 에 적은 분야(또는 문서)에서는 걸지 않는다
+      if (opt && opt.except && opt.except.some((x) => selfRef === x || selfRef.startsWith(x + "/"))) continue;
       // 영문 개념어는 단어 경계를 지킨다 (예: GC 가 "GCHandle" 안에서 잡히지 않게).
       const re = /^[A-Za-z]/.test(term)
         ? new RegExp("(^|[^A-Za-z])(" + term.replace(/[/]/g, "\\/") + ")(?![A-Za-z])")

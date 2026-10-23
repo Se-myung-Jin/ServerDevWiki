@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>계층 모델 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="network/layer-model">
+  <article class="doc-body">
+
+    <h2>핵심 요약</h2>
+    <p>
+      네트워크를 층으로 나누면 <strong>아래 층을 몰라도 위 층을 쓸 수 있다</strong>. HTTP를 쓰는 코드는 그 아래가 와이파이인지 광케이블인지 알 필요가 없다. 각 층은 바로 아래 층이 주는 기능만 믿고 자기 일을 한다.
+    </p>
+    <p>
+      나눠 두면 진단도 쉬워진다. 문제가 어느 층의 것인지 좁힐 수 있다. 이름이 안 풀리면 응용 층, 포트에 연결이 안 되면 전송 층, 아예 닿지 않으면 그 아래다.
+      이야기할 때는 <span class="blank">OSI 7계층</span>의 번호로 층을 가리키고, 실제로 도는 것은 <span class="blank">TCP/IP 4계층</span> 구조다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>두 모델은 목적이 다르다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 284" role="img" aria-label="OSI 7계층과 TCP/IP 4계층의 대응">
+      <text class="f-strong" x="165" y="22" text-anchor="middle">OSI 7계층 · 참조 모델</text>
+      <text class="f-strong" x="545" y="22" text-anchor="middle">TCP/IP 4계층 · 실제 구조</text>
+      <rect class="f-box" x="60" y="36" width="210" height="30" rx="4"/>
+      <text class="f-text" x="165" y="56" text-anchor="middle">7 응용</text>
+      <rect class="f-box" x="60" y="70" width="210" height="30" rx="4"/>
+      <text class="f-text" x="165" y="90" text-anchor="middle">6 표현</text>
+      <rect class="f-box" x="60" y="104" width="210" height="30" rx="4"/>
+      <text class="f-text" x="165" y="124" text-anchor="middle">5 세션</text>
+      <rect class="f-hit" x="60" y="138" width="210" height="30" rx="4"/>
+      <text class="f-strong" x="165" y="158" text-anchor="middle">4 전송</text>
+      <rect class="f-hit" x="60" y="172" width="210" height="30" rx="4"/>
+      <text class="f-strong" x="165" y="192" text-anchor="middle">3 네트워크</text>
+      <rect class="f-box" x="60" y="206" width="210" height="30" rx="4"/>
+      <text class="f-text" x="165" y="226" text-anchor="middle">2 데이터 링크</text>
+      <rect class="f-box" x="60" y="240" width="210" height="30" rx="4"/>
+      <text class="f-text" x="165" y="260" text-anchor="middle">1 물리</text>
+      <rect class="f-box" x="430" y="36" width="230" height="98" rx="4"/>
+      <text class="f-text" x="545" y="90" text-anchor="middle">응용</text>
+      <line class="f-line f-dash" x1="270" y1="51" x2="430" y2="85"/>
+      <line class="f-line f-dash" x1="270" y1="85" x2="430" y2="85"/>
+      <line class="f-line f-dash" x1="270" y1="119" x2="430" y2="85"/>
+      <rect class="f-hit" x="430" y="138" width="230" height="30" rx="4"/>
+      <text class="f-strong" x="545" y="158" text-anchor="middle">전송</text>
+      <line class="f-line f-dash" x1="270" y1="153" x2="430" y2="153"/>
+      <rect class="f-hit" x="430" y="172" width="230" height="30" rx="4"/>
+      <text class="f-strong" x="545" y="192" text-anchor="middle">인터넷</text>
+      <line class="f-line f-dash" x1="270" y1="187" x2="430" y2="187"/>
+      <rect class="f-box" x="430" y="206" width="230" height="64" rx="4"/>
+      <text class="f-text" x="545" y="243" text-anchor="middle">네트워크 접근</text>
+      <line class="f-line f-dash" x1="270" y1="221" x2="430" y2="238"/>
+      <line class="f-line f-dash" x1="270" y1="255" x2="430" y2="238"/>
+      <text class="f-sub" x="350" y="54" text-anchor="middle">셋을 하나로</text>
+      <text class="f-sub" x="350" y="272" text-anchor="middle">둘을 하나로</text>
+      </svg>
+      <figcaption>가운데 전송·네트워크(인터넷) 층은 그대로 대응하고, 위의 셋과 아래 둘이 각각 하나로 묶인다. 실제 프로토콜은 오른쪽 구조로 되어 있다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="num">OSI 층</th><th>이름</th><th>하는 일</th><th>데이터 단위(PDU)</th><th>예</th></tr></thead>
+        <tbody>
+          <tr><td class="num">7</td><td>응용</td><td>응용끼리 주고받을 내용과 규칙</td><td>메시지(데이터)</td><td>HTTP, DNS, 게임 프로토콜</td></tr>
+          <tr><td class="num">6</td><td>표현</td><td>표현 형식 맞추기, 압축, 암호화</td><td>메시지</td><td>(TCP/IP에서는 응용이나 라이브러리가 맡는다)</td></tr>
+          <tr><td class="num">5</td><td>세션</td><td>대화 시작·유지·종료</td><td>메시지</td><td>(같은 이유로 따로 없다)</td></tr>
+          <tr><td class="num">4</td><td>전송</td><td>프로세스 사이 전달, 포트, 신뢰성</td><td>세그먼트(UDP는 <a data-ref="network/tcp-vs-udp">데이터그램</a>)</td><td>TCP, UDP</td></tr>
+          <tr><td class="num">3</td><td>네트워크</td><td>망을 넘어 목적지까지 경로 찾기</td><td>패킷</td><td>IP, ICMP, 라우터</td></tr>
+          <tr><td class="num">2</td><td>데이터 링크</td><td>같은 망 안에서 다음 장비까지</td><td>프레임</td><td>이더넷, 와이파이, 스위치</td></tr>
+          <tr><td class="num">1</td><td>물리</td><td>비트를 신호로 바꿔 전선·전파에 싣기</td><td>비트</td><td>케이블, 무선</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      OSI는 개념을 구분하려고 설계한 <strong>참조 모델</strong>이고, TCP/IP는 동작하는 구현에서 나온 <strong>실제 구조</strong>다. 순서도 TCP/IP가 앞선다. TCP/IP는 1970년대부터 쓰였고, OSI는 1980년대에 표준이 됐다. 구현으로 자리 잡은 것은 TCP/IP지만,
+      "L4 로드밸런서", "L7 방화벽"처럼 층을 가리킬 때는 지금도 OSI 번호를 쓴다. 층을 부르는 공통 언어로 남은 것이다.
+    </p>
+
+    <h3>내려가면서 붙이고 올라가면서 뗀다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="층을 내려가며 헤더가 붙는 캡슐화">
+      <text class="f-text" x="120" y="42" text-anchor="end">응용</text>
+      <rect class="f-hit" x="420" y="20" width="150" height="32" rx="2"/>
+      <text class="f-strong" x="495" y="41" text-anchor="middle">데이터</text>
+      <text class="f-strong" x="640" y="42" text-anchor="start">메시지</text>
+      <text class="f-text" x="120" y="88" text-anchor="end">전송</text>
+      <rect class="f-box" x="360" y="66" width="60" height="32" rx="2"/>
+      <text class="f-text" x="390" y="87" text-anchor="middle">TCP</text>
+      <rect class="f-hit" x="420" y="66" width="150" height="32" rx="2"/>
+      <text class="f-strong" x="495" y="87" text-anchor="middle">데이터</text>
+      <text class="f-strong" x="640" y="88" text-anchor="start">세그먼트</text>
+      <text class="f-text" x="120" y="134" text-anchor="end">인터넷</text>
+      <rect class="f-box" x="300" y="112" width="60" height="32" rx="2"/>
+      <text class="f-text" x="330" y="133" text-anchor="middle">IP</text>
+      <rect class="f-box" x="360" y="112" width="60" height="32" rx="2"/>
+      <text class="f-text" x="390" y="133" text-anchor="middle">TCP</text>
+      <rect class="f-hit" x="420" y="112" width="150" height="32" rx="2"/>
+      <text class="f-strong" x="495" y="133" text-anchor="middle">데이터</text>
+      <text class="f-strong" x="640" y="134" text-anchor="start">패킷</text>
+      <text class="f-text" x="120" y="180" text-anchor="end">링크</text>
+      <rect class="f-miss" x="220" y="158" width="80" height="32" rx="2"/>
+      <text class="f-on" x="260" y="179" text-anchor="middle">이더넷</text>
+      <rect class="f-box" x="300" y="158" width="60" height="32" rx="2"/>
+      <text class="f-text" x="330" y="179" text-anchor="middle">IP</text>
+      <rect class="f-box" x="360" y="158" width="60" height="32" rx="2"/>
+      <text class="f-text" x="390" y="179" text-anchor="middle">TCP</text>
+      <rect class="f-hit" x="420" y="158" width="150" height="32" rx="2"/>
+      <text class="f-strong" x="495" y="179" text-anchor="middle">데이터</text>
+      <rect class="f-miss" x="570" y="158" width="50" height="32" rx="2"/>
+      <text class="f-on" x="595" y="179" text-anchor="middle">FCS</text>
+      <text class="f-strong" x="640" y="180" text-anchor="start">프레임</text>
+      <text class="f-sub" x="140" y="220" text-anchor="start">보낼 때는 위에서 아래로 헤더가 붙고, 받을 때는 아래에서 위로 하나씩 떼어 낸다</text>
+      </svg>
+      <figcaption>보내는 쪽은 층마다 자기 헤더를 앞에 붙이고(캡슐화), 받는 쪽은 반대로 바깥 헤더부터 떼어 낸다. 프레임 안에 패킷이, 패킷 안에 세그먼트가, 세그먼트 안에 응용 데이터가 들어 있다.</figcaption>
+    </figure>
+    <p>
+      각 층은 <strong>자기 헤더만 본다</strong>. 라우터는 3계층 헤더만 보고 다음 홉을 정하고, 그 안에 든 것이 TCP인지 UDP인지 알 필요가 없다. 스위치는 2계층 프레임만 보고 포트를 고른다.
+      그래서 장비를 "몇 계층 장비"라고 부른다. 그 장비가 어디까지 열어 보는지를 가리키는 말이다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>장비·기능</th><th>보는 층</th><th>무엇으로 판단하나</th></tr></thead>
+        <tbody>
+          <tr><td>스위치</td><td>L2</td><td>목적지 <a data-ref="network/addressing">MAC 주소</a></td></tr>
+          <tr><td>라우터</td><td>L3</td><td>목적지 IP 주소</td></tr>
+          <tr><td>L4 로드밸런서</td><td>L4</td><td>IP와 포트. 연결 단위로 서버를 고른다. 내용은 보지 않는다</td></tr>
+          <tr><td>L7 로드밸런서</td><td>L7</td><td>HTTP 경로·헤더·쿠키. 요청 단위로 고를 수 있지만 TLS를 풀어야 내용을 본다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <h3>증상으로 층을 좁힌다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>증상</th><th>의심할 층</th><th>먼저 볼 것</th></tr></thead>
+        <tbody>
+          <tr><td>도메인으로는 안 되는데 IP로는 된다</td><td>응용(DNS)</td><td>이름 해석(<a href="dns-resolution.html">이름 해석과 연결까지</a>)</td></tr>
+          <tr><td><code>ping</code>은 되는데 포트에 연결이 안 된다</td><td>전송</td><td>서버가 그 포트에서 듣고 있나, 방화벽·보안 그룹이 막나</td></tr>
+          <tr><td><code>ping</code>도 안 된다</td><td>네트워크 이하</td><td>경로(<code>traceroute</code>/<code>tracert</code>), 라우팅, 게이트웨이(<a href="subnet-routing.html">서브넷과 라우팅</a>)</td></tr>
+          <tr><td>연결은 되는데 큰 데이터만 안 간다</td><td>네트워크(MTU)</td><td>단편화와 경로 MTU(<a href="packet-headers.html">패킷 헤더</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      단, <code>ping</code>(ICMP)을 막아 둔 서버가 많다. <code>ping</code>이 안 된다고 경로가 끊겼다고 단정하지 말고, 실제 포트로 연결을 시도해 본다(<code>nc -vz host port</code>, PowerShell <code>Test-NetConnection host -Port port</code>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>게임 프로토콜은 응용 층에 있다.</strong> 서버와 클라이언트가 정한 패킷 형식(헤더, opcode, 본문)은 TCP나 UDP 위에 얹는 응용 층 규칙이다. TCP가 바이트를 순서대로 날라 줄 뿐 메시지 경계는 모르므로, 메시지를 나누는 일은 응용이 한다(<a data-ref="server/framing">메시지 경계와 프레이밍</a>).
+      </li>
+      <li>
+        <strong>로드밸런서의 층이 세션 유지 방식을 정한다.</strong> 게임 서버처럼 오래 붙어 있는 TCP 연결은 L4 로드밸런서가 연결 단위로 서버에 붙여 주면 끝난다. 웹 API 서버는 L7에서 경로별로 나눌 수 있다. 실시간 UDP는 연결이라는 개념이 없어서, 로드밸런서가 출발 주소·포트 쌍을 기억해 같은 서버로 보내야 한다.
+      </li>
+      <li>
+        <strong>.NET의 <code>Socket</code>은 전송 층 입구다.</strong> <code>SocketType.Stream</code> + <code>ProtocolType.Tcp</code>, <code>SocketType.Dgram</code> + <code>ProtocolType.Udp</code>로 층을 고르고, 그 아래(IP, 이더넷)는 OS 커널이 맡는다. 소켓도 커널 오브젝트라 디스크립터 한도를 따른다(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>계층 이름을 순서대로 외우는 것만으로는 설명이 아니다.</strong> 왜 나눴는지(아래를 몰라도 위를 쓰게), 무엇이 실제로 도는지(TCP/IP)가 함께 있어야 뜻이 통한다.</li>
+      <li><strong>TCP/IP에 세션·표현 층이 없다고 그 일이 사라진 것은 아니다.</strong> 압축·암호화·연결 상태 관리는 응용 프로토콜이나 라이브러리가 한다.</li>
+      <li><strong>모든 프로토콜이 한 층에 딱 들어가지는 않는다.</strong> TLS는 TCP 위, 응용 아래에 끼어 있고(<a data-ref="security/signature-tls">TLS</a>), ARP는 IP 주소를 다루면서 프레임에 바로 실린다. 층 구분은 설명을 위한 단순화다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

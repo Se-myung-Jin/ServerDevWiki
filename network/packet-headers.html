@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>패킷 헤더 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="network/packet-headers">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="layer-model.html">계층 모델</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      헤더 필드를 외우는 것이 목적이 아니다. <strong>무엇이 들어 있느냐가 그 프로토콜이 무엇을 보장하는지</strong>를 말해 준다.
+      TCP 헤더에는 순서 번호와 확인 응답 번호가 있고 UDP 헤더에는 없다. 그래서 TCP는 순서와 도착을 보장하고 UDP는 보장하지 않는다.
+    </p>
+    <p>
+      크기도 거기서 나온다. TCP 헤더는 최소 <span class="blank">20바이트</span>, UDP 헤더는 <span class="blank">8바이트</span>, IPv4 헤더는 최소 20바이트, IPv6 헤더는 고정 40바이트다.
+      한 번에 실을 수 있는 크기(MTU)를 넘으면 조각으로 나뉘는데, 조각 하나만 잃어도 전체를 잃으므로 처음부터 나뉘지 않게 보낸다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>있는 필드와 없는 필드가 성질을 정한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="TCP 헤더 다섯 줄과 UDP 헤더 두 줄의 필드 배치">
+      <text class="f-strong" x="173.6" y="24" text-anchor="middle">TCP 헤더 · 최소 20바이트</text>
+      <text class="f-strong" x="533.6" y="24" text-anchor="middle">UDP 헤더 · 8바이트</text>
+      <rect class="f-box" x="20" y="40" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="95.8" y="58" text-anchor="middle">출발 포트</text>
+      <rect class="f-box" x="173.6" y="40" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="249.39999999999998" y="58" text-anchor="middle">목적 포트</text>
+      <rect class="f-hit" x="20" y="72" width="305.2" height="28" rx="2"/>
+      <text class="f-strong" x="172.6" y="90" text-anchor="middle">순서 번호</text>
+      <rect class="f-hit" x="20" y="104" width="305.2" height="28" rx="2"/>
+      <text class="f-strong" x="172.6" y="122" text-anchor="middle">확인 응답 번호</text>
+      <rect class="f-box" x="20" y="136" width="36.4" height="28" rx="2"/>
+      <text class="f-text" x="38.2" y="154" text-anchor="middle">길이</text>
+      <rect class="f-box" x="58.4" y="136" width="36.4" height="28" rx="2"/>
+      <text class="f-text" x="76.6" y="154" text-anchor="middle">예약</text>
+      <rect class="f-hit" x="96.8" y="136" width="74.8" height="28" rx="2"/>
+      <text class="f-strong" x="134.2" y="154" text-anchor="middle">플래그</text>
+      <rect class="f-hit" x="173.6" y="136" width="151.6" height="28" rx="2"/>
+      <text class="f-strong" x="249.39999999999998" y="154" text-anchor="middle">윈도 크기</text>
+      <rect class="f-box" x="20" y="168" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="95.8" y="186" text-anchor="middle">체크섬</text>
+      <rect class="f-box" x="173.6" y="168" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="249.39999999999998" y="186" text-anchor="middle">긴급 포인터</text>
+      <rect class="f-pad" x="20" y="200" width="305.2" height="28" rx="2"/>
+      <text class="f-sub" x="172.6" y="218" text-anchor="middle">옵션 (0~40바이트)</text>
+      <rect class="f-box" x="380" y="40" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="455.8" y="58" text-anchor="middle">출발 포트</text>
+      <rect class="f-box" x="533.6" y="40" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="609.4" y="58" text-anchor="middle">목적 포트</text>
+      <rect class="f-box" x="380" y="72" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="455.8" y="90" text-anchor="middle">길이</text>
+      <rect class="f-box" x="533.6" y="72" width="151.6" height="28" rx="2"/>
+      <text class="f-text" x="609.4" y="90" text-anchor="middle">체크섬</text>
+      <text class="f-sub" x="380" y="126" text-anchor="start">순서 번호 · 확인 응답 · 플래그 · 윈도가 없다</text>
+      <text class="f-sub" x="380" y="146" text-anchor="start">그래서 순서·도착·연결·흐름을 보장하지 않는다</text>
+      <text class="f-sub" x="20" y="246" text-anchor="start">← 32비트 →</text>
+      </svg>
+      <figcaption>한 줄이 32비트(4바이트)다. TCP는 옵션 없이 다섯 줄(20바이트), UDP는 두 줄(8바이트)이다. 칠한 칸이 UDP에 없는 필드이고, TCP가 해 주는 일은 거의 다 이 칸에서 나온다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>필드</th><th>TCP</th><th>UDP</th><th>무엇을 하나</th></tr></thead>
+        <tbody>
+          <tr><td>출발·목적 포트</td><td>있다</td><td>있다</td><td>어느 프로세스(소켓)에 줄지 정한다</td></tr>
+          <tr><td>길이</td><td>헤더 길이(data offset)만</td><td><a data-ref="network/tcp-vs-udp">데이터그램</a> 전체 길이</td><td>UDP는 보낸 덩어리 하나가 그대로 경계다</td></tr>
+          <tr><td>체크섬</td><td>있다</td><td>있다(IPv4에서는 생략 가능, IPv6에서는 필수)</td><td>전송 중 깨졌는지 본다</td></tr>
+          <tr><td>순서 번호</td><td>있다</td><td>없다</td><td>바이트 순서를 맞추고 중복을 걸러 낸다</td></tr>
+          <tr><td>확인 응답 번호</td><td>있다</td><td>없다</td><td>어디까지 받았는지 알려 잃은 것을 다시 보내게 한다</td></tr>
+          <tr><td>플래그(SYN·ACK·FIN·RST 등)</td><td>있다</td><td>없다</td><td>연결을 맺고 끊는다(<a href="tcp-connection.html">TCP 연결 관리</a>)</td></tr>
+          <tr><td>윈도 크기</td><td>있다</td><td>없다</td><td>받는 쪽 버퍼 여유를 알린다(<a href="flow-congestion.html">흐름 제어와 혼잡 제어</a>)</td></tr>
+          <tr><td>옵션</td><td>있다(최대 40바이트)</td><td>없다</td><td>MSS, 윈도 배율, SACK, 타임스탬프</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      TCP 옵션이 붙을 수 있어 헤더 길이가 20~60바이트로 바뀐다. 그래서 헤더가 어디서 끝나고 데이터가 어디서 시작하는지를 알려 주는 필드(data offset)가 헤더 안에 따로 있다.
+      헤더의 여러 바이트 값은 모두 빅 엔디안(네트워크 바이트 오더)으로 적힌다(<a href="../computer-architecture/endianness.html">엔디안과 바이트 오더</a>).
+    </p>
+
+    <h3>IP 헤더에는 경로에 필요한 것이 들어 있다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>필드</th><th>IPv4</th><th>IPv6</th></tr></thead>
+        <tbody>
+          <tr><td>헤더 크기</td><td>최소 20바이트, 옵션이 붙으면 최대 60바이트</td><td>고정 40바이트. 추가 기능은 확장 헤더로 이어 붙인다</td></tr>
+          <tr><td>주소</td><td>출발·목적 각 32비트</td><td>출발·목적 각 128비트</td></tr>
+          <tr><td>수명</td><td>TTL. 라우터를 지날 때마다 1씩 줄고 0이면 버린다</td><td>Hop Limit. 같은 역할</td></tr>
+          <tr><td>상위 프로토콜</td><td>Protocol (TCP 6, UDP 17, ICMP 1)</td><td>Next Header</td></tr>
+          <tr><td>헤더 체크섬</td><td>있다. TTL이 바뀌므로 라우터마다 다시 계산한다</td><td>없다. 링크 층과 전송 층이 이미 검사한다</td></tr>
+          <tr><td>단편화</td><td>중간 라우터도 나눌 수 있다(Identification, Flags, Fragment Offset)</td><td>보내는 쪽만 나눈다. 라우터는 나누지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      TTL은 경로가 고리를 이룰 때 패킷이 영원히 도는 것을 막는 장치다. <code>traceroute</code>는 TTL을 1, 2, 3…으로 늘려 보내며 각 라우터가 돌려주는 "시간 초과" 응답으로 경로를 그린다.
+    </p>
+
+    <h3>MTU를 넘으면 조각으로 나뉜다</h3>
+    <p>
+      한 프레임에 실을 수 있는 최대 크기가 <strong>MTU</strong>다. 이더넷은 보통 1500바이트다. IP 패킷이 경로 중 어느 구간의 MTU보다 크면 조각으로 나뉘고, 받는 쪽에서 모두 모여야 다시 합쳐진다.
+      조각 하나만 잃어도 패킷 전체를 버리므로, 조각이 많을수록 잃을 확률이 높아진다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>장치</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>MSS</td><td>TCP는 연결을 맺을 때 한 세그먼트에 실을 데이터 최대 크기를 서로 알린다. 이더넷·IPv4면 1500 − 20(IP) − 20(TCP) = <strong>1460바이트</strong>. 처음부터 조각으로 나뉘지 않게 잘라 보낸다</td></tr>
+          <tr><td>경로 MTU 탐색(PMTUD)</td><td>"나누지 말 것(DF)"을 켜고 보내, 중간에서 너무 크다는 ICMP 응답이 오면 크기를 줄인다</td></tr>
+          <tr><td>UDP</td><td>응용이 보낸 크기가 그대로 내려간다. 크기 제한은 응용이 직접 해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      경로 중간의 방화벽이 ICMP를 막으면 "너무 크다"는 응답이 돌아오지 않는다. 그러면 <strong>연결은 맺어지는데 큰 데이터만 가지 않는</strong> 증상(PMTU 블랙홀)이 생긴다. 작은 로그인 패킷은 가는데 큰 캐릭터 정보에서 멈추는 식이다.
+      VPN·터널은 자기 헤더를 더 붙여 실제 MTU를 줄이므로 이 증상이 특히 잦다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>작은 패킷에서는 헤더가 대부분이다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>전송 방식</th><th class="num">헤더(IP + 전송)</th><th class="num">데이터 20바이트일 때 헤더 비율</th></tr></thead>
+        <tbody>
+          <tr><td>TCP / IPv4</td><td class="num">40바이트</td><td class="num">약 67%</td></tr>
+          <tr><td>UDP / IPv4</td><td class="num">28바이트</td><td class="num">약 58%</td></tr>
+          <tr><td>UDP / IPv6</td><td class="num">48바이트</td><td class="num">약 71%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      여기에 이더넷 헤더와 프레임 사이 간격까지 더하면 선 위에서는 프레임마다 30~40바이트가 더 든다. 이동 패킷처럼 작은 메시지를 하나씩 보내면 대역폭 대부분이 헤더다.
+      그래서 작은 메시지는 한 패킷에 여러 개를 묶어 보낸다. 묶는 시간과 지연의 균형은 <a data-ref="server/small-packet-delay">작은 패킷과 지연</a>에서 다룬다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>UDP 게임 패킷은 1,200바이트 안팎으로 묶는다.</strong> IPv6의 최소 MTU가 1280바이트라, 그 아래로 잡으면 거의 모든 경로에서 조각으로 나뉘지 않는다. <a data-ref="network/http-versions">QUIC</a>도 같은 이유로 1,200바이트를 기준으로 쓴다. 더 큰 데이터는 응용이 쪼개고 번호를 붙여 보낸다.
+      </li>
+      <li>
+        <strong>TCP는 바이트 흐름이지 패킷이 아니다.</strong> 헤더에 메시지 경계를 적는 필드가 없다. 보낸 <code>Send</code> 한 번이 받는 쪽 <code>Receive</code> 한 번과 맞는다는 보장이 없으니, 길이 필드를 앞에 붙여 응용이 경계를 정한다(<a data-ref="server/framing">메시지 경계와 프레이밍</a>).
+      </li>
+      <li>
+        <strong>패킷 캡처로 헤더를 직접 본다.</strong> 연결이 이상하면 Wireshark나 <code>tcpdump</code>로 SYN·RST·재전송·윈도 값을 확인한다. "서버가 RST를 보냈다"인지 "아예 응답이 없다"인지가 원인을 크게 가른다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>필드를 나열하는 것과 무엇을 해 주는지 말하는 것은 다르다.</strong> 순서 번호가 있으니 순서를 맞추고, 확인 응답이 있으니 다시 보낸다. 헤더에서 읽어 내야 하는 것은 이 대응이다.</li>
+      <li><strong>체크섬은 위변조를 막지 못한다.</strong> 우연한 전송 오류를 잡는 16비트 합계라, 내용을 고치고 체크섬을 다시 계산하면 그만이다. 위변조는 암호로 막는다(<a data-ref="security/signature-tls">서명과 TLS</a>).</li>
+      <li><strong>IPv6 헤더가 더 크다고 느린 것은 아니다.</strong> 고정 길이에 체크섬이 없어 라우터가 처리하기는 오히려 단순하다. 작은 패킷에서 비율만 커질 뿐이다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
