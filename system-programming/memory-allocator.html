@@ -98,7 +98,7 @@
         <thead><tr><th>상황</th><th>무엇을 하나</th></tr></thead>
         <tbody>
           <tr><td>스레드가 많고 네이티브 할당이 잦다</td><td>스레드 캐시가 강한 할당자(jemalloc, mimalloc, tcmalloc)로 바꾼다</td></tr>
-          <tr><td>같은 크기 객체를 대량으로 만들고 버린다</td><td>객체 풀을 둔다. .NET은 <code>ObjectPool&lt;T&gt;</code>(Microsoft.Extensions.ObjectPool)</td></tr>
+          <tr><td>같은 크기 객체를 대량으로 만들고 버린다</td><td><a data-ref="data-structure/memory-layout">객체 풀</a>을 둔다. .NET은 <code>ObjectPool&lt;T&gt;</code>(Microsoft.Extensions.ObjectPool)</td></tr>
           <tr><td>버퍼를 자주 빌리고 돌려준다</td><td>.NET은 <code>ArrayPool&lt;T&gt;.Shared</code>, <code>MemoryPool&lt;T&gt;</code></td></tr>
           <tr><td>수명이 한꺼번에 끝난다</td><td>아레나에 담고 통째로 버린다</td></tr>
           <tr><td>지연이 엄격한 경로</td><td>그 경로에서 할당 자체를 없앤다. 값 타입, <code>Span&lt;T&gt;</code>, 미리 잡아 둔 버퍼(<a data-ref="csharp/ref-span">Span과 Memory</a>)</td></tr>

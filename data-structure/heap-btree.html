@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>힙과 B-트리 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="data-structure/heap-btree">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="trees.html">트리와 이진 탐색 트리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>힙</strong>은 <span class="blank">꼭대기 하나만</span> 보장하는 트리다. 가장 작은(또는 큰) 값을 O(1)에 보고, 넣고 빼는 데 O(log n)이 든다. 전체를 정렬해 두지 않으니 만드는 비용이 싸다.
+    </p>
+    <p>
+      <strong>B-트리</strong>는 한 노드에 키를 여러 개 담아 가지를 많이 치는 균형 트리다. 가지가 많으면 높이가 낮아지고, 내려가며 읽는 <span class="blank">블록 수</span>가 줄어든다. 디스크와 캐시처럼 블록 단위로 읽는 곳을 위한 설계다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>힙은 부모와 자식 사이만 지킨다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 300" role="img" aria-label="최대 힙 9, 7, 6, 3, 5, 4를 트리와 배열로 표현. 자식은 2i+1, 2i+2, 부모는 (i-1)/2">
+      <line class="f-line" x1="300" y1="60" x2="200" y2="85"/>
+      <line class="f-line" x1="300" y1="60" x2="400" y2="85"/>
+      <line class="f-line" x1="200" y1="125" x2="140" y2="150"/>
+      <line class="f-line" x1="200" y1="125" x2="260" y2="150"/>
+      <line class="f-line" x1="400" y1="125" x2="360" y2="150"/>
+      <rect class="f-hit" x="280" y="20" width="40" height="40" rx="20"/><text class="f-strong" x="300" y="45" text-anchor="middle">9</text>
+      <rect class="f-hit" x="180" y="85" width="40" height="40" rx="20"/><text class="f-strong" x="200" y="110" text-anchor="middle">7</text>
+      <rect class="f-hit" x="380" y="85" width="40" height="40" rx="20"/><text class="f-strong" x="400" y="110" text-anchor="middle">6</text>
+      <rect class="f-box" x="120" y="150" width="40" height="40" rx="20"/><text class="f-text" x="140" y="175" text-anchor="middle">3</text>
+      <rect class="f-box" x="240" y="150" width="40" height="40" rx="20"/><text class="f-text" x="260" y="175" text-anchor="middle">5</text>
+      <rect class="f-hit" x="340" y="150" width="40" height="40" rx="20"/><text class="f-strong" x="360" y="175" text-anchor="middle">4</text>
+      <text class="f-sub" x="200" y="210" text-anchor="middle">3과 5는 서로 크기를 따지지 않는다</text>
+      <rect class="f-hit" x="120" y="236" width="60" height="34"/><text class="f-strong" x="150" y="258" text-anchor="middle">9</text>
+      <text class="f-sub" x="150" y="288" text-anchor="middle">[0]</text>
+      <rect class="f-hit" x="180" y="236" width="60" height="34"/><text class="f-strong" x="210" y="258" text-anchor="middle">7</text>
+      <text class="f-sub" x="210" y="288" text-anchor="middle">[1]</text>
+      <rect class="f-hit" x="240" y="236" width="60" height="34"/><text class="f-strong" x="270" y="258" text-anchor="middle">6</text>
+      <text class="f-sub" x="270" y="288" text-anchor="middle">[2]</text>
+      <rect class="f-box" x="300" y="236" width="60" height="34"/><text class="f-text" x="330" y="258" text-anchor="middle">3</text>
+      <text class="f-sub" x="330" y="288" text-anchor="middle">[3]</text>
+      <rect class="f-box" x="360" y="236" width="60" height="34"/><text class="f-text" x="390" y="258" text-anchor="middle">5</text>
+      <text class="f-sub" x="390" y="288" text-anchor="middle">[4]</text>
+      <rect class="f-hit" x="420" y="236" width="60" height="34"/><text class="f-strong" x="450" y="258" text-anchor="middle">4</text>
+      <text class="f-sub" x="450" y="288" text-anchor="middle">[5]</text>
+      <text class="f-sub" x="110" y="258" text-anchor="end">배열</text>
+      <rect class="f-cell2" x="500" y="40" width="200" height="104" rx="8"/>
+      <text class="f-text" x="516" y="66">인덱스 i의</text>
+      <text class="f-sub" x="516" y="90">왼쪽 자식 2i + 1</text>
+      <text class="f-sub" x="516" y="110">오른쪽 자식 2i + 2</text>
+      <text class="f-sub" x="516" y="130">부모 (i − 1) / 2</text>
+      </svg>
+      <figcaption>최대 힙. 위아래로 이어진 칸만 크기 관계가 정해지고, 형제끼리(3과 5)는 따지지 않는다. 트리를 한 층씩 왼쪽부터 읽으면 아래 배열이 되고, 인덱스 계산만으로 부모와 자식을 찾는다.</figcaption>
+    </figure>
+    <p>
+      부모가 자식보다 크거나 같으면 최대 힙, 작거나 같으면 최소 힙이다. 형제 사이에는 순서가 없다. 이 느슨함 덕분에 정렬보다 싸게 만들고 유지한다.
+    </p>
+    <p>
+      힙은 <strong>완전 이진 트리</strong>라서 빈칸 없이 배열에 담긴다. 인덱스 <code>i</code>의 자식은 <code>2i+1</code>·<code>2i+2</code>, 부모는 <code>(i-1)/2</code>다. 포인터가 없고 한 배열에 모여 있어 캐시에도 잘 맞는다(<a href="../computer-architecture/locality.html">참조 지역성</a>).
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>연산</th><th>어떻게</th><th class="num">비용</th></tr></thead>
+        <tbody>
+          <tr><td>꼭대기 보기</td><td>배열 0번 칸</td><td class="num">O(1)</td></tr>
+          <tr><td>넣기</td><td>맨 끝에 붙이고 부모보다 크면 바꾸며 올라간다(sift-up)</td><td class="num">O(log n)</td></tr>
+          <tr><td>꼭대기 빼기</td><td>맨 끝 원소를 꼭대기로 옮기고 자식과 비교하며 내려간다(sift-down)</td><td class="num">O(log n)</td></tr>
+          <tr><td>전부 모아 힙 만들기</td><td>배열을 두고 뒤쪽 부모부터 sift-down</td><td class="num">O(n)</td></tr>
+          <tr><td>임의의 값 찾기·지우기</td><td>꼭대기 말고는 위치를 모르니 전부 본다</td><td class="num">O(n)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>전부 모아 만들면 O(n)인 이유</h3>
+    <p>
+      하나씩 넣으면 n번 × O(log n)이라 O(n log n)이다. 그런데 원소를 배열에 다 두고 <strong>아래쪽 부모부터</strong> sift-down하면 O(n)이다.
+    </p>
+    <p>
+      절반은 잎이라 내려갈 일이 없고, 그 위 4분의 1은 한 칸, 그 위 8분의 1은 두 칸만 내려간다. 노드가 많은 아래층일수록 내려갈 거리가 짧다. 높이별로 "노드 수 × 이동 거리"를 더하면 n에 비례하는 값을 넘지 않는다.
+      많이 내려가야 하는 것은 꼭대기 근처 몇 개뿐이다.
+    </p>
+
+    <h3>B-트리는 한 노드에 많이 담아 높이를 낮춘다</h3>
+    <p>
+      디스크는 블록 단위로 읽는다. 4바이트가 필요해도 블록 전체를 가져온다. 그러면 한 블록에 키를 최대한 담는 편이 낫다.
+      이진 트리는 노드마다 키가 하나라 백만 개면 높이가 20 남짓이고, 내려가며 블록 20개를 읽는다. 노드 하나에 키 수백 개를 담으면 높이가 3~4로 줄고 읽는 블록도 그만큼 준다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 270" role="img" aria-label="키 100만 개를 이진 트리에 담으면 높이 약 20, B-트리에 담으면 높이 3에서 4">
+      <text class="f-text" x="150" y="22" text-anchor="middle">이진 트리 · 노드당 키 1개</text>
+      <rect class="f-box" x="100" y="34" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="44" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="54" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="64" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="74" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="84" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="94" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="104" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="114" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="124" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="134" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="144" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="154" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="164" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="174" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="184" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="194" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="204" width="100" height="8" rx="2"/>
+      <rect class="f-box" x="100" y="214" width="100" height="8" rx="2"/>
+      <rect class="f-hit" x="100" y="224" width="100" height="8" rx="2"/>
+      <text class="f-strong" x="150" y="252" text-anchor="middle">높이 약 20 → 블록 20번 읽기</text>
+      <text class="f-text" x="520" y="22" text-anchor="middle">B-트리 · 노드당 키 수백 개</text>
+      <rect class="f-box" x="380" y="40" width="280" height="46" rx="6"/><text class="f-text" x="520" y="61" text-anchor="middle">뿌리</text><text class="f-sub" x="520" y="78" text-anchor="middle">키 수백 개</text>
+      <line class="f-line" x1="520" y1="86" x2="520" y2="102"/>
+      <rect class="f-box" x="380" y="102" width="280" height="46" rx="6"/><text class="f-text" x="520" y="123" text-anchor="middle">중간 노드</text><text class="f-sub" x="520" y="140" text-anchor="middle">키 수백 개씩</text>
+      <line class="f-line" x1="520" y1="148" x2="520" y2="164"/>
+      <rect class="f-hit" x="380" y="164" width="280" height="46" rx="6"/><text class="f-strong" x="520" y="185" text-anchor="middle">잎</text><text class="f-sub" x="520" y="202" text-anchor="middle">데이터가 있는 곳</text>
+      <text class="f-strong" x="520" y="252" text-anchor="middle">높이 3~4 → 블록 3~4번 읽기</text>
+      </svg>
+      <figcaption>같은 키 수라도 가지가 많으면 높이가 낮다. 비용은 비교 횟수가 아니라 내려가며 읽는 노드(블록) 수, 곧 높이로 정해진다.</figcaption>
+    </figure>
+    <p>
+      B-트리는 모든 잎이 같은 깊이에 있고, 뿌리를 뺀 노드는 최소 절반 이상 차 있어야 한다. 넣다가 노드가 넘치면 둘로 쪼개 가운데 키를 부모로 올리고, 빼다가 너무 비면 이웃과 합친다.
+      그래서 어느 키를 찾든 뿌리에서 잎까지의 거리가 같다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>B-트리</th><th>B+트리</th></tr></thead>
+        <tbody>
+          <tr><td>데이터 위치</td><td>내부 노드에도 있다</td><td>잎에만 있다</td></tr>
+          <tr><td>내부 노드</td><td>키와 데이터</td><td>키만 담아 한 노드에 더 많이 들어간다</td></tr>
+          <tr><td>잎끼리</td><td>이어져 있지 않다</td><td>순서대로 이어져 있다</td></tr>
+          <tr><td>범위 조회</td><td>트리를 오르내린다</td><td>시작점만 찾고 잎을 차례로 읽는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      데이터베이스 인덱스가 B+트리를 쓰는 이유가 이 표에 있다. 범위 조회(<code>BETWEEN</code>, 정렬된 페이지 넘기기)가 흔하고, 내부 노드가 키만 담으니 높이가 더 낮아진다. 인덱스로서의 자세한 동작은 <a data-ref="database/index-basics">인덱스 기초</a>에서 다룬다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>필요한 것</th><th>고를 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>가장 급한 것 하나를 계속 꺼낸다</td><td>힙(우선순위 큐)</td><td>꼭대기만 맞으면 되므로 정렬보다 싸다</td></tr>
+          <tr><td>n개 중 상위 k개</td><td>크기 k인 최소 힙</td><td>O(n log k). 전체 정렬 O(n log n)보다 싸다</td></tr>
+          <tr><td>정렬된 순서로 순회, 범위 조회, 임의 삭제</td><td>균형 트리(<code>SortedSet</code>, <code>SortedDictionary</code>)</td><td>힙은 꼭대기 외에는 순서를 모른다</td></tr>
+          <tr><td>블록 단위 저장소 위의 정렬된 색인</td><td>B-트리 계열</td><td>읽는 블록 수가 높이로 정해진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      C#에서는 .NET 6부터 <code>PriorityQueue&lt;TElement, TPriority&gt;</code>가 들어 있다. 배열 기반 최소 힙이다. 두 가지를 알아 둔다.
+      <strong>우선순위를 나중에 바꾸는 연산이 없고</strong>, 우선순위가 같은 원소끼리는 넣은 순서가 지켜지지 않는다. 바꿔야 하면 새 항목을 다시 넣고 꺼낼 때 낡은 항목을 버리거나(lazy deletion), <code>SortedSet</code>을 쓴다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>타이머와 예약 작업은 힙으로 돈다.</strong> 버프 만료, 리스폰, 지연 보상처럼 "언제 실행할지"가 정해진 작업은 실행 시각을 우선순위로 힙에 넣고, 매 틱 꼭대기가 현재 시각 이하인 동안 꺼내 실행한다. 틱마다 전체 목록을 훑는 것보다 훨씬 싸다.
+        작업이 아주 많고 시간 해상도가 틱 단위로 거칠면, 시각별 칸에 작업을 나눠 담는 타이머 휠이 넣기·빼기를 O(1)로 만들어 더 싸다.
+      </li>
+      <li>
+        <strong>취소가 잦으면 지우지 말고 표시한다.</strong> 힙 중간의 항목을 찾아 지우는 것은 O(n)이다. 취소된 타이머는 플래그만 세워 두고 꺼낼 때 건너뛴다. 취소가 아주 많아 힙이 낡은 항목으로 차면 가끔 한 번 다시 만든다(O(n)).
+      </li>
+      <li>
+        <strong>랭킹 상위 N명</strong>은 크기 N인 최소 힙으로 뽑는다. 전체 랭킹을 정렬된 상태로 계속 유지해야 하면 균형 트리나 DB·Redis의 정렬된 집합(sorted set)으로 넘긴다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>힙은 정렬된 배열이 아니다.</strong> 꼭대기만 보장한다. 배열을 앞에서부터 읽어도 정렬된 순서가 아니고, 특정 값을 찾거나 지우는 데 O(n)이 든다.</li>
+      <li><strong>B-트리가 이진 트리보다 언제나 나은 것은 아니다.</strong> 노드 안에서 키를 찾는 비용이 들고, 넣을 때 노드 안의 키를 밀어야 한다. 블록 단위로 읽는 비용이 클 때 이득이다. 다만 메모리 안에서도 노드 하나를 <a data-ref="computer-architecture/memory-hierarchy">캐시 라인</a> 몇 개 크기로 잡으면 포인터를 덜 따라가서 이진 트리보다 빠른 경우가 있다.</li>
+      <li><strong>힙 정렬은 이론상 좋지만 실무에서는 덜 쓴다.</strong> O(n log n)에 추가 메모리가 없지만, 멀리 떨어진 칸을 오가 캐시에 불리하고 안정 정렬이 아니다(<a data-ref="algorithm/sorting">정렬</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

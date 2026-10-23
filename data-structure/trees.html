@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>트리와 이진 탐색 트리 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="data-structure/trees">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="hashing.html">해시 테이블</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>이진 탐색 트리(BST)</strong>는 모든 노드에서 왼쪽 부분 트리는 자기보다 작고 오른쪽은 큰 트리다. 비교할 때마다 절반을 버리므로 높이가 낮으면 <span class="blank">O(log n)</span>으로 찾는다.
+    </p>
+    <p>
+      문제는 높이가 넣는 순서에 달렸다는 것이다. 정렬된 데이터를 차례로 넣으면 한쪽으로만 자라 <strong>연결 리스트가 되고 O(n)</strong>이다.
+      그래서 실무에서 쓰는 트리는 넣고 지울 때마다 모양을 다시 잡는 <span class="blank">균형 트리</span>이고, 균형을 얼마나 엄격하게 지키느냐가 트리 종류를 나눈다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>같은 값도 넣는 순서에 따라 높이가 달라진다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 262" role="img" aria-label="균형 잡힌 이진 탐색 트리는 높이 3이고, 정렬된 순서로 넣은 트리는 한쪽으로 뻗어 높이 7이다">
+      <line class="f-line" x1="190" y1="46" x2="110" y2="116"/>
+      <line class="f-line" x1="190" y1="46" x2="270" y2="116"/>
+      <line class="f-line" x1="110" y1="116" x2="70" y2="186"/>
+      <line class="f-line" x1="110" y1="116" x2="150" y2="186"/>
+      <line class="f-line" x1="270" y1="116" x2="230" y2="186"/>
+      <line class="f-line" x1="270" y1="116" x2="310" y2="186"/>
+      <circle class="f-hit" cx="70" cy="186" r="18"/>
+      <text class="f-strong" x="70" y="191" text-anchor="middle">1</text>
+      <circle class="f-hit" cx="110" cy="116" r="18"/>
+      <text class="f-strong" x="110" y="121" text-anchor="middle">2</text>
+      <circle class="f-hit" cx="150" cy="186" r="18"/>
+      <text class="f-strong" x="150" y="191" text-anchor="middle">3</text>
+      <circle class="f-hit" cx="190" cy="46" r="18"/>
+      <text class="f-strong" x="190" y="51" text-anchor="middle">4</text>
+      <circle class="f-hit" cx="230" cy="186" r="18"/>
+      <text class="f-strong" x="230" y="191" text-anchor="middle">5</text>
+      <circle class="f-hit" cx="270" cy="116" r="18"/>
+      <text class="f-strong" x="270" y="121" text-anchor="middle">6</text>
+      <circle class="f-hit" cx="310" cy="186" r="18"/>
+      <text class="f-strong" x="310" y="191" text-anchor="middle">7</text>
+      <text class="f-text" x="190" y="238" text-anchor="middle">넣은 순서 4 2 6 1 3 5 7 · 높이 3 · O(log n)</text>
+      <line class="f-line" x1="430" y1="30" x2="474" y2="60"/>
+      <line class="f-line" x1="474" y1="60" x2="518" y2="90"/>
+      <line class="f-line" x1="518" y1="90" x2="562" y2="120"/>
+      <line class="f-line" x1="562" y1="120" x2="606" y2="150"/>
+      <line class="f-line" x1="606" y1="150" x2="650" y2="180"/>
+      <line class="f-line" x1="650" y1="180" x2="694" y2="210"/>
+      <circle class="f-hit" cx="430" cy="30" r="16"/>
+      <text class="f-strong" x="430" y="35" text-anchor="middle">1</text>
+      <circle class="f-box" cx="474" cy="60" r="16"/>
+      <text class="f-text" x="474" y="65" text-anchor="middle">2</text>
+      <circle class="f-box" cx="518" cy="90" r="16"/>
+      <text class="f-text" x="518" y="95" text-anchor="middle">3</text>
+      <circle class="f-box" cx="562" cy="120" r="16"/>
+      <text class="f-text" x="562" y="125" text-anchor="middle">4</text>
+      <circle class="f-box" cx="606" cy="150" r="16"/>
+      <text class="f-text" x="606" y="155" text-anchor="middle">5</text>
+      <circle class="f-box" cx="650" cy="180" r="16"/>
+      <text class="f-text" x="650" y="185" text-anchor="middle">6</text>
+      <circle class="f-box" cx="694" cy="210" r="16"/>
+      <text class="f-text" x="694" y="215" text-anchor="middle">7</text>
+      <text class="f-text" x="560" y="238" text-anchor="middle">넣은 순서 1 2 3 4 5 6 7 · 높이 7 · O(n)</text>
+      <text class="f-sub" x="470" y="150" text-anchor="start">연결 리스트와 같다</text>
+      </svg>
+      <figcaption>같은 값 일곱 개다. 왼쪽은 4, 2, 6, 1, 3, 5, 7 순서로 넣어 높이가 3이고, 오른쪽은 1부터 7까지 정렬된 순서로 넣어 한쪽으로만 뻗었다. 7을 찾으려면 왼쪽은 세 번, 오른쪽은 일곱 번 비교한다.</figcaption>
+    </figure>
+
+    <h3>포화·완전·균형은 서로 다른 조건이다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>용어</th><th>조건</th><th>쓰임</th></tr></thead>
+        <tbody>
+          <tr><td>포화 이진 트리</td><td>모든 레벨이 꽉 찼다</td><td>노드 수가 2<sup>h</sup> − 1로 정해진다</td></tr>
+          <tr><td>완전 이진 트리</td><td>마지막 레벨을 뺀 모든 레벨이 꽉 찼고, 마지막 레벨은 왼쪽부터 채워졌다</td><td>배열에 빈칸 없이 담을 수 있다. 부모·자식 위치가 인덱스 계산으로 나와 포인터가 필요 없다(<a href="heap-btree.html">힙</a>)</td></tr>
+          <tr><td>균형 이진 트리</td><td>모든 노드에서 좌우 높이 차가 정해진 범위 안이다</td><td>높이가 O(log n)으로 유지된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>순회마다 쓰임이 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>순회</th><th>순서</th><th>쓰임</th></tr></thead>
+        <tbody>
+          <tr><td>전위</td><td>부모 → 왼쪽 → 오른쪽</td><td>트리 복사, 구조를 그대로 저장·직렬화</td></tr>
+          <tr><td>중위</td><td>왼쪽 → 부모 → 오른쪽</td><td>BST면 정렬된 순서로 나온다</td></tr>
+          <tr><td>후위</td><td>왼쪽 → 오른쪽 → 부모</td><td>자식부터 정리해야 하는 일(삭제, 하위 크기 합산)</td></tr>
+          <tr><td>레벨</td><td>위에서 아래로, 같은 레벨은 왼쪽부터</td><td>가까운 것부터 볼 때. 큐로 구현한다(<a href="stack-queue.html">스택과 큐</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>삭제는 자식 수에 따라 세 경우로 나뉜다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>지울 노드의 자식</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>없다</td><td>그냥 떼어 낸다</td></tr>
+          <tr><td>하나</td><td>그 자식을 지울 노드 자리에 올린다</td></tr>
+          <tr><td>둘</td><td>중위 순서의 바로 뒤 값(오른쪽 부분 트리의 최솟값)이나 바로 앞 값(왼쪽의 최댓값)을 가져와 값을 바꾸고, 가져온 쪽 노드를 지운다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>자식이 둘인 경우에 가져오는 노드는 반드시 자식이 하나 이하다. 오른쪽 부분 트리의 최솟값은 왼쪽 자식이 있을 수 없기 때문이다. 그래서 세 번째 경우는 앞의 두 경우로 떨어진다.</p>
+
+    <h3>AVL은 조회가 빠르고, 레드-블랙은 갱신이 싸다</h3>
+    <p>
+      둘 다 균형이 깨지면 <strong>회전</strong>으로 되돌린다. 회전은 부분 트리의 뿌리를 바꿔 모양만 고치는 연산이라, "왼쪽은 작고 오른쪽은 크다"는 성질은 그대로 남는다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>트리</th><th>균형 조건</th><th>회전 횟수</th><th>맞는 자리</th></tr></thead>
+        <tbody>
+          <tr><td>AVL</td><td>모든 노드에서 좌우 높이 차가 1 이하. 엄격하다</td><td>삽입은 한 번(단일 또는 이중 회전)으로 끝나지만, 삭제는 뿌리까지 올라가며 여러 번 할 수 있다</td><td>조회가 압도적으로 많을 때</td></tr>
+          <tr><td>레드-블랙</td><td>색 규칙으로 "가장 긴 경로가 가장 짧은 경로의 두 배 이하". 느슨하다</td><td>삽입·삭제 모두 상수 번(최대 2~3번). 색을 바꾸는 일은 위로 퍼질 수 있다</td><td>삽입·삭제가 섞여 잦을 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      AVL이 더 납작해서 조회가 조금 빠르고, 레드-블랙은 갱신 때 손대는 범위가 작다. 범용 라이브러리는 대개 갱신 비용이 예측 가능한 레드-블랙을 고른다. C++의 <code>std::map</code>, Java의 <code>TreeMap</code>, .NET의 <code>SortedDictionary</code>·<code>SortedSet</code>이 레드-블랙 트리다.
+    </p>
+    <p>
+      같은 문제를 이진이 아니라 한 노드에 키를 수백 개씩 담는 다분기로 푼 것이 <a href="heap-btree.html">B-트리</a>다. 균형 이진 트리가 메모리 안에서 비교 횟수를 줄인다면, B-트리는 디스크에서 읽는 블록 수를 줄인다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>해시 대신 정렬 트리를 고르는 자리</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>필요한 것</th><th>해시 테이블</th><th>균형 트리</th></tr></thead>
+        <tbody>
+          <tr><td>키로 정확히 찾기</td><td>평균 O(1)</td><td>O(log n)</td></tr>
+          <tr><td>정렬된 순서로 순회</td><td>안 된다. 전부 꺼내 정렬해야 한다</td><td>중위 순회로 바로 나온다</td></tr>
+          <tr><td>범위 질의(10 이상 20 미만)</td><td>안 된다</td><td>O(log n + 결과 수)</td></tr>
+          <tr><td>최솟값·최댓값, 바로 앞·뒤 값</td><td>안 된다</td><td>O(log n)</td></tr>
+          <tr><td>최악 시간 보장</td><td>O(n)이 될 수 있다</td><td>O(log n)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>C#에서는 셋 중에 고른다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>타입</th><th>안쪽 구조</th><th>맞는 자리</th></tr></thead>
+        <tbody>
+          <tr><td><code>SortedDictionary&lt;K,V&gt;</code>, <code>SortedSet&lt;T&gt;</code></td><td>레드-블랙 트리</td><td>넣고 빼기가 잦으면서 정렬 순서가 필요할 때</td></tr>
+          <tr><td><code>SortedList&lt;K,V&gt;</code></td><td>정렬된 배열 두 개 + 이진 탐색</td><td>한 번 채우고 주로 읽을 때. 메모리가 작고 캐시에 좋지만 중간 삽입은 O(n)</td></tr>
+          <tr><td>정렬된 배열 + <code>Array.BinarySearch</code></td><td>배열</td><td>거의 바뀌지 않는 기획 테이블 같은 데이터</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      트리 노드는 원소마다 따로 할당되어 메모리에 흩어진다. 원소 수가 크지 않고 갱신이 드물면 배열 쪽이 <a href="array-list.html">캐시 지역성</a> 덕분에 더 빠를 때가 많다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>순위표는 정렬 구조가 필요한 대표 자리다.</strong> "내 앞뒤 10명", "점수 구간별 인원"은 해시로 할 수 없다. 서버 메모리에 두면 <code>SortedSet</code>에 (점수, ID) 쌍을 넣는 식으로 만들고, 서버가 여러 대면 Redis의 정렬 집합(sorted set)을 쓴다. Redis는 균형 트리 대신 스킵 리스트로 같은 연산을 O(log n)에 한다.
+      </li>
+      <li>
+        <strong>시간 순서로 처리할 일은 정렬 트리나 힙에 둔다.</strong> 버프 만료, 예약된 이벤트처럼 "가장 이른 것부터"만 필요하면 <a href="heap-btree.html">힙</a>이 더 싸고, 중간 항목을 찾아 취소해야 하면 정렬 트리가 맞다.
+      </li>
+      <li>
+        <strong>재귀로 순회하지 않는다.</strong> 균형이 깨진 트리는 깊이가 원소 수만큼 될 수 있고, 재귀 순회는 그 깊이만큼 <a href="../system-programming/call-stack.html">호출 스택</a>을 쌓는다. 직접 만든 트리를 순회할 때는 명시적 스택으로 반복문을 쓴다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>균형을 잡지 않은 BST는 O(log n)이 아니다.</strong> 입력 순서에 따라 O(n)이 된다. 정렬된 데이터를 그대로 넣는 것이 최악이고, ID처럼 증가하는 값이 바로 그 입력이다.</li>
+      <li><strong>정렬 트리의 키도 넣은 뒤에 바꾸면 안 된다.</strong> 넣을 때의 비교 결과로 자리가 정해졌으므로, 점수를 키로 쓴다면 점수가 바뀔 때 빼고 다시 넣는다.</li>
+      <li><strong>비교 함수는 일관돼야 한다.</strong> a &lt; b이고 b &lt; c면 a &lt; c여야 하고, 같은 두 값은 늘 같은 결과를 내야 한다. 점수만 비교해 동점을 "같다"로 처리하면 <code>SortedSet</code>은 동점인 두 번째 원소를 중복으로 보고 넣지 않는다. 동점이면 ID로 한 번 더 비교한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

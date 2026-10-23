@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>스택과 큐 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="data-structure/stack-queue">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="array-list.html">배열과 연결 리스트</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>스택</strong>은 마지막에 넣은 것을 먼저 꺼내고(LIFO), <strong>큐</strong>는 먼저 넣은 것을 먼저 꺼낸다(FIFO).
+      스택은 배열 끝에서만 넣고 빼므로 인덱스 하나면 된다. 큐는 앞에서 빼고 뒤에서 넣으므로, 배열로 만들면 앞이 계속 비어 나간다. 그래서 <span class="blank">원형으로 감아</span> 쓴다.
+    </p>
+    <p>
+      원형으로 감으면 남는 문제는 하나다. <strong>가득 찬 상태와 빈 상태가 같은 모양</strong>이 된다. 이것만 따로 풀면 배열 하나로 할당 없이 도는 큐가 된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>배열을 원형으로 감는다</h3>
+    <p>
+      앞 인덱스(<code>head</code>)와 뒤 인덱스(<code>tail</code>)를 두고, 끝에 닿으면 처음으로 돌아간다. 꺼내면 <code>head</code>가, 넣으면 <code>tail</code>이 한 칸씩 앞으로 간다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 720 270" role="img" aria-label="원형 버퍼에서 빈 상태와 가득 찬 상태가 같은 인덱스 모양이 되고, 한 칸을 비워 두면 구분된다">
+      <text class="f-text" x="186" y="56" text-anchor="end">빈 상태</text>
+      <rect class="f-pad" x="202" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="229" y="56" text-anchor="middle">0</text>
+      <rect class="f-pad" x="260" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="287" y="56" text-anchor="middle">1</text>
+      <rect class="f-pad" x="318" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="345" y="56" text-anchor="middle">2</text>
+      <rect class="f-pad" x="376" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="403" y="56" text-anchor="middle">3</text>
+      <rect class="f-pad" x="434" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="461" y="56" text-anchor="middle">4</text>
+      <rect class="f-pad" x="492" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="519" y="56" text-anchor="middle">5</text>
+      <rect class="f-pad" x="550" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="577" y="56" text-anchor="middle">6</text>
+      <rect class="f-pad" x="608" y="34" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="635" y="56" text-anchor="middle">7</text>
+      <text class="f-strong" x="403" y="28" text-anchor="middle">head</text>
+      <text class="f-strong" x="403" y="83" text-anchor="middle">tail</text>
+      <text class="f-sub" x="664" y="83" text-anchor="end">head == tail</text>
+      <text class="f-text" x="186" y="138" text-anchor="end">가득 찬 상태</text>
+      <rect class="f-hit" x="202" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="229" y="138" text-anchor="middle">0</text>
+      <rect class="f-hit" x="260" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="287" y="138" text-anchor="middle">1</text>
+      <rect class="f-hit" x="318" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="345" y="138" text-anchor="middle">2</text>
+      <rect class="f-hit" x="376" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="403" y="138" text-anchor="middle">3</text>
+      <rect class="f-hit" x="434" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="461" y="138" text-anchor="middle">4</text>
+      <rect class="f-hit" x="492" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="519" y="138" text-anchor="middle">5</text>
+      <rect class="f-hit" x="550" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="577" y="138" text-anchor="middle">6</text>
+      <rect class="f-hit" x="608" y="116" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="635" y="138" text-anchor="middle">7</text>
+      <text class="f-strong" x="403" y="110" text-anchor="middle">head</text>
+      <text class="f-strong" x="403" y="165" text-anchor="middle">tail</text>
+      <text class="f-sub" x="664" y="165" text-anchor="end">head == tail (빈 상태와 같다)</text>
+      <text class="f-text" x="186" y="220" text-anchor="end">한 칸 비움 규칙</text>
+      <rect class="f-hit" x="202" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="229" y="220" text-anchor="middle">0</text>
+      <rect class="f-hit" x="260" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="287" y="220" text-anchor="middle">1</text>
+      <rect class="f-pad" x="318" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="345" y="220" text-anchor="middle">2</text>
+      <rect class="f-hit" x="376" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="403" y="220" text-anchor="middle">3</text>
+      <rect class="f-hit" x="434" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="461" y="220" text-anchor="middle">4</text>
+      <rect class="f-hit" x="492" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="519" y="220" text-anchor="middle">5</text>
+      <rect class="f-hit" x="550" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="577" y="220" text-anchor="middle">6</text>
+      <rect class="f-hit" x="608" y="198" width="54" height="34" rx="4"/>
+      <text class="f-sub" x="635" y="220" text-anchor="middle">7</text>
+      <text class="f-strong" x="403" y="192" text-anchor="middle">head</text>
+      <text class="f-strong" x="345" y="247" text-anchor="middle">tail</text>
+      <text class="f-sub" x="664" y="247" text-anchor="end">(tail + 1) % 8 == head → 가득</text>
+      </svg>
+      <figcaption>칸 8개짜리 원형 버퍼. 빈 상태(위)와 가득 찬 상태(가운데)는 둘 다 <code>head == tail</code>이라 인덱스만으로는 구분이 안 된다. 한 칸을 비워 두는 규칙(아래)을 쓰면 가득 찬 상태가 <code>(tail + 1) % n == head</code>로 따로 드러난다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분법</th><th>어떻게</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>한 칸을 비워 둔다</td><td><code>tail</code> 바로 다음이 <code>head</code>면 가득 찬 것으로 본다</td><td>용량 하나를 못 쓴다</td></tr>
+          <tr><td>개수를 센다</td><td><code>count</code> 변수를 따로 둔다</td><td>넣고 뺄 때마다 갱신해야 한다</td></tr>
+          <tr><td>인덱스를 감지 않고 계속 늘린다</td><td>칸 번호는 <code>index % n</code>으로 구하고, 개수는 <code>tail - head</code></td><td>정수가 넘치는 경우를 다뤄야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      용량을 2의 거듭제곱으로 잡으면 나머지 연산(<code>% n</code>)을 비트 연산(<code>&amp; (n - 1)</code>)으로 바꿀 수 있다. 용량이 실행 중에 정해지는 값이면 나머지 연산은 덧셈보다 수십 배 비싼 나눗셈 명령이 되므로, 아주 자주 도는 큐에서는 차이가 난다. 컴파일 때 정해진 상수로 나누는 경우는 컴파일러가 알아서 곱셈과 시프트로 바꾼다.
+    </p>
+
+    <h3>스택 두 개로 큐를 만들 수 있다</h3>
+    <p>
+      넣을 때는 스택 A에 쌓고, 꺼낼 때 스택 B가 비어 있으면 A의 원소를 전부 B로 옮긴 뒤 B에서 꺼낸다. 옮기면서 순서가 뒤집혀 먼저 넣은 것이 B의 맨 위에 온다.
+      원소 하나는 A에 한 번, B에 한 번만 들어가므로 꺼내기도 <strong>상환 O(1)</strong>이다. 면접에 자주 나오는 문제이고, 함수형 언어의 불변 큐가 이렇게 만들어진다.
+    </p>
+
+    <h3>우선순위 큐는 큐가 아니라 힙이다</h3>
+    <p>
+      우선순위가 높은 것부터 꺼내는 <strong>우선순위 큐</strong>는 이름만 큐다. 정렬된 목록으로 만들면 꺼내기는 O(1)이지만 넣을 자리를 찾느라 넣기가 O(n)이 된다.
+      힙으로 만들면 넣기와 꺼내기가 둘 다 O(log n)이고, 넣기가 잦은 대부분의 쓰임에서는 힙이 낫다(<a href="heap-btree.html">힙과 B-트리</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>C#에서 고를 것</th><th>비고</th></tr></thead>
+        <tbody>
+          <tr><td>한 스레드에서 쓰는 스택·큐</td><td><code>Stack&lt;T&gt;</code>, <code>Queue&lt;T&gt;</code></td><td>둘 다 배열 기반. <code>Queue&lt;T&gt;</code>는 원형 배열이고 차면 두 배로 다시 잡는다</td></tr>
+          <tr><td>여러 스레드가 넣고 뺀다</td><td><code>ConcurrentQueue&lt;T&gt;</code></td><td>락 없이 동작하는 검증된 구현. 직접 만들지 않는다</td></tr>
+          <tr><td>생산자-소비자, 비동기로 기다려야 한다</td><td><code>Channel&lt;T&gt;</code></td><td>소비자가 <code>await ReadAsync()</code>로 기다린다. 빈 큐를 도는 폴링이 없다</td></tr>
+          <tr><td>크기에 상한을 둬야 한다</td><td><code>Channel.CreateBounded&lt;T&gt;(n)</code></td><td>가득 차면 기다리게 하거나(<code>Wait</code>), 오래된 것·새것을 버리게(<code>DropOldest</code> 등) 고른다</td></tr>
+          <tr><td>우선순위가 필요하다</td><td><code>PriorityQueue&lt;TElement, TPriority&gt;</code> (.NET 6+)</td><td>힙 기반. 같은 우선순위끼리 넣은 순서를 지키지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      상한이 있는 큐는 원형 배열 하나로 할당 없이 돈다. 상한이 없으면 차는 순간 배열을 다시 잡아 옮기는데, 그때 지연이 튀고 메모리도 끝없이 늘 수 있다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>스레드 사이의 작업 전달은 큐다.</strong> 네트워크 스레드가 받은 패킷을 로직 스레드에 넘기는 일, 로직 스레드가 DB 저장 요청을 저장 스레드에 넘기는 일이 모두 생산자-소비자 큐다. <code>Channel&lt;T&gt;</code>이 이 용도에 맞게 만들어져 있다.
+      </li>
+      <li>
+        <strong>큐에는 반드시 상한을 둔다.</strong> 소비가 생산을 못 따라가는 순간(DB가 느려지거나 접속이 몰릴 때) 상한 없는 큐는 메모리를 끝없이 먹다가 서버를 죽인다. 상한을 두고, 가득 차면 생산자를 늦추거나 요청을 거절한다(<a data-ref="server/backpressure">백프레셔</a>). 큐 길이는 운영 지표로 남긴다.
+      </li>
+      <li>
+        <strong>세션 송신 큐도 상한을 둔다.</strong> 느린 클라이언트 하나의 송신 큐가 끝없이 쌓이면 서버 메모리가 그 한 명에게 묶인다. 일정 길이를 넘으면 그 연결을 끊는 편이 서버 전체에 낫다.
+      </li>
+      <li>
+        <strong>타이머·스킬 쿨다운처럼 "가장 먼저 끝나는 것"을 꺼내는 곳은 우선순위 큐다.</strong> 매 틱 전체 목록을 훑어 끝난 것을 찾는 대신, 끝나는 시각을 우선순위로 넣어 두고 맨 위만 확인한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>우선순위 큐는 정렬된 큐가 아니다.</strong> 힙은 맨 위가 가장 작다(또는 크다)는 것만 보장한다. 안쪽을 순서대로 훑어도 정렬돼 있지 않다.</li>
+      <li><strong>같은 우선순위끼리는 넣은 순서가 지켜지지 않는다.</strong> .NET <code>PriorityQueue</code>도 보장하지 않는다. 순서가 중요하면 우선순위에 일련번호를 덧붙여 <code>(우선순위, 번호)</code>로 비교한다.</li>
+      <li><strong>멀티스레드 큐를 직접 만들지 않는다.</strong> 원형 버퍼에 락만 씌워도 동작은 하지만, 락 없이 빠르게 만들려는 순간 <a href="../computer-architecture/atomics-memory-order.html">메모리 순서</a>와 <a href="../computer-architecture/cache-coherence.html">false sharing</a>을 모두 맞춰야 한다. 검증된 구현을 쓴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

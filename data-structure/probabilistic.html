@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>트라이와 블룸 필터 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="data-structure/probabilistic">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="hashing.html">해시 테이블</a> · <a href="trees.html">트리와 이진 탐색 트리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      해시 테이블이 못 하는 두 가지를 하나씩 맡는다. <strong>트라이</strong>는 문자열을 글자 단위로 나눠 접두사를 공유하며 담아서, <span class="blank">접두사로 찾기</span>를 할 수 있다.
+      <strong>블룸 필터</strong>는 원소를 저장하지 않고 비트만 켜 두어 아주 작은 공간으로 "확실히 없다"를 답한다. 대신 <span class="blank">없는 것을 있다고 할 수 있다</span>.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>트라이는 글자마다 한 칸씩 내려간다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 256" role="img" aria-label="car, card, cat, catch를 담은 트라이. c와 a를 공유하고 r 쪽과 t 쪽으로 갈라진다">
+      <rect class="f-pad" x="248" y="30" width="266" height="196" rx="10"/>
+      <text class="f-sub" x="381" y="246" text-anchor="middle">ca로 시작하는 단어 = 이 상자 안 전부</text>
+      <line class="f-line" x1="50" y1="118" x2="130" y2="118"/>
+      <line class="f-line" x1="130" y1="118" x2="210" y2="118"/>
+      <line class="f-line" x1="210" y1="118" x2="300" y2="66"/>
+      <line class="f-line" x1="300" y1="66" x2="390" y2="66"/>
+      <line class="f-line" x1="210" y1="118" x2="300" y2="170"/>
+      <line class="f-line" x1="300" y1="170" x2="390" y2="170"/>
+      <line class="f-line" x1="390" y1="170" x2="480" y2="170"/>
+      <circle class="f-box" cx="50" cy="118" r="17"/>
+      <circle class="f-box" cx="130" cy="118" r="17"/>
+      <text class="f-text" x="130" y="123" text-anchor="middle">c</text>
+      <circle class="f-box" cx="210" cy="118" r="17"/>
+      <text class="f-text" x="210" y="123" text-anchor="middle">a</text>
+      <circle class="f-line" cx="300" cy="66" r="22"/>
+      <circle class="f-hit" cx="300" cy="66" r="17"/>
+      <text class="f-strong" x="300" y="71" text-anchor="middle">r</text>
+      <text class="f-sub" x="300" y="108" text-anchor="middle">car</text>
+      <circle class="f-line" cx="390" cy="66" r="22"/>
+      <circle class="f-hit" cx="390" cy="66" r="17"/>
+      <text class="f-strong" x="390" y="71" text-anchor="middle">d</text>
+      <text class="f-sub" x="390" y="108" text-anchor="middle">card</text>
+      <circle class="f-line" cx="300" cy="170" r="22"/>
+      <circle class="f-hit" cx="300" cy="170" r="17"/>
+      <text class="f-strong" x="300" y="175" text-anchor="middle">t</text>
+      <text class="f-sub" x="300" y="212" text-anchor="middle">cat</text>
+      <circle class="f-box" cx="390" cy="170" r="17"/>
+      <text class="f-text" x="390" y="175" text-anchor="middle">c</text>
+      <circle class="f-line" cx="480" cy="170" r="22"/>
+      <circle class="f-hit" cx="480" cy="170" r="17"/>
+      <text class="f-strong" x="480" y="175" text-anchor="middle">h</text>
+      <text class="f-sub" x="480" y="212" text-anchor="middle">catch</text>
+      <text class="f-sub" x="50" y="152" text-anchor="middle">뿌리</text>
+      <text class="f-sub" x="600" y="112" text-anchor="middle">c → a 는 한 번만 저장</text>
+      <text class="f-sub" x="600" y="132" text-anchor="middle">네 단어가 함께 쓴다</text>
+      </svg>
+      <figcaption>car, card, cat, catch 네 단어를 담았다. "ca"는 한 번만 저장되고, 굵은 테두리가 단어가 끝나는 자리다. "ca"로 시작하는 단어는 그 노드 아래만 훑으면 모두 나온다.</figcaption>
+    </figure>
+    <p>
+      찾는 비용은 담긴 단어 수가 아니라 <strong>찾는 문자열의 길이</strong>를 따른다. 해시 테이블도 해시를 계산하려면 문자열을 끝까지 읽으므로 찾기만 보면 둘은 비슷하다.
+      차이는 해시가 비슷한 키를 일부러 흩어 놓는다는 데 있다. 앞부분이 같은 키끼리 이웃하지 않으니, 해시 테이블로 접두사 검색을 하려면 전부 훑어야 한다.
+    </p>
+    <p>
+      그래서 트라이는 거의 접두사 때문에 고른다. 자동완성, 사전 검색, IP 라우팅의 최장 접두사 일치가 여기 해당한다. 노드마다 자식 목록을 들고 있어 메모리가 크므로, 자식이 하나뿐인 경로를 한 노드로 합치는 변형(radix tree)을 쓴다.
+    </p>
+
+    <h3>블룸 필터는 "없다"만 확실히 말한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 226" role="img" aria-label="16비트 블룸 필터에 kim과 lee를 넣은 뒤 park은 9번 비트가 꺼져 없다고 판정하고, choi는 세 비트가 모두 켜져 있어 거짓 양성이 된다">
+      <defs><marker id="bf-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <rect class="f-box" x="100" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="117" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="117" y="90" text-anchor="middle">0</text>
+      <rect class="f-box" x="134" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="151" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="151" y="90" text-anchor="middle">1</text>
+      <rect class="f-miss" x="168" y="96" width="34" height="34" rx="0"/>
+      <text class="f-on" x="185" y="118" text-anchor="middle">1</text>
+      <text class="f-sub" x="185" y="90" text-anchor="middle">2</text>
+      <rect class="f-box" x="202" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="219" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="219" y="90" text-anchor="middle">3</text>
+      <rect class="f-miss" x="236" y="96" width="34" height="34" rx="0"/>
+      <text class="f-on" x="253" y="118" text-anchor="middle">1</text>
+      <text class="f-sub" x="253" y="90" text-anchor="middle">4</text>
+      <rect class="f-box" x="270" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="287" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="287" y="90" text-anchor="middle">5</text>
+      <rect class="f-box" x="304" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="321" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="321" y="90" text-anchor="middle">6</text>
+      <rect class="f-miss" x="338" y="96" width="34" height="34" rx="0"/>
+      <text class="f-on" x="355" y="118" text-anchor="middle">1</text>
+      <text class="f-sub" x="355" y="90" text-anchor="middle">7</text>
+      <rect class="f-box" x="372" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="389" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="389" y="90" text-anchor="middle">8</text>
+      <rect class="f-box" x="406" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="423" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="423" y="90" text-anchor="middle">9</text>
+      <rect class="f-box" x="440" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="457" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="457" y="90" text-anchor="middle">10</text>
+      <rect class="f-miss" x="474" y="96" width="34" height="34" rx="0"/>
+      <text class="f-on" x="491" y="118" text-anchor="middle">1</text>
+      <text class="f-sub" x="491" y="90" text-anchor="middle">11</text>
+      <rect class="f-box" x="508" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="525" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="525" y="90" text-anchor="middle">12</text>
+      <rect class="f-miss" x="542" y="96" width="34" height="34" rx="0"/>
+      <text class="f-on" x="559" y="118" text-anchor="middle">1</text>
+      <text class="f-sub" x="559" y="90" text-anchor="middle">13</text>
+      <rect class="f-box" x="576" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="593" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="593" y="90" text-anchor="middle">14</text>
+      <rect class="f-box" x="610" y="96" width="34" height="34" rx="0"/>
+      <text class="f-sub" x="627" y="118" text-anchor="middle">0</text>
+      <text class="f-sub" x="627" y="90" text-anchor="middle">15</text>
+      <text class="f-text" x="20" y="35" text-anchor="start">넣기 kim</text>
+      <circle class="f-miss" cx="185" cy="30" r="3"/>
+      <line class="f-line" x1="185" y1="30" x2="185" y2="76" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="355" cy="30" r="3"/>
+      <line class="f-line" x1="355" y1="30" x2="355" y2="76" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="491" cy="30" r="3"/>
+      <line class="f-line" x1="491" y1="30" x2="491" y2="76" marker-end="url(#bf-a)"/>
+      <text class="f-text" x="20" y="59" text-anchor="start">넣기 lee</text>
+      <circle class="f-miss" cx="253" cy="54" r="3"/>
+      <line class="f-line" x1="253" y1="54" x2="253" y2="76" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="355" cy="54" r="3"/>
+      <line class="f-line" x1="355" y1="54" x2="355" y2="76" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="559" cy="54" r="3"/>
+      <line class="f-line" x1="559" y1="54" x2="559" y2="76" marker-end="url(#bf-a)"/>
+      <text class="f-text" x="20" y="181" text-anchor="start">찾기 park</text>
+      <circle class="f-miss" cx="185" cy="176" r="3"/>
+      <line class="f-line" x1="185" y1="176" x2="185" y2="132" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="423" cy="176" r="3"/>
+      <line class="f-line f-dash" x1="423" y1="176" x2="423" y2="132" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="559" cy="176" r="3"/>
+      <line class="f-line" x1="559" y1="176" x2="559" y2="132" marker-end="url(#bf-a)"/>
+      <text class="f-x" x="423" y="148" text-anchor="middle">✕</text>
+      <text class="f-strong" x="660" y="181" text-anchor="start">확실히 없다</text>
+      <text class="f-text" x="20" y="211" text-anchor="start">찾기 choi</text>
+      <circle class="f-miss" cx="185" cy="206" r="3"/>
+      <line class="f-line" x1="185" y1="206" x2="185" y2="132" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="253" cy="206" r="3"/>
+      <line class="f-line" x1="253" y1="206" x2="253" y2="132" marker-end="url(#bf-a)"/>
+      <circle class="f-miss" cx="491" cy="206" r="3"/>
+      <line class="f-line" x1="491" y1="206" x2="491" y2="132" marker-end="url(#bf-a)"/>
+      <text class="f-strong" x="660" y="211" text-anchor="start">있을 수도 있다</text>
+      </svg>
+      <figcaption>해시 함수 셋을 쓰는 16비트 필터다. kim과 lee를 넣어 다섯 자리를 켰다(7번은 둘이 함께 켰다). park은 9번이 꺼져 있으니 확실히 없다. choi는 우연히 세 자리가 모두 켜져 있어 "있을 수도 있다"고 답한다. 이것이 거짓 양성이다.</figcaption>
+    </figure>
+    <p>
+      넣을 때 해시 함수 k개로 비트 k자리를 켜고, 찾을 때 그 k자리가 모두 켜져 있는지 본다. 하나라도 꺼져 있으면 넣은 적이 없다. 넣을 때 켠 비트는 아무도 끄지 않으므로, <strong>있는 것을 없다고 하는 오답(거짓 음성)은 생기지 않는다.</strong>
+    </p>
+    <p>
+      크기 감각은 이렇다. 원소당 약 10비트를 쓰고 해시를 일곱 개쯤 두면 거짓 양성이 약 1%다. 원소 백만 개를 1.2MB 정도로 거를 수 있다. 해시를 늘린다고 계속 좋아지지 않는다. 넣을 때 켜는 비트도 함께 늘어 배열이 1로 차기 때문이다.
+      지우기는 안 된다. 비트를 끄면 그 비트를 같이 쓰던 다른 원소까지 없는 것이 된다. 지워야 하면 비트 대신 개수를 세는 변형(counting bloom filter)을 쓴다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>질의</th><th>고를 것</th></tr></thead>
+        <tbody>
+          <tr><td>정확한 키로 찾는다</td><td>해시 테이블</td></tr>
+          <tr><td>접두사로 찾는다, 사전순으로 훑는다</td><td>트라이</td></tr>
+          <tr><td>비싼 조회 앞에서 없는 것을 미리 거른다</td><td>블룸 필터 + 실제 저장소</td></tr>
+          <tr><td>오답이 절대 안 된다</td><td>블룸 필터 단독은 못 쓴다. "있다"는 항상 실제 저장소로 확인한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>닉네임·채팅 금칙어 검사는 트라이 계열이다.</strong> 금칙어 수천 개를 문장 하나에 대해 하나씩 찾으면 느리다. 금칙어를 트라이에 넣고 실패 링크를 더한 Aho-Corasick 오토마톤을 쓰면, 문장을 한 번 훑으면서 모든 금칙어를 동시에 찾는다(<a data-ref="algorithm/strings-limits">문자열 알고리즘</a>).
+      </li>
+      <li>
+        <strong>블룸 필터는 DB 앞의 문지기로 쓴다.</strong> "이 쿠폰 코드가 이미 쓰였나", "이 닉네임이 이미 있나"처럼 대부분 "없다"로 끝나는 조회를 DB 전에 거른다. "있을 수도 있다"가 나오면 그때만 DB를 본다.
+        반대로 대부분 "있다"가 나오는 조회라면 해시 계산만 더해지므로 앞에 두지 않는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>트라이를 문자열용 해시 테이블로 보면 쓸 이유가 없다.</strong> 접두사 검색이 필요 없으면 해시 테이블이 더 작고 빠르다.</li>
+      <li><strong>블룸 필터는 대신하는 것이 아니라 앞에 두는 것이다.</strong> 중복 요청 걸러내기에 단독으로 쓰면, 거짓 양성 때문에 처음 온 정상 요청을 중복으로 버리는 일이 생긴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

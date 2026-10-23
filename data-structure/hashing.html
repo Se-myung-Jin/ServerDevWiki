@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>해시 테이블 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="data-structure/hashing">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="array-list.html">배열과 연결 리스트</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      해시 테이블은 키로 <strong>저장 위치를 계산</strong>해서 찾는다. 비교를 거듭해 찾아가는 대신 해시 함수로 버킷 번호를 바로 얻으므로, 담긴 개수와 상관없이 평균 <span class="blank">O(1)</span>이다.
+    </p>
+    <p>
+      그 O(1)은 <strong>키가 버킷에 고르게 흩어진다</strong>는 전제에서만 성립한다. 전제가 깨져 한 버킷에 몰리면 그 버킷을 차례로 훑어야 해서 O(n)이 된다.
+      그래서 성능은 해시 함수의 품질과 <span class="blank">적재율(load factor)</span> 관리가 정한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>충돌은 정상이다. 어떻게 다루느냐가 두 계열을 나눈다</h3>
+    <p>
+      버킷 수는 유한하고 키는 훨씬 많으니, 서로 다른 키가 같은 버킷에 떨어지는 <strong>충돌</strong>은 반드시 생긴다. 해시값이 같다고 같은 키가 아니므로, 찾은 뒤에는 항상 키를 직접 비교해 확인한다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 236" role="img" aria-label="체이닝은 버킷 1에 A, B, C가 목록으로 매달리고, 선형 탐사는 A, B, C가 배열의 2, 3, 4번 칸에 차례로 밀려 들어간다">
+      <defs><marker id="hs-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <rect class="f-cell2" x="10" y="10" width="350" height="216" rx="10"/>
+      <text class="f-text" x="26" y="34" text-anchor="start">체이닝</text>
+      <rect class="f-box" x="40" y="52" width="60" height="34" rx="4"/>
+      <text class="f-sub" x="70" y="74" text-anchor="middle">버킷 0</text>
+      <rect class="f-box" x="40" y="94" width="60" height="34" rx="4"/>
+      <text class="f-sub" x="70" y="116" text-anchor="middle">버킷 1</text>
+      <rect class="f-box" x="40" y="136" width="60" height="34" rx="4"/>
+      <text class="f-sub" x="70" y="158" text-anchor="middle">버킷 2</text>
+      <rect class="f-box" x="40" y="178" width="60" height="34" rx="4"/>
+      <text class="f-sub" x="70" y="200" text-anchor="middle">버킷 3</text>
+      <rect class="f-hit" x="130" y="94" width="50" height="34" rx="6"/>
+      <text class="f-strong" x="155" y="116" text-anchor="middle">A</text>
+      <line class="f-line" x1="100" y1="111" x2="128" y2="111" marker-end="url(#hs-a)"/>
+      <rect class="f-hit" x="205" y="94" width="50" height="34" rx="6"/>
+      <text class="f-strong" x="230" y="116" text-anchor="middle">B</text>
+      <line class="f-line" x1="180" y1="111" x2="203" y2="111" marker-end="url(#hs-a)"/>
+      <rect class="f-hit" x="280" y="94" width="50" height="34" rx="6"/>
+      <text class="f-strong" x="305" y="116" text-anchor="middle">C</text>
+      <line class="f-line" x1="255" y1="111" x2="278" y2="111" marker-end="url(#hs-a)"/>
+      <rect class="f-hit" x="130" y="178" width="50" height="34" rx="6"/>
+      <text class="f-strong" x="155" y="200" text-anchor="middle">D</text>
+      <line class="f-line" x1="100" y1="195" x2="128" y2="195" marker-end="url(#hs-a)"/>
+      <text class="f-sub" x="230" y="160" text-anchor="middle">같은 버킷끼리 목록으로 잇는다</text>
+      <rect class="f-cell2" x="376" y="10" width="374" height="216" rx="10"/>
+      <text class="f-text" x="392" y="34" text-anchor="start">개방 주소법 · 선형 탐사</text>
+      <rect class="f-box" x="394" y="120" width="42" height="40" rx="0"/>
+      <text class="f-sub" x="415" y="178" text-anchor="middle">0</text>
+      <rect class="f-box" x="436" y="120" width="42" height="40" rx="0"/>
+      <text class="f-sub" x="457" y="178" text-anchor="middle">1</text>
+      <rect class="f-hit" x="478" y="120" width="42" height="40" rx="0"/>
+      <text class="f-strong" x="499" y="145" text-anchor="middle">A</text>
+      <text class="f-sub" x="499" y="178" text-anchor="middle">2</text>
+      <rect class="f-hit" x="520" y="120" width="42" height="40" rx="0"/>
+      <text class="f-strong" x="541" y="145" text-anchor="middle">B</text>
+      <text class="f-sub" x="541" y="178" text-anchor="middle">3</text>
+      <rect class="f-hit" x="562" y="120" width="42" height="40" rx="0"/>
+      <text class="f-strong" x="583" y="145" text-anchor="middle">C</text>
+      <text class="f-sub" x="583" y="178" text-anchor="middle">4</text>
+      <rect class="f-box" x="604" y="120" width="42" height="40" rx="0"/>
+      <text class="f-sub" x="625" y="178" text-anchor="middle">5</text>
+      <rect class="f-box" x="646" y="120" width="42" height="40" rx="0"/>
+      <text class="f-sub" x="667" y="178" text-anchor="middle">6</text>
+      <rect class="f-box" x="688" y="120" width="42" height="40" rx="0"/>
+      <text class="f-sub" x="709" y="178" text-anchor="middle">7</text>
+      <path class="f-line f-dash" d="M499,118 C499,86 541,86 541,116" marker-end="url(#hs-a)"/>
+      
+      <path class="f-line f-dash" d="M541,118 C541,56 583,56 583,116" marker-end="url(#hs-a)"/>
+      
+      <text class="f-sub" x="562" y="202" text-anchor="middle">B: 2가 차서 3 · C: 3이 차서 4</text>
+      <text class="f-sub" x="562" y="219" text-anchor="middle">밀려난 원소도 같은 배열 안에 있다</text>
+      </svg>
+      <figcaption>왼쪽은 버킷마다 목록을 매단다. 오른쪽은 한 배열 안에서 다음 빈칸으로 밀려난다. B는 원래 2번 자리지만 A가 차지해 3번으로, C는 원래 3번 자리지만 B가 차지해 4번으로 갔다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>계열</th><th>어떻게</th><th>장점</th><th>단점</th></tr></thead>
+        <tbody>
+          <tr><td>체이닝</td><td>같은 버킷에 목록으로 매단다</td><td>적재율이 1을 넘어도 동작한다. 삭제가 단순하다</td><td>노드가 흩어지면 캐시가 듣지 않는다</td></tr>
+          <tr><td>개방 주소법(선형 탐사 등)</td><td>다음 빈 버킷을 찾아 들어간다</td><td>한 배열에 연속으로 있어 <a href="../computer-architecture/locality.html">캐시 지역성</a>이 좋다</td><td>적재율을 낮게(대개 0.5~0.8) 유지해야 하고, 삭제가 까다롭다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      개방 주소법에서 삭제가 까다로운 이유는 탐사 사슬 때문이다. 위 그림에서 B를 지우고 그 칸을 그냥 비우면, C를 찾는 탐사가 3번 빈칸에서 "없다"고 멈춰 버린다.
+      그래서 지운 칸에 <strong>"지웠음" 표시(tombstone)</strong>를 남겨 탐사가 계속 지나가게 한다. 표시가 쌓이면 탐색이 길어지므로 주기적으로 다시 배치한다.
+    </p>
+
+    <h3>.NET의 Dictionary는 배열 두 개로 만든 체이닝이다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 244" role="img" aria-label=".NET Dictionary의 buckets 배열이 entries 배열의 첫 원소를 가리키고, 같은 버킷의 원소는 next 번호로 이어진다">
+      <defs><marker id="hd-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-text" x="96" y="63" text-anchor="end">buckets</text>
+      <rect class="f-hit" x="110" y="40" width="56" height="36" rx="0"/>
+      <text class="f-strong" x="138" y="63" text-anchor="middle">1</text>
+      <text class="f-sub" x="138" y="30" text-anchor="middle">[0]</text>
+      <rect class="f-box" x="166" y="40" width="56" height="36" rx="0"/>
+      <text class="f-sub" x="194" y="63" text-anchor="middle">-1</text>
+      <text class="f-sub" x="194" y="30" text-anchor="middle">[1]</text>
+      <rect class="f-hit" x="222" y="40" width="56" height="36" rx="0"/>
+      <text class="f-strong" x="250" y="63" text-anchor="middle">3</text>
+      <text class="f-sub" x="250" y="30" text-anchor="middle">[2]</text>
+      <rect class="f-box" x="278" y="40" width="56" height="36" rx="0"/>
+      <text class="f-sub" x="306" y="63" text-anchor="middle">-1</text>
+      <text class="f-sub" x="306" y="30" text-anchor="middle">[3]</text>
+      <rect class="f-hit" x="334" y="40" width="56" height="36" rx="0"/>
+      <text class="f-strong" x="362" y="63" text-anchor="middle">2</text>
+      <text class="f-sub" x="362" y="30" text-anchor="middle">[4]</text>
+      <text class="f-sub" x="410" y="63" text-anchor="start">버킷마다 사슬의 첫 원소 번호 (−1은 비었음)</text>
+      <text class="f-text" x="96" y="173" text-anchor="end">entries</text>
+      <rect class="f-box" x="110" y="150" width="136" height="38" rx="6"/>
+      <text class="f-text" x="178" y="173" text-anchor="middle">[0] kim · next -1</text>
+      <rect class="f-box" x="260" y="150" width="136" height="38" rx="6"/>
+      <text class="f-text" x="328" y="173" text-anchor="middle">[1] lee · next -1</text>
+      <rect class="f-box" x="410" y="150" width="136" height="38" rx="6"/>
+      <text class="f-text" x="478" y="173" text-anchor="middle">[2] park · next -1</text>
+      <rect class="f-box" x="560" y="150" width="136" height="38" rx="6"/>
+      <text class="f-text" x="628" y="173" text-anchor="middle">[3] choi · next 0</text>
+      <line class="f-line" x1="138" y1="78" x2="328" y2="147" marker-end="url(#hd-a)"/>
+      <line class="f-line" x1="250" y1="78" x2="628" y2="147" marker-end="url(#hd-a)"/>
+      <line class="f-line" x1="362" y1="78" x2="478" y2="147" marker-end="url(#hd-a)"/>
+      <path class="f-inval" d="M628,190 C628,232 178,232 178,194" fill="none" marker-end="url(#hd-a)"/>
+      <text class="f-strong" x="403" y="236" text-anchor="middle">같은 버킷 2: choi의 next가 kim</text>
+      </svg>
+      <figcaption><code>buckets</code>는 버킷마다 사슬의 첫 원소 번호만 담는다. 실제 원소는 <code>entries</code> 구조체 배열에 연속으로 있고, 같은 버킷의 원소끼리는 <code>next</code> 번호로 이어진다. 노드를 따로 할당하지 않는다.</figcaption>
+    </figure>
+    <p>
+      교과서의 체이닝은 버킷마다 연결 리스트 노드를 할당하지만, .NET의 <code>Dictionary&lt;TKey,TValue&gt;</code>는 원소를 <code>entries</code> 배열 하나에 담고 <code>next</code> 인덱스로 사슬을 잇는다.
+      노드 할당이 없어 <a data-ref="csharp/gc-basics">GC</a> 부담이 적고 캐시도 더 잘 듣는다. 지운 칸은 빈칸 목록으로 이어 두었다가 다음 추가에 다시 쓴다.
+    </p>
+    <p>
+      그래서 <strong>열거 순서는 보장되지 않는다.</strong> 지운 적이 없으면 넣은 순서대로 나오는 것처럼 보이지만, 지운 칸에 새 원소가 들어가면 순서가 섞인다. 순서가 필요하면 다른 자료구조를 쓴다.
+    </p>
+
+    <h3>적재율이 높아지면 테이블을 키우고 전부 다시 배치한다</h3>
+    <p>
+      담긴 개수를 버킷 수로 나눈 값이 적재율이다. 높을수록 충돌이 잦아진다. 정해 둔 값을 넘으면 버킷 배열을 대략 두 배로 키우고, 모든 원소를 새 버킷 수 기준으로 다시 배치한다(<strong>리해싱</strong>).
+      해시값이 같아도 버킷 수가 바뀌면 들어갈 버킷이 달라지기 때문이다. .NET <code>Dictionary</code>는 원소 수가 배열 크기에 닿으면 소수 크기로 키운다.
+    </p>
+    <p>
+      리해싱 한 번은 O(n)이지만 드물게 일어나므로, 추가 한 번의 평균(분할 상환) 비용은 O(1)로 남는다. 문제는 그 한 번이 <strong>특정 순간에 몰린다</strong>는 점이다. 큰 사전이면 그 순간 지연이 튄다.
+      크기를 대략 알면 생성자에 용량을 미리 준다(<code>new Dictionary&lt;K,V&gt;(capacity)</code>). 반대로 과하게 잡으면 빈 버킷이 메모리를 차지한다.
+    </p>
+
+    <h3>좋은 해시 함수의 조건</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>조건</th><th>왜</th></tr></thead>
+        <tbody>
+          <tr><td>같은 입력이면 항상 같은 값</td><td>넣을 때와 찾을 때 같은 버킷으로 가야 한다</td></tr>
+          <tr><td>고르게 흩어진다</td><td>몰리면 그 버킷이 선형 탐색이 된다</td></tr>
+          <tr><td>입력이 조금만 달라도 출력이 크게 달라진다</td><td>비슷한 키(<code>player1</code>, <code>player2</code>)가 한곳에 몰리지 않게</td></tr>
+          <tr><td>계산이 싸다</td><td>모든 추가·조회마다 계산한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      "같은 입력이면 같은 값"에서 실무 규칙이 하나 나온다. <strong>키로 쓰는 값은 넣은 뒤에 바뀌면 안 된다.</strong> 해시 테이블은 넣을 당시의 해시로 버킷을 정하므로, 키 객체의 필드를 고치면 원소가 엉뚱한 버킷에 남아 영영 못 찾는다.
+    </p>
+    <p>
+      이 표는 자료구조용 해시의 조건이다. 비밀번호 저장이나 무결성 검사에 쓰는 암호학적 해시는 요구가 다르다(<a data-ref="security/hashing">해시와 암호학적 해시</a>).
+    </p>
+
+    <h3>일부러 몰리게 만드는 공격이 있다</h3>
+    <p>
+      해시 함수가 공개돼 있고 결과가 늘 같으면, 공격자가 같은 버킷으로 가는 키를 미리 계산해 대량으로 보낼 수 있다(<strong>해시 플러딩</strong>). 테이블이 O(n)으로 무너지고, n개를 넣는 데 O(n²)이 든다.
+      대책은 해시에 <strong>프로세스마다 다른 무작위 값</strong>을 섞어, 어떤 키가 몰리는지 밖에서 계산할 수 없게 하는 것이다. Java의 <code>HashMap</code>처럼 사슬이 길어진 버킷만 균형 트리로 바꿔 최악을 O(log n)으로 묶는 구현도 있다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>무엇이 맞나</th></tr></thead>
+        <tbody>
+          <tr><td>키로 정확히 찾기만 한다</td><td>해시 테이블</td></tr>
+          <tr><td>정렬된 순서로 순회한다, 범위로 찾는다</td><td>정렬 트리(<a href="trees.html">트리와 이진 탐색 트리</a>)</td></tr>
+          <tr><td>최악의 시간을 보장해야 한다</td><td>균형 트리. 해시는 O(n)이 될 수 있다</td></tr>
+          <tr><td>원소가 몇 개뿐이다</td><td>배열 선형 탐색. 해시 계산 비용이 몇 번의 비교보다 비쌀 수 있다</td></tr>
+          <tr><td>여러 스레드가 동시에 읽고 쓴다</td><td><code>ConcurrentDictionary</code>. 읽기는 락 없이, 쓰기는 버킷 묶음별 락으로 처리한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong><code>string.GetHashCode()</code>를 저장하거나 서버끼리 비교하지 않는다.</strong> .NET(Core 이후)의 문자열 해시는 해시 플러딩을 막으려고 프로세스마다 다른 무작위 시드를 섞는다. 서버를 다시 켜거나 서버가 다르면 같은 문자열의 값이 달라진다.
+        유저 ID로 샤드나 서버를 고르는 것처럼 <strong>여러 프로세스가 같은 값을 내야 하는 해시</strong>는 xxHash·FNV처럼 결과가 고정된 함수를 직접 쓴다.
+      </li>
+      <li>
+        <strong>사용자 키를 그대로 받는 사전은 공격면이다.</strong> 클라이언트가 보낸 문자열(채팅 채널명, 길드명)을 키로 쓰는 <code>Dictionary&lt;string, …&gt;</code>는 기본 비교자를 그대로 둔다. 기본 비교자는 충돌이 비정상적으로 몰리면 무작위 해시로 갈아탄다. 직접 만든 고정 해시 비교자를 넣으면 이 보호가 사라진다.
+      </li>
+      <li>
+        <strong>세션·엔티티 조회는 정수 키가 좋다.</strong> 문자열 키는 해시 계산과 비교에 길이만큼 비용이 든다. 접속 시점에 세션 ID나 엔티티 ID를 정수로 정해 두고, 매 틱의 조회는 정수 키 사전이나 배열 인덱스로 한다.
+      </li>
+      <li>
+        <strong>여러 스레드가 만지는 사전은 <code>ConcurrentDictionary</code>나 소유 스레드 하나로.</strong> 일반 <code>Dictionary</code>를 락 없이 동시에 고치면 내부 사슬이 꼬여 조회가 무한 루프에 빠지는 사고가 실제로 난다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>O(1)은 평균이다.</strong> 모든 키가 한 버킷으로 몰리면 선형 탐색과 같아진다. 최악을 보장하지 않는다.</li>
+      <li>
+        <strong><code>Equals</code>와 <code>GetHashCode</code>는 함께 재정의한다.</strong> 같다고 판정되는 두 객체는 반드시 같은 해시를 내야 한다. 하나만 재정의하면 같은 키를 넣었는데 못 찾는다. C#의 <code>record</code>는 둘을 함께 만들어 준다(<a data-ref="csharp/equality">동등성</a>).
+      </li>
+      <li><strong>해시가 같다고 키가 같은 것이 아니다.</strong> 해시로 버킷을 찾은 뒤 키 비교로 확인하는 단계가 늘 있다. 해시값만 저장해 두고 키를 판정하는 코드는 충돌이 나는 순간 틀린다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

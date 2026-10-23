@@ -73,7 +73,7 @@
     <h3>공유 메모리는 동기화를 직접 해야 한다</h3>
     <p>
       같은 페이지를 양쪽이 보므로 누가 언제 쓰는지를 따로 정해야 한다. 한 번 매핑하고 나면 그다음부터는 그냥 메모리 접근이라 커널이 중간에 없기 때문이다.
-      그래서 공유 메모리는 보통 프로세스를 넘어가는 세마포어·뮤텍스(<a href="sync-primitives.html">동기화 객체</a>)와 짝지어 쓰거나, <a href="../computer-architecture/atomics-memory-order.html">원자적 연산</a>으로 만든 링 버퍼를 둔다.
+      그래서 공유 메모리는 보통 프로세스를 넘어가는 세마포어·뮤텍스(<a href="sync-primitives.html">동기화 객체</a>)와 짝지어 쓰거나, <a href="../computer-architecture/atomics-memory-order.html">원자적 연산</a>으로 만든 <a data-ref="data-structure/stack-queue">링 버퍼</a>를 둔다.
     </p>
     <p>
       파이프나 큐는 넣고 빼는 일을 커널이 대신해 주므로 이 부담이 없다. 파이프는 <code>PIPE_BUF</code>(POSIX는 최소 512바이트, Linux는 4096바이트) 이하의 쓰기가 다른 쓰기와 섞이지 않는다고 보장한다.
