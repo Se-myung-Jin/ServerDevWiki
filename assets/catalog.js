@@ -455,6 +455,12 @@ window.CATALOG = [
     ],
   },
   {
+    dir: "server",
+    title: "서버 프로그래밍",
+    desc: "동시성 모델(스레드풀/이벤트 루프/액터), 락-프리 자료구조, 틱 루프, 세션 관리, Command/Strand",
+    topics: [],
+  },
+  {
     dir: "csharp",
     title: "C# 언어와 런타임",
     desc: "CLR 내부(GC, JIT), async/await 메커니즘, Span/Memory 제로 할당 패턴, 소스 제너레이터",
@@ -469,10 +475,18 @@ window.CATALOG = [
     ],
   },
   {
-    dir: "server",
-    title: "서버 프로그래밍",
-    desc: "동시성 모델(스레드풀/이벤트 루프/액터), 락-프리 자료구조, 틱 루프, 세션 관리, Command/Strand",
-    topics: [],
+    dir: "cpp",
+    title: "C++",
+    desc: "객체 수명과 RAII, 이동 의미론, 템플릿, 메모리 모델과 atomic, 스마트 포인터",
+    tags: ["빌드"],
+    topics: [
+      {
+        slug: "build-time",
+        title: "빌드 시간",
+        summary: "C++ 빌드가 느린 것은 구현이 아니라 구조 때문이다. 헤더가 파일마다 다시 컴파일된다.",
+        tags: ["빌드"],
+      },
+    ],
   },
   {
     dir: "game-patterns",
@@ -503,20 +517,6 @@ window.CATALOG = [
     title: "배포와 운영",
     desc: "CI/CD, 컨테이너화, 모니터링/로깅, 장애 대응, 수평/수직 확장 전략",
     topics: [],
-  },
-  {
-    dir: "cpp",
-    title: "C++",
-    desc: "객체 수명과 RAII, 이동 의미론, 템플릿, 메모리 모델과 atomic, 스마트 포인터",
-    tags: ["빌드"],
-    topics: [
-      {
-        slug: "build-time",
-        title: "빌드 시간",
-        summary: "C++ 빌드가 느린 것은 구현이 아니라 구조 때문이다. 헤더가 파일마다 다시 컴파일된다.",
-        tags: ["빌드"],
-      },
-    ],
   },
   {
     dir: "unity",
