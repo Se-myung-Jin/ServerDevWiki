@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>완료 알림 기반 서버 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/completion-port">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="io-models.html">I/O 모델</a> · <a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      완료 알림 기반 서버는 소켓마다 읽기·쓰기를 걸어 두고, 커널이 끝낸 일을 <strong>완료 큐</strong>에 쌓으면 <strong>적은 수의 작업 스레드</strong>가 꺼내 처리하는 구조다. 연결마다 스레드를 붙이지 않으므로 연결이 만 개여도 스레드는 코어 수 근처에 머문다.
+    </p>
+    <p>
+      Windows의 <strong>IOCP</strong>(I/O Completion Port)가 대표다. 패턴 이름으로는 완료를 받아 처리하는 <span class="blank">Proactor</span>이고, Linux epoll처럼 준비를 받아 내가 읽는 <span class="blank">Reactor</span>와 짝을 이룬다. 둘의 차이는 버퍼를 언제 내주느냐에서 갈린다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>완료가 큐에 쌓이고, 스레드가 꺼내 간다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 290" role="img" aria-label="소켓들이 걸어 둔 요청의 완료가 커널의 완료 큐에 쌓이고, 코어 수만큼의 작업 스레드가 꺼내 처리한다">
+        <defs><marker id="cp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker><marker id="cp-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="75" y="30" text-anchor="middle">요청을 걸어 둔다</text>
+        <rect class="f-box" x="20" y="45" width="110" height="32"/><text class="f-text" x="75" y="66" text-anchor="middle">소켓 1</text>
+        <rect class="f-box" x="20" y="90" width="110" height="32"/><text class="f-text" x="75" y="111" text-anchor="middle">소켓 2</text>
+        <rect class="f-box" x="20" y="135" width="110" height="32"/><text class="f-text" x="75" y="156" text-anchor="middle">소켓 3</text>
+        <text class="f-sub" x="75" y="192" text-anchor="middle">⋮</text>
+        <rect class="f-box" x="20" y="210" width="110" height="32"/><text class="f-text" x="75" y="231" text-anchor="middle">소켓 10,000</text>
+        <line class="f-line" x1="132" y1="61" x2="186" y2="95" marker-end="url(#cp-a)"/>
+        <line class="f-line" x1="132" y1="106" x2="186" y2="125" marker-end="url(#cp-a)"/>
+        <line class="f-line" x1="132" y1="151" x2="186" y2="150" marker-end="url(#cp-a)"/>
+        <line class="f-line" x1="132" y1="226" x2="186" y2="185" marker-end="url(#cp-a)"/>
+
+        <rect class="f-box" x="190" y="40" width="260" height="215"/>
+        <text class="f-strong" x="320" y="64" text-anchor="middle">완료 포트 (커널)</text>
+        <rect class="f-hit" x="205" y="80" width="230" height="34"/><text class="f-text" x="320" y="102" text-anchor="middle">소켓 2 · 수신 120바이트</text>
+        <rect class="f-hit" x="205" y="122" width="230" height="34"/><text class="f-text" x="320" y="144" text-anchor="middle">소켓 1 · 송신 끝</text>
+        <rect class="f-hit" x="205" y="164" width="230" height="34"/><text class="f-text" x="320" y="186" text-anchor="middle">소켓 10,000 · 수신 48바이트</text>
+        <text class="f-sub" x="320" y="236" text-anchor="middle">동시 실행 상한 = 코어 수</text>
+
+        <line class="f-line" x1="437" y1="97" x2="556" y2="72" marker-end="url(#cp-b)"/>
+        <line class="f-line" x1="437" y1="139" x2="556" y2="122" marker-end="url(#cp-b)"/>
+        <rect class="f-hit" x="560" y="55" width="180" height="34"/><text class="f-text" x="650" y="77" text-anchor="middle">스레드 A · 처리 중</text>
+        <rect class="f-hit" x="560" y="105" width="180" height="34"/><text class="f-text" x="650" y="127" text-anchor="middle">스레드 B · 처리 중</text>
+        <rect class="f-box" x="560" y="155" width="180" height="34"/><text class="f-sub" x="650" y="177" text-anchor="middle">스레드 C · 대기</text>
+        <rect class="f-box" x="560" y="205" width="180" height="34"/><text class="f-sub" x="650" y="227" text-anchor="middle">스레드 D · 대기</text>
+        <text class="f-sub" x="740" y="276" text-anchor="end">대기 스레드는 가장 최근에 잠든 것부터 깨운다</text>
+      </svg>
+      <figcaption>왼쪽 소켓 수가 늘어도 오른쪽 스레드 수는 그대로다. 완료는 들어온 순서대로 꺼내고(FIFO), 꺼내 갈 스레드는 최근에 잠든 것부터 고른다(LIFO). 동시에 도는 스레드가 상한(여기서는 2)에 닿으면 남은 스레드는 깨우지 않는다.</figcaption>
+    </figure>
+    <ol>
+      <li><code>CreateIoCompletionPort</code>로 완료 포트를 만들고, 소켓을 그 포트에 묶는다. 이때 소켓마다 <strong>완료 키</strong>를 준다. 보통 세션 객체를 가리키는 값이다.</li>
+      <li><code>WSARecv</code>·<code>WSASend</code>에 버퍼와 <code>OVERLAPPED</code>를 넘겨 요청을 걸고 바로 돌아온다.</li>
+      <li>커널이 일을 끝내면 완료 패킷(완료 키, 옮긴 바이트 수, <code>OVERLAPPED</code> 주소)을 큐에 넣는다.</li>
+      <li>작업 스레드들은 <code>GetQueuedCompletionStatus</code>(여러 개를 한 번에 받는 <code>…Ex</code>)에서 기다리다가 하나가 깨어나 꺼낸다.</li>
+      <li>처리가 끝나면 다음 수신을 다시 걸고 큐로 돌아가 기다린다.</li>
+    </ol>
+    <p>
+      꺼낸 쪽은 완료 키로 <strong>어느 연결</strong>의 일인지, <code>OVERLAPPED</code> 주소로 <strong>어느 요청</strong>이었는지 안다. 그래서 <code>OVERLAPPED</code>를 맨 앞에 품은 요청 구조체를 만들어 두고, 받은 주소에서 그 구조체를 되찾는 방식이 흔하다. 큐에 직접 패킷을 넣는 <code>PostQueuedCompletionStatus</code>로 종료 신호나 다른 스레드의 작업을 같은 스레드들에게 넘기기도 한다.
+    </p>
+
+    <h3>깨우는 수를 커널이 조절한다</h3>
+    <p>
+      완료 포트를 만들 때 <strong>동시 실행 수</strong>를 정한다(0이면 코어 수). 커널은 이 포트에서 일하고 있는 스레드가 그 수에 닿으면 대기 중인 스레드를 더 깨우지 않는다. 깨워 봐야 코어를 두고 다투며 전환만 늘기 때문이다(<a href="../operating-system/pcb-context-switch.html">PCB와 컨텍스트 스위칭</a>).
+    </p>
+    <p>
+      처리 중인 스레드가 락이나 동기 I/O에서 <strong>막히면</strong> 커널은 그 스레드를 일하는 수에서 뺀다. 그러면 대기 중이던 다른 스레드가 깨어나 코어를 채운다. 그래서 미리 만들어 두는 스레드는 동시 실행 수보다 여유 있게 잡는다. 막혔던 스레드가 풀리면 잠시 상한을 넘겨 돌 수도 있다.
+    </p>
+    <p>
+      대기 스레드를 최근에 잠든 것부터 깨우는 것도 같은 목적이다. 방금까지 돌던 스레드는 스택과 데이터가 아직 캐시에 남아 있을 가능성이 크고, 오래 잠든 스레드는 그대로 쉬게 둘 수 있다.
+    </p>
+
+    <h3>Proactor는 완료를, Reactor는 준비를 받는다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>Proactor</th><th>Reactor</th></tr></thead>
+        <tbody>
+          <tr><td>받는 알림</td><td>완료: 이미 읽어 두었다</td><td>준비: 지금 읽으면 막히지 않는다</td></tr>
+          <tr><td>읽기는 누가</td><td>커널이 끝냈다</td><td>알림을 받은 뒤 내가 한다</td></tr>
+          <tr><td>대표 구현</td><td>IOCP, <a data-ref="system-programming/syscall-cost">io_uring</a></td><td>epoll, kqueue, select</td></tr>
+          <tr><td>버퍼는 언제</td><td>요청을 걸 때 미리 내준다</td><td>읽을 때 잠깐 쓴다</td></tr>
+          <tr><td><a data-ref="operating-system/kernel-boundary">시스템 콜</a></td><td>요청 걸기, 완료 받기</td><td>기다리기, 읽기</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      실무에서 가장 크게 다른 것은 <strong>버퍼</strong>다. Proactor는 수신을 걸어 두는 동안 버퍼를 커널에 맡겨야 하므로, 연결이 만 개면 만 개의 버퍼가 동시에 묶인다. Reactor는 준비된 소켓만 읽으므로 버퍼 몇 개를 돌려 쓸 수 있다.
+    </p>
+
+    <h3>관리되는 런타임은 버퍼를 고정해야 한다</h3>
+    <p>
+      커널은 요청을 걸 때 받은 주소에 그대로 쓴다. GC가 압축하면서 그 버퍼를 옮기면 커널은 이미 다른 객체가 들어선 자리에 데이터를 쓴다. 그래서 걸어 둔 동안은 버퍼를 <strong>고정</strong>한다. 고정된 객체는 옮길 수 없어서, 힙 곳곳에 박혀 있으면 그 사이 빈칸이 메워지지 않는다(<a href="../operating-system/fragmentation.html">단편화</a>, <a data-ref="csharp/gc-basics">GC 기초</a>).
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>효과</th></tr></thead>
+        <tbody>
+          <tr><td>큰 버퍼를 잘라 쓴다</td><td>큰 배열 하나를 미리 잡고 연결마다 구간을 나눠 준다</td><td>고정되는 객체가 하나뿐이고 힙 한쪽에 모인다</td></tr>
+          <tr><td>고정 전용 힙</td><td>.NET 5부터 <code>GC.AllocateArray(…, pinned: true)</code>로 고정 객체 전용 힙(POH)에 만든다</td><td>일반 힙 압축을 방해하지 않는다</td></tr>
+          <tr><td>0바이트 수신</td><td>길이 0인 수신을 걸어 "도착했다"만 받고, 그때 풀에서 버퍼를 꺼내 읽는다</td><td>기다리는 동안 묶이는 버퍼가 없다. 조용한 연결이 많을수록 이득이다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+
+    <h3>언제 이 구조를 고르나</h3>
+    <ul>
+      <li><strong>연결 수가 스레드로 감당되지 않을 때다.</strong> 연결이 수십~수백 개면 연결마다 스레드가 더 읽기 쉽다. 수천을 넘으면 스택 메모리와 전환 비용이 일하는 시간보다 커진다.</li>
+      <li><strong>Windows 서버라면 사실상 이것이다.</strong> Windows에는 epoll이 없고, select는 연결이 많으면 느리다. Linux라면 epoll 기반 Reactor가 기본이고, 완료 방식이 필요하면 io_uring을 본다.</li>
+      <li><strong>대가는 코드 구조다.</strong> 한 요청의 흐름이 "걸기"와 "완료 처리"로 쪼개지고, 완료 처리는 아무 작업 스레드에서나 돈다. 같은 세션의 수신 완료와 송신 완료가 두 스레드에서 동시에 처리될 수 있다는 것을 늘 의식해야 한다.</li>
+    </ul>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>세션마다 수신은 하나만 걸어 둔다.</strong> 수신을 둘 걸면 완료가 다른 스레드에서 거의 동시에 처리되어 바이트 순서가 뒤바뀔 수 있다. 하나를 처리하고 다음을 거는 순서를 지킨다. 송신도 세션마다 진행 중인 것을 하나로 두고, 그동안 생긴 패킷은 송신 큐에 모았다가 끝나면 한꺼번에 보낸다.
+      </li>
+      <li>
+        <strong>작업 스레드에서 게임 로직을 오래 돌리지 않는다.</strong> 작업 스레드는 코어 수만큼만 있으므로 하나가 DB를 기다리면 그만큼 모든 연결의 수신 처리가 밀린다. 받은 패킷은 파싱해서 로직 쪽 큐에 넘기고 바로 돌아온다(<a href="threading-model.html">게임 서버 스레딩 모델</a>).
+      </li>
+      <li>
+        <strong>.NET은 IOCP를 직접 감춘다.</strong> Windows의 비동기 소켓은 내부에서 IOCP를 쓰고, 완료되면 <code>await</code> 뒤 코드를 <a data-ref="operating-system/thread-pool">스레드 풀</a>에서 이어 실행한다. <code>SocketAsyncEventArgs</code>는 요청 객체를 재사용해 할당을 없애는 예전 방식이고, 지금은 <code>Memory&lt;byte&gt;</code>를 받는 <code>ReceiveAsync</code>가 <code>ValueTask</code>로 같은 효과를 낸다(<a data-ref="csharp/task-valuetask">Task와 ValueTask</a>).
+      </li>
+      <li>
+        <strong>세션을 닫을 때 걸어 둔 요청부터 정리한다.</strong> 소켓을 닫으면 걸려 있던 요청이 실패로 완료되어 큐에 들어온다. 세션 객체를 먼저 풀어 버리면 그 완료를 처리하는 스레드가 이미 사라진 객체를 만진다. 걸어 둔 요청 수를 세어 0이 된 뒤에 세션을 반납한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>IOCP와 epoll은 같은 것의 플랫폼 차이가 아니다.</strong> 하나는 완료를, 하나는 준비를 알린다. 그 차이가 버퍼를 언제 얼마나 잡느냐를 바꾼다.</li>
+      <li><strong>동시 실행 수와 만드는 스레드 수는 다른 값이다.</strong> 앞의 것은 코어 수에 맞추고, 뒤의 것은 처리 중에 막힐 일을 생각해 더 잡는다.</li>
+      <li><strong>완료가 바로 끝나도 큐에 들어올 수 있다.</strong> 요청이 즉시 성공해도 기본으로는 완료 패킷이 큐에 들어온다. 즉시 끝난 결과를 그 자리에서 처리하면서 큐에서도 다시 처리하면 같은 데이터를 두 번 다룬다. 즉시 성공 시 큐를 건너뛰는 설정(<code>FILE_SKIP_COMPLETION_PORT_ON_SUCCESS</code>)을 쓸 때만 그 자리에서 처리한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

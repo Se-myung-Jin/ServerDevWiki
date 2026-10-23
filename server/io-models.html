@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>I/O 모델 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/io-models">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../operating-system/kernel-boundary.html">커널 경계와 시스템 콜</a> · <a href="../operating-system/thread-pool.html">스레드 풀과 실행 모델</a> · <a href="../network/tcp-connection.html">TCP 연결 관리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      소켓에서 읽는 일은 두 단계다. 데이터가 <strong>도착할 때까지 기다리는</strong> 단계와, 커널 버퍼에 온 데이터를 <strong>내 버퍼로 복사하는</strong> 단계다. I/O 모델은 이 두 단계 동안 호출한 스레드가 무엇을 하느냐로 나뉜다.
+    </p>
+    <p>
+      <strong>논블로킹</strong>은 지금 읽을 것이 없으면 <span class="blank">바로 돌아오는</span> 것이다. 될 때까지 다시 묻는 일은 내 몫이다. <strong>비동기</strong>는 버퍼를 맡겨 두면 커널이 복사까지 끝내고 <span class="blank">끝났다고 알려 주는</span> 것이다. 둘 다 "기다리지 않는다"는 점은 같지만, 읽는 일을 누가 하느냐가 다르다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>두 단계를 누가 기다리나</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 310" role="img" aria-label="블로킹, 논블로킹, 다중화, 비동기 네 모델이 데이터 대기와 복사 두 단계를 지나는 모습">
+        <text class="f-sub" x="297" y="24" text-anchor="middle">① 데이터가 올 때까지</text>
+        <text class="f-sub" x="505" y="24" text-anchor="middle">② 내 버퍼로 복사</text>
+        <line class="f-line" x1="150" y1="36" x2="444" y2="36"/>
+        <line class="f-line" x1="150" y1="31" x2="150" y2="41"/>
+        <line class="f-line" x1="444" y1="31" x2="444" y2="41"/>
+        <line class="f-line" x1="452" y1="36" x2="560" y2="36"/>
+        <line class="f-line" x1="452" y1="31" x2="452" y2="41"/>
+        <line class="f-line" x1="560" y1="31" x2="560" y2="41"/>
+        <line class="f-grid" x1="448" y1="48" x2="448" y2="282"/>
+        <text class="f-sub" x="448" y="300" text-anchor="middle">데이터 도착</text>
+
+        <text class="f-strong" x="20" y="77">블로킹</text>
+        <rect class="f-hit" x="150" y="56" width="410" height="34"/>
+        <text class="f-text" x="355" y="78" text-anchor="middle">recv 안에서 멈춰 있다</text>
+        <text class="f-sub" x="575" y="78">돌아오면 끝이다</text>
+
+        <text class="f-strong" x="20" y="132">논블로킹</text>
+        <rect class="f-box" x="150" y="111" width="52" height="34"/><text class="f-sub" x="176" y="133" text-anchor="middle">EAGAIN</text>
+        <rect class="f-box" x="210" y="111" width="52" height="34"/><text class="f-sub" x="236" y="133" text-anchor="middle">EAGAIN</text>
+        <rect class="f-box" x="270" y="111" width="52" height="34"/><text class="f-sub" x="296" y="133" text-anchor="middle">EAGAIN</text>
+        <rect class="f-box" x="330" y="111" width="52" height="34"/><text class="f-sub" x="356" y="133" text-anchor="middle">EAGAIN</text>
+        <rect class="f-box" x="390" y="111" width="52" height="34"/><text class="f-sub" x="416" y="133" text-anchor="middle">EAGAIN</text>
+        <rect class="f-hit" x="452" y="111" width="108" height="34"/><text class="f-text" x="506" y="133" text-anchor="middle">복사</text>
+        <text class="f-sub" x="575" y="133">계속 묻느라 CPU를 쓴다</text>
+
+        <text class="f-strong" x="20" y="187">다중화</text>
+        <rect class="f-box" x="150" y="166" width="294" height="34"/>
+        <text class="f-text" x="297" y="188" text-anchor="middle">epoll_wait로 여러 소켓을 함께 기다린다</text>
+        <rect class="f-hit" x="452" y="166" width="108" height="34"/><text class="f-text" x="506" y="188" text-anchor="middle">recv 복사</text>
+        <text class="f-sub" x="575" y="188">준비 알림 뒤 내가 읽는다</text>
+
+        <text class="f-strong" x="20" y="242">비동기</text>
+        <rect class="f-hit" x="150" y="221" width="48" height="34"/><text class="f-text" x="174" y="243" text-anchor="middle">요청</text>
+        <rect class="f-pad" x="204" y="221" width="350" height="34"/>
+        <text class="f-sub" x="325" y="243" text-anchor="middle">돌아와서 다른 일을 한다</text>
+        <rect class="f-miss" x="560" y="221" width="52" height="34"/><text class="f-on" x="586" y="243" text-anchor="middle">완료</text>
+        <text class="f-sub" x="622" y="243">이미 버퍼에 있다</text>
+      </svg>
+      <figcaption>가로축이 시간이다. 칠한 칸은 스레드가 그 호출 안에 묶여 있는 구간이다. 비동기에서는 그동안 커널이 복사까지 한다. 다중화는 ①이 끝났다는 "준비" 알림을 받고 ②를 직접 하고, 비동기는 ②까지 끝났다는 "완료" 알림을 받는다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>모델</th><th>호출하면</th><th>끝난 것을 어떻게 아나</th><th>대표 API</th></tr></thead>
+        <tbody>
+          <tr><td>블로킹</td><td>①②가 끝날 때까지 안 돌아온다</td><td>돌아온 것이 곧 완료다</td><td>기본 소켓의 <code>recv</code></td></tr>
+          <tr><td>논블로킹</td><td>읽을 것이 없으면 <code>EAGAIN</code>(Windows는 <code>WSAEWOULDBLOCK</code>)으로 바로 돌아온다</td><td>될 때까지 다시 부른다</td><td><code>O_NONBLOCK</code>, <code>FIONBIO</code></td></tr>
+          <tr><td>다중화</td><td>여러 소켓을 한 번에 감시하며 기다린다</td><td>준비된 소켓을 알려 주면 그때 읽는다</td><td><code>select</code>, <code>poll</code>, <code>epoll</code>, <code>kqueue</code></td></tr>
+          <tr><td>비동기</td><td>버퍼를 넘기고 바로 돌아온다</td><td>복사까지 끝나면 통지가 온다</td><td>Windows Overlapped I/O와 <a href="completion-port.html">IOCP</a>, Linux <code>io_uring</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      가장 헷갈리는 것이 다중화와 비동기다. 다중화가 알려 주는 것은 "지금 읽으면 막히지 않는다"이고, 읽는 시스템 콜은 그다음에 내가 부른다. 비동기가 알려 주는 것은 "다 읽어 두었다"이고, 데이터는 이미 내 버퍼에 있다. 그래서 다중화는 <strong>준비 통지</strong>, 비동기는 <strong>완료 통지</strong>라고 부른다.
+    </p>
+    <p>
+      다중화는 보통 논블로킹 소켓과 함께 쓴다. "준비됐다"는 알림을 받고 읽었는데 그사이 다른 스레드가 먼저 가져갔거나 알림이 거짓으로 왔으면, 블로킹 소켓은 거기서 멈춰 버리기 때문이다.
+    </p>
+
+    <h3>select는 매번 다 넘기고, epoll은 등록해 둔다</h3>
+    <p>
+      <code>select</code>는 감시할 소켓 목록을 부를 때마다 통째로 커널에 넘기고, 커널은 매번 전부를 훑는다. 돌아온 뒤에는 응용도 목록을 다시 훑어 어느 것이 준비됐는지 찾는다. 연결 수가 n이면 호출 한 번이 O(n)이다. Linux의 <code>fd_set</code>은 번호 1024 미만의 디스크립터만 담을 수 있다(<code>FD_SETSIZE</code>). <code>poll</code>은 이 한도를 없앴지만 매번 전부 넘기고 훑는 것은 같다.
+    </p>
+    <p>
+      <code>epoll</code>은 감시 목록을 커널 안에 만들어 두고(<code>epoll_ctl</code>로 추가·삭제), 기다릴 때는 준비된 것만 받아 온다(<code>epoll_wait</code>). 커널은 데이터가 도착하는 순간 그 소켓을 준비 목록에 올려 두므로, 호출 비용이 전체 연결 수가 아니라 준비된 개수에 비례한다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>select / poll</th><th>epoll (BSD·macOS는 kqueue)</th></tr></thead>
+        <tbody>
+          <tr><td>감시 목록</td><td>부를 때마다 전부 넘긴다</td><td>커널에 등록해 두고 바뀐 것만 고친다</td></tr>
+          <tr><td>커널이 하는 일</td><td>매번 전부 훑는다</td><td>도착할 때 준비 목록에 올려 둔다</td></tr>
+          <tr><td>돌려주는 것</td><td>목록 전체(응용이 다시 훑는다)</td><td>준비된 것만</td></tr>
+          <tr><td>개수 한도</td><td>select는 <code>FD_SETSIZE</code>, poll은 없음</td><td>사실상 디스크립터 한도뿐이다</td></tr>
+          <tr><td>이식성</td><td>거의 모든 OS</td><td>OS마다 다르다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      연결 수가 만 단위로 오르자 서버가 버티지 못하던 문제를 <strong>C10K 문제</strong>라고 불렀고, epoll과 kqueue가 그 답으로 나왔다. 연결이 몇십 개일 때는 차이가 거의 없다.
+    </p>
+    <p>
+      epoll에는 알려 주는 방식이 둘 있다. 기본인 <strong>레벨 트리거</strong>는 읽을 것이 남아 있는 동안 매번 알려 준다. <strong>엣지 트리거</strong>(<code>EPOLLET</code>)는 새 데이터가 도착한 순간 한 번만 알려 준다. 엣지 트리거로 쓰면 알림을 받을 때마다 <code>EAGAIN</code>이 나올 때까지 다 읽어야 한다. 덜 읽고 돌아가면 다음 데이터가 올 때까지 남은 것을 영영 모른다.
+    </p>
+
+    <h3>비동기는 버퍼를 먼저 내준다</h3>
+    <p>
+      Windows의 <strong>Overlapped I/O</strong>는 <code>WSARecv</code>에 버퍼와 요청 구조체(<code>OVERLAPPED</code>)를 넘기고 바로 돌아온다. 커널은 데이터가 오면 그 버퍼에 직접 채우고 완료를 알린다. 알리는 방법은 이벤트 객체, 완료 루틴(APC), 완료 포트(IOCP) 셋이고, 서버는 거의 IOCP를 쓴다. 여러 요청을 걸어 두고 동시에 진행시킨다는 뜻에서 "겹친다(overlapped)"라는 이름이 붙었다.
+    </p>
+    <p>
+      대가는 수명 규칙이다. 완료될 때까지 버퍼와 <code>OVERLAPPED</code>는 그 주소에 그대로 있어야 한다. 함수 지역 변수로 잡으면 함수가 끝날 때 사라지고, 커널은 이미 없는 자리에 쓴다. <a data-ref="csharp/gc-basics">GC</a>가 객체를 옮기는 런타임에서는 버퍼를 <strong>고정(pin)</strong>해야 하고, 고정된 객체가 많으면 힙 압축이 막힌다(<a href="completion-port.html">완료 알림 기반 서버</a>).
+    </p>
+    <p>
+      Linux의 <strong>io_uring</strong>(커널 5.1부터)은 요청을 넣는 큐와 완료를 꺼내는 큐를 커널과 응용이 <a data-ref="operating-system/ipc">공유 메모리</a>로 함께 쓴다. 요청 여러 개를 시스템 콜 한 번으로 넣거나 아예 시스템 콜 없이 넣을 수 있어서 호출 비용까지 줄인다(<a href="../system-programming/syscall-cost.html">시스템 콜 비용</a>). epoll과 달리 디스크 파일도 진짜 비동기로 읽는다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>연결 수와 플랫폼이 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 쪽</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>연결이 수십 개(툴, 내부 관리 서버)</td><td>블로킹 + 연결마다 스레드</td><td>코드가 가장 단순하고 디버깅이 쉽다</td></tr>
+          <tr><td>연결이 수천 개 이상, Linux</td><td>epoll(+ 논블로킹)</td><td>준비된 것만 받아 오므로 연결 수에 덜 묶인다</td></tr>
+          <tr><td>연결이 수천 개 이상, Windows</td><td>Overlapped I/O + IOCP</td><td>Windows의 select는 느리고, epoll이 없다</td></tr>
+          <tr><td>Linux에서 시스템 콜 비용까지 줄여야 할 때</td><td>io_uring</td><td>한 번에 여러 요청을 넣고 꺼낸다. 커널 버전과 보안 정책을 확인해야 한다</td></tr>
+          <tr><td>여러 OS를 함께 지원</td><td>런타임·라이브러리의 비동기 API</td><td>.NET 소켓, libuv, Boost.Asio가 OS별 구현을 감싼다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      스레드 하나씩 붙이는 구조가 버티지 못하는 이유는 스레드마다 스택 공간을 따로 잡고(<a href="../system-programming/virtual-vs-resident.html">할당과 실제 확보</a>), 수천 개가 번갈아 깨어나며 전환 비용을 내기 때문이다(<a href="../operating-system/pcb-context-switch.html">PCB와 컨텍스트 스위칭</a>). 연결 수가 적으면 이 비용이 작으니, 다중화나 비동기로 바꿔 복잡도만 늘릴 이유가 없다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>.NET은 OS마다 다른 모델 위에 같은 API를 준다.</strong> <code>Socket.ReceiveAsync</code>는 Windows에서 Overlapped I/O와 IOCP 위에서, Linux에서는 epoll 위에서 돈다. Linux에서는 런타임이 epoll로 준비 알림을 받은 뒤 직접 읽어 완료처럼 넘겨준다. 그래서 같은 코드가 두 OS에서 돌지만, 버퍼를 넘기는 시점과 비용은 다르다.
+      </li>
+      <li>
+        <strong>비동기 코드의 이어지는 부분은 스레드 풀에서 돈다.</strong> <code>await</code> 뒤의 코드는 완료를 받은 스레드 풀 스레드에서 실행된다. 받은 패킷을 그 자리에서 게임 상태에 반영하면 여러 스레드가 동시에 상태를 고치게 된다. 받은 것은 큐에 넣고 상태 변경은 한곳에 모은다(<a href="threading-model.html">게임 서버 스레딩 모델</a>, <a data-ref="csharp/async-basics">async와 await</a>).
+      </li>
+      <li>
+        <strong>스레드 풀을 블로킹으로 막지 않는다.</strong> 비동기 소켓을 쓰면서 그 콜백 안에서 동기 DB 호출이나 <code>Task.Result</code>로 기다리면, 완료를 처리할 스레드가 모자라 모든 연결의 응답이 함께 늦어진다(<a href="../operating-system/thread-pool.html">스레드 풀과 실행 모델</a>의 스레드 풀 고갈).
+      </li>
+      <li>
+        <strong>io_uring은 환경부터 확인한다.</strong> 보안 문제가 여러 번 나와 일부 컨테이너 런타임의 기본 정책과 클라우드 커널에서 막아 둔 경우가 있다. 개발 환경에서 빨랐다고 운영에서 쓸 수 있는 것은 아니다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>논블로킹과 비동기는 같은 말이 아니다.</strong> 논블로킹은 바로 돌아올 뿐 읽는 일은 여전히 내가 한다. 비동기는 읽기까지 맡기고 완료를 받는다.</li>
+      <li><strong>논블로킹만으로는 빨라지지 않는다.</strong> 혼자 쓰면 될 때까지 계속 묻느라 CPU만 쓴다(바쁜 대기). 다중화와 함께 써야 의미가 있다.</li>
+      <li><strong>epoll이 select보다 항상 빠른 것은 아니다.</strong> 감시하는 소켓이 적고 대부분이 늘 바쁘면 차이가 거의 없다. epoll의 이점은 연결은 많고 그중 일부만 바쁠 때 나온다.</li>
+      <li><strong>epoll은 디스크 파일에 쓸 수 없다.</strong> 일반 파일은 늘 "준비됨"으로 취급되어 등록 자체가 거부된다. 파일 읽기는 별도 스레드나 io_uring으로 처리한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

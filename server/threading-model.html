@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>게임 서버 스레딩 모델 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/threading-model">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="completion-port.html">완료 알림 기반 서버</a> · <a href="../operating-system/sync-primitives.html">동기화 객체</a> · <a href="../computer-architecture/cache-coherence.html">캐시 일관성과 false sharing</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      게임 서버의 상태는 서로 얽혀 있다. 공격 한 번이 공격자, 대상, 주변 몬스터, 파티, 드롭 아이템을 함께 바꾼다. 락을 잘게 나누면 데드락과 경합이 따라오고, 크게 걸면 결국 한 번에 한 스레드만 돈다.
+    </p>
+    <p>
+      그래서 많은 게임 서버가 <strong>상태를 고치는 스레드를 하나로 정한다</strong>(단일 쓰기 스레드). 다른 스레드는 할 일을 큐에 넣기만 한다. 락이 통째로 사라지고 순서가 정해지는 대신, 그 스레드가 쓰는 <span class="blank">코어 하나가 처리량의 상한</span>이 된다. 상한에 닿으면 상태를 조각으로 나눠 조각마다 쓰기 스레드를 둔다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>상태를 누가 고치느냐로 모델이 나뉜다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>모델</th><th>어떻게</th><th>얻는 것</th><th>내주는 것</th></tr></thead>
+        <tbody>
+          <tr><td>연결마다 스레드</td><td>접속 하나에 스레드 하나가 받고 처리한다</td><td>코드가 순서대로 읽힌다</td><td>연결이 늘면 스레드와 전환 비용이 감당되지 않는다. 공유 상태에는 여전히 락이 필요하다</td></tr>
+          <tr><td><a data-ref="operating-system/thread-pool">스레드 풀</a> + 락</td><td>여러 스레드가 공유 상태를 락으로 보호하며 고친다</td><td>코어를 다 쓴다</td><td>데드락, 경합, 재현되지 않는 버그(<a href="../operating-system/deadlock.html">데드락</a>)</td></tr>
+          <tr><td>단일 쓰기 스레드</td><td>상태 변경은 로직 스레드 하나만 한다. 나머지는 큐에 넣는다</td><td>락이 없다. 처리 순서가 하나로 정해진다</td><td>코어 하나가 상한이다. 긴 작업 하나가 전체를 멈춘다</td></tr>
+          <tr><td>조각별 직렬 실행</td><td>방·지역·객체마다 작업 큐를 두고, 한 큐는 한 번에 한 스레드만 실행한다</td><td>조각 안에서는 락이 없고, 조각끼리는 여러 코어에서 함께 돈다</td><td>조각을 넘는 변경이 어려워진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      마지막 모델은 단일 쓰기 스레드를 조각 수만큼 늘린 것이다. 조각마다 전용 스레드를 둘 수도 있고, 스레드 풀이 큐를 하나씩 맡아 돌리되 같은 큐를 두 스레드가 동시에 잡지 않게만 할 수도 있다. 뒤의 방식을 strand, 잡 큐 직렬화라고 부르고, 조각끼리 메시지로만 주고받게 하면 <a data-ref="architecture/actor-model">액터 모델</a>이 된다.
+    </p>
+
+    <h3>단일 쓰기 스레드의 흐름</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="I/O 스레드가 받은 패킷을 작업 큐에 넣고, 로직 스레드 하나가 꺼내 상태를 고치며, 무거운 일은 다른 스레드에 넘기고 결과를 다시 큐로 받는다">
+        <defs><marker id="th-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="40" width="120" height="32"/><text class="f-text" x="80" y="61" text-anchor="middle">I/O 스레드 1</text>
+        <rect class="f-box" x="20" y="82" width="120" height="32"/><text class="f-text" x="80" y="103" text-anchor="middle">I/O 스레드 2</text>
+        <rect class="f-box" x="20" y="124" width="120" height="32"/><text class="f-text" x="80" y="145" text-anchor="middle">I/O 스레드 3</text>
+        <text class="f-sub" x="80" y="178" text-anchor="middle">수신 · 파싱</text>
+        <line class="f-line" x1="142" y1="56" x2="186" y2="92" marker-end="url(#th-a)"/>
+        <line class="f-line" x1="142" y1="98" x2="186" y2="100" marker-end="url(#th-a)"/>
+        <line class="f-line" x1="142" y1="140" x2="186" y2="108" marker-end="url(#th-a)"/>
+
+        <text class="f-strong" x="275" y="68" text-anchor="middle">작업 큐</text>
+        <rect class="f-box" x="190" y="80" width="170" height="40"/>
+        <rect class="f-hit" x="200" y="88" width="26" height="24"/>
+        <rect class="f-hit" x="232" y="88" width="26" height="24"/>
+        <rect class="f-hit" x="264" y="88" width="26" height="24"/>
+        <rect class="f-hit" x="296" y="88" width="26" height="24"/>
+        <rect class="f-hit" x="328" y="88" width="26" height="24"/>
+        <line class="f-line" x1="362" y1="100" x2="406" y2="100" marker-end="url(#th-a)"/>
+
+        <rect class="f-hit" x="410" y="70" width="180" height="60"/>
+        <text class="f-strong" x="500" y="96" text-anchor="middle">로직 스레드 1개</text>
+        <text class="f-sub" x="500" y="116" text-anchor="middle">상태를 고치는 유일한 곳</text>
+        <line class="f-line" x1="592" y1="100" x2="626" y2="100" marker-end="url(#th-a)"/>
+        <rect class="f-box" x="630" y="80" width="110" height="40"/><text class="f-text" x="685" y="105" text-anchor="middle">송신 큐</text>
+
+        <line class="f-line" x1="500" y1="132" x2="500" y2="176" marker-end="url(#th-a)"/>
+        <text class="f-sub" x="510" y="158">무거운 일은 넘긴다</text>
+        <rect class="f-box" x="410" y="180" width="180" height="40"/><text class="f-text" x="500" y="205" text-anchor="middle">DB · 파일 작업 스레드</text>
+        <line class="f-line" x1="408" y1="200" x2="282" y2="124" marker-end="url(#th-a)"/>
+        <text class="f-sub" x="190" y="215">결과는 큐로 돌려보낸다</text>
+      </svg>
+      <figcaption>상태를 만지는 것은 가운데 로직 스레드뿐이다. 다른 스레드는 일을 큐에 넣거나 결과를 큐로 돌려보낼 뿐 상태를 직접 고치지 않는다.</figcaption>
+    </figure>
+    <p>
+      I/O 스레드(<a href="completion-port.html">완료 알림 기반 서버</a>의 작업 스레드)는 바이트를 받아 패킷으로 자른 뒤 작업 큐에 넣고 바로 돌아간다. 로직 스레드는 큐에서 하나씩 꺼내 처리한다. 정해진 간격(틱)마다 이동, 전투, AI를 한 번씩 돌리는 루프와 함께 쓰는 경우가 많다.
+    </p>
+    <p>이렇게 하면 세 가지를 얻는다.</p>
+    <ul>
+      <li><strong>락이 필요 없다.</strong> 상태를 만지는 스레드가 하나뿐이라 데드락도, 경합도, 락 순서 규칙도 없다.</li>
+      <li><strong>순서가 하나로 정해진다.</strong> 큐에서 꺼낸 순서가 곧 일어난 순서다. 두 플레이어가 같은 아이템을 동시에 줍는 경우도 먼저 꺼낸 쪽이 가져간다.</li>
+      <li><strong>재현이 쉬워진다.</strong> 큐에 들어간 입력을 순서대로 기록해 두면 같은 입력으로 같은 결과를 다시 만들 수 있다. 동시성 버그에서 가장 힘든 "다시 안 일어난다"가 사라진다.</li>
+    </ul>
+
+    <h3>한 코어가 상한이고, 긴 작업 하나가 전체를 멈춘다</h3>
+    <p>
+      로직 스레드가 한 틱에 처리할 수 있는 양이 서버 전체의 처리량이다. 코어를 32개 꽂아도 상태 변경은 한 코어에서 돈다. 그리고 큐는 하나라서, 어떤 일 하나가 10ms를 쓰면 그 뒤의 모든 일이 10ms 늦어진다.
+    </p>
+    <p>
+      그래서 이 구조에서는 로직 스레드에서 <strong>기다리는 일을 하지 않는다</strong>. DB 조회, 파일 쓰기, 외부 API, 무거운 길찾기는 다른 스레드에 넘기고, 결과는 메시지로 작업 큐에 다시 넣는다. 결과를 받은 시점에 상태가 그사이 바뀌었을 수 있으므로(대상이 이미 죽었거나 로그아웃했거나), 결과를 반영하기 전에 다시 확인한다.
+    </p>
+
+    <h3>단일 쓰기 스레드는 느린 구조가 아니다</h3>
+    <p>
+      여러 코어가 같은 데이터에 쓰면, 그 데이터를 담은 <a data-ref="computer-architecture/memory-hierarchy">캐시 라인</a>의 소유권이 코어 사이를 계속 오간다. 쓸 때마다 다른 코어의 사본을 무효로 만들어야 해서 접근마다 캐시 미스가 난다(<a href="../computer-architecture/cache-coherence.html">캐시 일관성과 false sharing</a>). 락까지 더하면 락 변수 자체가 그 왕복의 중심이 된다.
+    </p>
+    <p>
+      쓰는 스레드가 하나면 이 왕복이 없다. 상태가 그 코어의 캐시에 머물러 있어 공유 상태를 많이 고치는 작업에서는 한 스레드가 여러 스레드보다 빠른 경우도 있다. 읽기는 여러 코어가 사본을 나눠 가져도 서로를 무효로 만들지 않으므로, 읽기만 하는 일(통계 집계, 조회)은 다른 스레드에 줘도 된다. 단, 로직 스레드가 고치는 중인 데이터를 동시에 읽으면 반쯤 바뀐 값을 볼 수 있으니 스냅숏을 넘기는 식으로 나눈다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>상한에 닿으면 무엇을 하나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>언제 맞나</th></tr></thead>
+        <tbody>
+          <tr><td>무거운 일만 뺀다</td><td>DB·직렬화·압축·길찾기를 다른 스레드로</td><td>시간을 쓰는 것이 몇 가지 작업에 몰려 있을 때. 대개 이것부터다</td></tr>
+          <tr><td>공간으로 나눈다</td><td>맵·채널·던전 인스턴스마다 쓰기 스레드나 직렬 큐</td><td>지역 사이 상호작용이 드물 때</td></tr>
+          <tr><td>기능으로 나눈다</td><td>전투, 거래, 채팅, 길드를 따로</td><td>기능 사이 의존이 얕을 때</td></tr>
+          <tr><td>데이터 병렬</td><td>한 틱 안의 독립 계산(AI 판단, 시야 계산)을 여러 스레드에 나눴다가 모은다</td><td>읽기 위주의 계산이 크고 결과 반영만 직렬로 하면 될 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      나누기 전에 먼저 잰다. 틱마다 어떤 일이 시간을 쓰는지 프로파일링하면 대개 몇 가지 무거운 작업이 대부분을 차지한다. 그것만 빼도 상한이 크게 오른다.
+    </p>
+    <p>
+      나누면 <strong>경계를 넘는 일</strong>이 새로 생긴다. 지역 A의 플레이어가 지역 B의 플레이어와 거래하면, 두 쓰기 스레드가 함께 바꿔야 한다. 둘 다 되거나 둘 다 안 되게 하려면 한쪽이 상대에게 메시지를 보내고, 확인을 받고, 실패하면 되돌리는 절차가 필요하다. 한 스레드 안에서는 순서만 지키면 끝나던 일이 왕복 몇 번짜리 절차로 바뀐다. 이 비용 때문에 경계를 자주 넘는 기능은 나누지 않고 한 조각에 둔다. 프로세스나 서버 단위로 나누는 이야기는 <a data-ref="architecture/scaling">확장과 샤딩</a>에서 다룬다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>C#에서 <code>await</code> 뒤는 다른 스레드다.</strong> 로직 스레드에서 <code>await db.LoadAsync()</code>를 하면, 이어지는 코드는 따로 정해 두지 않는 한 스레드 풀 스레드에서 돈다. 그 코드가 게임 상태를 고치면 단일 쓰기 규칙이 조용히 깨진다. 결과는 작업 큐에 메시지로 넣거나, 로직 스레드로 돌아오는 전용 동기화 컨텍스트를 둔다(<a data-ref="csharp/sync-context">동기화 컨텍스트</a>).
+      </li>
+      <li>
+        <strong>틱 초과를 지표로 남긴다.</strong> 틱 하나가 정한 시간(예: 50ms)을 넘긴 횟수와 가장 오래 걸린 작업을 기록해 둔다. 상한에 다가가는 것은 평균 CPU 사용률보다 이 값에서 먼저 보인다.
+      </li>
+      <li>
+        <strong>큐는 여러 스레드가 넣고 하나가 뺀다.</strong> 이 모양에 맞는 다중 생산자·단일 소비자 큐를 쓴다. .NET이라면 <code>System.Threading.Channels</code>의 <code>SingleReader = true</code> 옵션이나 <code>ConcurrentQueue</code>가 출발점이다(<a href="../data-structure/stack-queue.html">스택과 큐</a>).
+      </li>
+      <li>
+        <strong>작업 하나의 길이가 응답 시간을 정한다.</strong> 길드 전체 순회나 대량 아이템 지급처럼 한 번에 오래 걸리는 작업은 여러 틱에 나눠 처리한다. 그동안 다른 요청이 같은 대상을 바꿀 수 있으니 중간 상태를 고려해 설계한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"락이 없다"는 상태 변경에 대한 말이다.</strong> 작업 큐 자체는 여러 스레드가 동시에 넣으므로 스레드 안전해야 하고, 안에서는 원자적 연산이나 짧은 락을 쓴다. 넣고 빼는 순간에만 잠깐 쓰이므로 상태 전체에 거는 락과는 경합 정도가 다르다(<a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>).</li>
+      <li><strong>나누는 것을 먼저 하면 대개 후회한다.</strong> 나눈 뒤에는 경계를 넘는 모든 기능에 절차가 붙고 되돌리기 어렵다. 무거운 작업을 빼서 얼마나 벌 수 있는지 먼저 본다.</li>
+      <li><strong>로직 스레드에서 블로킹 호출을 하면 서버 전체가 멈춘다.</strong> 동기 DB 호출, <code>Thread.Sleep</code>, <code>Task.Result</code> 하나가 그 시간 동안 모든 플레이어를 세운다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

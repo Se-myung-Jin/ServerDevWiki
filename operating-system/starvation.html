@@ -15,7 +15,7 @@
     <h2>핵심 요약</h2>
     <p>
       <strong>기아(starvation)</strong>는 차례가 영영 오지 않는 상태다. 시스템 전체는 정상으로 동작하는데 특정 흐름만 계속 밀린다.
-      평균 응답 시간은 정상으로 보이고 <span class="blank">꼬리 지연</span>만 길어져서 지표로도 잘 안 잡힌다.
+      평균 응답 시간은 정상으로 보이고 <span class="blank"><a data-ref="operations/diagnosis">꼬리 지연</a></span>만 길어져서 지표로도 잘 안 잡힌다.
     </p>
     <p>
       순서를 순위로 정해 놓고 그 순위가 바뀌지 않으면 낮은 쪽은 영영 밀린다.
@@ -109,7 +109,7 @@
       </li>
       <li>
         <strong>스레드 우선순위는 건드리지 않는 편이 낫다.</strong>
-        <code>Thread.Priority</code>를 올린 로직 스레드가 낮은 우선순위 스레드와 락을 공유하면 바로 우선순위 역전이 생긴다. OS가 오래 굶은 스레드를 잠시 올려 주긴 하지만 수 초 단위라 게임 틱에는 너무 늦다.
+        <code>Thread.Priority</code>를 올린 <a data-ref="server/threading-model">로직 스레드</a>가 낮은 우선순위 스레드와 락을 공유하면 바로 우선순위 역전이 생긴다. OS가 오래 굶은 스레드를 잠시 올려 주긴 하지만 수 초 단위라 게임 틱에는 너무 늦다.
       </li>
     </ul>
 

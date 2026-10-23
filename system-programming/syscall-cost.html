@@ -100,7 +100,7 @@
         응용 쪽에서 할 일은 송신을 모으는 것이다. <code>System.IO.Pipelines</code>의 <code>PipeWriter</code>에 한 틱 동안의 패킷을 쓰고 <code>FlushAsync</code>를 한 번 부르거나, 세션별 송신 버퍼를 틱 끝에 한 번 보낸다.
       </li>
       <li>
-        <strong><code>TCP_NODELAY</code>를 켰다면 묶기는 응용 책임이다.</strong> 지연을 줄이려고 Nagle 알고리즘을 끄면(<code>Socket.NoDelay = true</code>), 커널이 작은 패킷을 모아 주지 않는다. 그 상태에서 패킷마다 <code>Send</code>하면 시스템 콜과 TCP 세그먼트가 함께 늘어난다.
+        <strong><code>TCP_NODELAY</code>를 켰다면 묶기는 응용 책임이다.</strong> 지연을 줄이려고 <a data-ref="server/small-packet-delay">Nagle 알고리즘</a>을 끄면(<code>Socket.NoDelay = true</code>), 커널이 작은 패킷을 모아 주지 않는다. 그 상태에서 패킷마다 <code>Send</code>하면 시스템 콜과 TCP 세그먼트가 함께 늘어난다.
       </li>
       <li>
         <strong>sys 비율이 높으면 횟수부터 의심한다.</strong> 접속자가 늘 때 CPU의 커널 비율이 로직보다 빨리 오르면, 패킷·로그·타이머 호출 횟수가 접속자 수에 비례해 늘고 있다는 신호다. <code>strace -c</code>로 어떤 호출이 많은지 확인하고 그 호출부터 묶는다.

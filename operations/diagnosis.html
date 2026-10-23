@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>느린 서버 진단 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operations/diagnosis">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/backpressure.html">큐와 백프레셔</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      "서버가 느리다"는 증상이지 원인이 아니다. 서버 지표부터 열기 전에 <strong>언제부터, 누구에게, 무엇이</strong> 느린지를 먼저 묻는다. 이 세 질문이 범위를 가장 빨리 줄인다. 그다음 요청이 지나가는 층을 순서대로 내려가며 하나씩 지운다.
+    </p>
+    <p>
+      잴 때는 평균만 보지 않는다. 평균은 멀쩡한데 일부 요청만 심하게 느린 경우가 흔하고, 사용자가 "렉"으로 느끼는 것은 그 일부다. 평균과 <span class="blank">p99</span>를 함께 보고, 둘이 어떻게 움직이는지로 원인의 방향을 가른다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>범위부터 좁힌다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>순서</th><th>묻는 것</th><th>답에 따라</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>언제부터인가</td><td>배포·설정 변경 직후면 그 변경이 1순위다. 서서히 나빠졌다면 데이터나 메모리처럼 쌓이는 것을 본다</td></tr>
+          <tr><td>2</td><td>누구에게인가</td><td>모두에게면 서버 쪽이다. 특정 지역·통신사만이면 경로나 <a href="../network/dns-resolution.html">이름 해석</a> 문제일 가능성이 크다</td></tr>
+          <tr><td>3</td><td>무엇이 느린가</td><td>접속만, 특정 기능만, 전반적으로. 특정 기능만이면 그 기능이 부르는 DB 질의나 외부 API를 먼저 본다</td></tr>
+          <tr><td>4</td><td>어느 층인가</td><td>여기서 비로소 서버 안을 본다. 아래 그림의 순서로 내려간다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      배포 직후에 느려졌다면 원인을 찾기 전에 되돌리는 것이 가장 빠른 대응이다. 원인 분석은 되돌린 뒤에 해도 된다.
+    </p>
+
+    <h3>요청이 지나가는 큐를 순서대로 본다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 270" role="img" aria-label="요청이 망, 커널 수신 버퍼, 스레드 풀 큐, 게임 로직을 지나 DB를 거치고, 송신 큐와 커널 송신 버퍼를 지나 다시 망으로 나간다. 칸마다 볼 지표가 있다">
+        <defs><marker id="dg-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="95" y="30" text-anchor="middle">지연·손실</text>
+        <text class="f-sub" x="285" y="30" text-anchor="middle">ss의 Recv-Q</text>
+        <text class="f-sub" x="475" y="30" text-anchor="middle">스레드 풀 큐 길이</text>
+        <text class="f-sub" x="665" y="30" text-anchor="middle">틱 초과 · 락 경합</text>
+        <rect class="f-box" x="20" y="40" width="150" height="50"/><text class="f-text" x="95" y="70" text-anchor="middle">망</text>
+        <rect class="f-box" x="210" y="40" width="150" height="50"/><text class="f-text" x="285" y="70" text-anchor="middle">커널 수신 버퍼</text>
+        <rect class="f-box" x="400" y="40" width="150" height="50"/><text class="f-text" x="475" y="70" text-anchor="middle">스레드 풀 큐</text>
+        <rect class="f-hit" x="590" y="40" width="150" height="50"/><text class="f-strong" x="665" y="70" text-anchor="middle">게임 로직</text>
+        <line class="f-line" x1="170" y1="65" x2="208" y2="65" marker-end="url(#dg-a)"/>
+        <line class="f-line" x1="360" y1="65" x2="398" y2="65" marker-end="url(#dg-a)"/>
+        <line class="f-line" x1="550" y1="65" x2="588" y2="65" marker-end="url(#dg-a)"/>
+        <line class="f-line f-dash" x1="690" y1="90" x2="690" y2="168" marker-end="url(#dg-a)"/>
+        <line class="f-line" x1="610" y1="90" x2="500" y2="168" marker-end="url(#dg-a)"/>
+        <rect class="f-box" x="20" y="170" width="150" height="50"/><text class="f-text" x="95" y="200" text-anchor="middle">망</text>
+        <rect class="f-box" x="210" y="170" width="150" height="50"/><text class="f-text" x="285" y="200" text-anchor="middle">커널 송신 버퍼</text>
+        <rect class="f-box" x="400" y="170" width="150" height="50"/><text class="f-text" x="475" y="200" text-anchor="middle">응용 송신 큐</text>
+        <rect class="f-box" x="590" y="170" width="150" height="50"/><text class="f-text" x="665" y="200" text-anchor="middle">DB · 외부 호출</text>
+        <line class="f-line" x1="400" y1="195" x2="362" y2="195" marker-end="url(#dg-a)"/>
+        <line class="f-line" x1="210" y1="195" x2="172" y2="195" marker-end="url(#dg-a)"/>
+        <text class="f-sub" x="95" y="242" text-anchor="middle">재전송</text>
+        <text class="f-sub" x="285" y="242" text-anchor="middle">ss의 Send-Q</text>
+        <text class="f-sub" x="475" y="242" text-anchor="middle">세션별 큐 길이</text>
+        <text class="f-sub" x="665" y="242" text-anchor="middle">풀 대기 · 질의 시간</text>
+      </svg>
+      <figcaption>요청은 위 줄을 따라 들어와 아래 줄로 나간다. 칸마다 기다리는 곳이 있고, 그 위아래 글자가 그 칸에서 쌓였는지 보는 지표다. 앞 칸에서 쌓였다면 뒤 칸은 볼 필요가 없다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>어디</th><th>무엇을 보나</th><th>쌓여 있으면</th></tr></thead>
+        <tbody>
+          <tr><td>커널 수신 버퍼</td><td>Linux <code>ss -tn</code>의 Recv-Q(응용이 아직 읽어 가지 않은 바이트)</td><td>망은 멀쩡하고 응용이 받아 가지 못한다. 그 뒤 칸에서 막혔다</td></tr>
+          <tr><td><a data-ref="operating-system/thread-pool">스레드 풀</a> 큐</td><td><code>dotnet-counters</code>의 스레드 풀 큐 길이, 스레드 수</td><td>일을 받아 줄 스레드가 없다. 동기 대기로 스레드를 묶어 둔 코드가 흔한 원인이다</td></tr>
+          <tr><td>게임 로직</td><td>틱 시간, 틱 예산을 넘긴 횟수, 락 경합 횟수</td><td>처리 자체가 길어졌다. <code>dotnet-trace</code>로 표본을 떠서 어디서 시간을 쓰는지 본다</td></tr>
+          <tr><td>DB · 외부 호출</td><td>연결 풀 대기 시간, 질의 시간</td><td>밖에서 기다리고 있다. 느린 질의나 풀 크기를 본다</td></tr>
+          <tr><td>응용 송신 큐</td><td>세션마다 보내지 못하고 쌓인 메시지 수</td><td>특정 클라이언트가 못 받아 간다(<a href="../server/backpressure.html">백프레셔</a>)</td></tr>
+          <tr><td>커널 송신 버퍼</td><td><code>ss -tn</code>의 Send-Q(보냈지만 아직 확인받지 못한 바이트)</td><td>상대가 받아 가지 못하거나 경로에서 손실이 난다(<a href="../network/flow-congestion.html">흐름 제어와 혼잡 제어</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      값 하나만 찍어 보고 판단하지 않는다. 큐는 원래 잠깐씩 찼다 비므로, 한 번 본 값은 마침 읽어 가기 직전이었을 수 있다. 몇 초 간격으로 여러 번 재서 <strong>계속 쌓이는지</strong>를 본다.
+    </p>
+
+    <h3>평균은 꼬리를 숨긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 220" role="img" aria-label="응답 시간 분포. 대부분은 앞쪽에 몰려 있고 오른쪽으로 긴 꼬리가 있다. 평균선은 앞쪽에, p99 선은 꼬리 안쪽에 있다">
+        <line class="f-line" x1="60" y1="180" x2="680" y2="180"/>
+        <line class="f-line" x1="60" y1="30" x2="60" y2="180"/>
+        <text class="f-sub" x="52" y="40" text-anchor="end">요청 수</text>
+        <text class="f-sub" x="680" y="200" text-anchor="end">응답 시간 →</text>
+        <rect class="f-bar" x="64" y="150" width="36" height="30"/>
+        <rect class="f-bar" x="104" y="60" width="36" height="120"/>
+        <rect class="f-bar" x="144" y="40" width="36" height="140"/>
+        <rect class="f-bar" x="184" y="90" width="36" height="90"/>
+        <rect class="f-bar" x="224" y="130" width="36" height="50"/>
+        <rect class="f-bar" x="264" y="155" width="36" height="25"/>
+        <rect class="f-bar" x="304" y="166" width="36" height="14"/>
+        <rect class="f-bar" x="344" y="171" width="36" height="9"/>
+        <rect class="f-bar" x="384" y="174" width="36" height="6"/>
+        <rect class="f-bar" x="424" y="175" width="36" height="5"/>
+        <rect class="f-bar" x="464" y="176" width="36" height="4"/>
+        <rect class="f-bar" x="504" y="176" width="36" height="4"/>
+        <rect class="f-bar" x="544" y="177" width="36" height="3"/>
+        <rect class="f-bar" x="584" y="177" width="36" height="3"/>
+        <rect class="f-bar" x="624" y="178" width="36" height="2"/>
+        <line class="f-tick" x1="196" y1="24" x2="196" y2="180"/>
+        <text class="f-strong" x="204" y="30">평균</text>
+        <line class="f-tick" x1="544" y1="80" x2="544" y2="180"/>
+        <text class="f-strong" x="552" y="92">p99</text>
+        <text class="f-sub" x="552" y="110">100번 중 1번은</text>
+        <text class="f-sub" x="552" y="126">이보다 느리다</text>
+        <text class="f-sub" x="330" y="140">꼬리: 평균은 거의 안 움직인다</text>
+      </svg>
+      <figcaption>응답 시간은 대개 앞쪽에 몰리고 오른쪽으로 긴 꼬리를 끈다. 꼬리가 두 배로 길어져도 평균은 조금밖에 안 움직이지만, p99는 꼬리를 그대로 따라간다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>지표</th><th>무엇을 말하나</th><th>함정</th></tr></thead>
+        <tbody>
+          <tr><td>평균</td><td>전체 경향</td><td>일부가 심하게 느려도 묻힌다</td></tr>
+          <tr><td>p50 (중앙값)</td><td>보통 사용자의 경험</td><td>꼬리를 전혀 보여 주지 않는다</td></tr>
+          <tr><td>p99</td><td>느린 쪽 100분의 1의 경계</td><td>표본이 적으면 흔들린다. 서버별 p99를 평균 내면 전체 p99가 아니다</td></tr>
+          <tr><td>최댓값</td><td>가장 나쁜 경우</td><td>이상치 하나에 좌우된다</td></tr>
+          <tr><td>처리량</td><td>얼마나 하고 있나</td><td>느려져도 처리량은 그대로일 수 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      평균과 p99를 나란히 놓으면 방향이 갈린다. <strong>둘이 함께 오르면</strong> 용량이 모자란 것이다. 서버를 늘리거나 처리를 가볍게 한다. <strong>평균은 그대로인데 p99만 오르면</strong> 가끔 일어나는 무언가가 있다. 이때는 서버를 늘려도 꼬리가 그대로 남는다.
+    </p>
+    <p>
+      백분위는 평균 낼 수 없다. 서버 열 대의 p99를 평균 낸 값은 어떤 요청의 p99도 아니다. 전체 p99를 보려면 각 서버의 응답 시간 분포(히스토그램)를 모아 합친 뒤 계산한다.
+    </p>
+
+    <h3>꼬리만 길다면 가끔 일어나는 일을 찾는다</h3>
+    <ul>
+      <li><strong><a data-ref="csharp/gc-basics">GC</a> 멈춤.</strong> 수집이 도는 순간 요청이 멈춘다. 느려진 시각과 GC 시각이 겹치는지 본다(<a data-ref="csharp/gc-modes">GC 모드</a>).</li>
+      <li><strong>락 경합.</strong> 평소에는 안 겹치다가 어쩌다 몰릴 때만 기다린다.</li>
+      <li><strong>스레드 풀 고갈.</strong> 스레드가 모자라면 .NET 스레드 풀은 스레드를 천천히 늘리므로, 몰리는 순간 대기가 수 초까지 튈 수 있다.</li>
+      <li><strong>재전송.</strong> 패킷 하나를 잃은 연결만 재전송 타이머만큼 늦어진다(<a href="../network/tcp-vs-udp.html">TCP와 UDP</a>).</li>
+      <li><strong>차가운 경로.</strong> 처음 불리는 코드의 JIT 컴파일, 캐시에 없는 데이터를 처음 읽을 때(<a href="../csharp/jit-aot.html">JIT와 AOT</a>).</li>
+    </ul>
+    <p>
+      모두 평균에 묻힌다. 100번에 1번 일어나는 일은 평균을 거의 바꾸지 않지만 p99는 그것으로 정해진다.
+    </p>
+    <p>
+      요청 하나가 여러 서버의 응답을 모아야 하면 꼬리가 흔해진다. 각 서버가 1% 확률로 느리다면, 10대를 거치는 요청은 약 10%(1 − 0.99<sup>10</sup>), 100대를 거치면 약 63%가 적어도 한 번은 느린 응답을 만난다. 한 서버의 p99가 전체 요청의 보통 경험이 되는 것이다.
+    </p>
+    <p>
+      찾으려면 그 순간의 기록이 있어야 한다. 느린 요청만 따로 상세히 남기고, 지표를 짧은 간격으로 기록해 두면 GC·락·큐가 튄 시각과 맞춰 볼 수 있다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>평소에 무엇을 재 두나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>대상</th><th>틀</th><th>무엇을</th></tr></thead>
+        <tbody>
+          <tr><td>요청을 받는 서비스</td><td>RED</td><td>초당 요청 수(Rate), 오류 수(Errors), 응답 시간 분포(Duration)</td></tr>
+          <tr><td>CPU·메모리·큐·연결 풀 같은 자원</td><td>USE</td><td>사용률(Utilization), 포화도(Saturation, 기다리는 양), 오류(Errors)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      장애가 난 뒤에 재기 시작하면 비교할 평소 값이 없다. 평소 같은 요일·같은 시각의 값이 있어야 "이 숫자가 높은가"를 판단할 수 있다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 시간이 가장 먼저 볼 지표다.</strong> 틱 예산(예: 30Hz면 약 33ms)을 넘긴 횟수와 틱 시간 분포를 늘 기록한다. 틱이 밀리면 그 서버의 모든 플레이어가 함께 느려진다.
+      </li>
+      <li>
+        <strong>"렉" 제보는 지역과 통신사부터 묻는다.</strong> 특정 통신사만이면 서버를 아무리 봐도 나오지 않는다. 클라이언트가 보고하는 왕복 시간과 손실률을 함께 모아 두면 서버와 경로를 바로 가른다.
+      </li>
+      <li>
+        <strong>이벤트 시작 시각을 의심한다.</strong> 점검 직후 일제 접속, 보스 등장, 이벤트 보상 지급처럼 정해진 시각에 몰리는 부하는 평균 지표에서는 잘 안 보인다. 그 시각의 1초 단위 지표를 본다.
+      </li>
+      <li>
+        <strong>끄는 절차도 진단 대상이다.</strong> 배포 때마다 접속이 끊기고 지연이 튄다면 종료 절차가 거칠다는 뜻이다. 처리 중인 일을 마치고 연결을 넘기는 절차는 <a data-ref="operations/draining">드레이닝</a>에서 다룬다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>제보를 받자마자 서버 자원부터 보지 않는다.</strong> 언제부터인지와 누구에게인지가 훨씬 빨리 범위를 좁힌다.</li>
+      <li><strong>평균만 감시하면 사용자의 경험과 어긋난다.</strong> 평균이 좋아졌는데 불만이 늘었다면 꼬리가 나빠진 것이다.</li>
+      <li><strong>재는 일도 부하다.</strong> 상세 추적과 모든 요청의 상세 로그는 그 자체로 서버를 느리게 한다. 표본을 뜨거나 느린 요청만 남긴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

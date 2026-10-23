@@ -137,7 +137,7 @@
         <code>ThreadPool.SetMinThreads</code>로 최소값을 올리는 것은 증상 완화이고, 근본 해결은 <code>.Result</code>·<code>.Wait()</code>를 없애는 것이다. <code>dotnet-counters</code>의 스레드 풀 큐 길이로 확인한다.
       </li>
       <li>
-        <strong>게임 로직 루프는 풀에 맡기지 않는다.</strong> 매 틱 도는 루프를 <code>Task.Run</code>으로 풀 스레드에 올리면 다른 작업과 스레드를 다투고, 틱 지연이 풀 상태에 따라 흔들린다. 로직 스레드는 전용 스레드(<code>new Thread</code> 또는 <code>TaskCreationOptions.LongRunning</code>)로 두고, DB·외부 호출처럼 기다리는 일만 비동기로 풀에 넘긴다.
+        <strong>게임 로직 루프는 풀에 맡기지 않는다.</strong> 매 틱 도는 루프를 <code>Task.Run</code>으로 풀 스레드에 올리면 다른 작업과 스레드를 다투고, 틱 지연이 풀 상태에 따라 흔들린다. <a data-ref="server/threading-model">로직 스레드</a>는 전용 스레드(<code>new Thread</code> 또는 <code>TaskCreationOptions.LongRunning</code>)로 두고, DB·외부 호출처럼 기다리는 일만 비동기로 풀에 넘긴다.
       </li>
       <li>
         <strong>Unity 코루틴은 메인 스레드 하나에서 돈다.</strong> 위 표의 유저 레벨 흐름에 해당한다. 코루틴 안에서 동기 네트워크 호출이나 파일 읽기를 하면 그동안 프레임 전체가 멈춘다. 클라이언트 코드를 리뷰할 때 같은 기준으로 본다.

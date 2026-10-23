@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>큐와 백프레셔 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/backpressure">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="threading-model.html">게임 서버 스레딩 모델</a> · <a href="../network/flow-congestion.html">흐름 제어와 혼잡 제어</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      들어오는 양이 처리량보다 많으면 차이만큼 큐에 쌓인다. 큐에 상한이 없으면 서버는 전부 받아 주므로 오류가 나지 않는다. 대신 <strong>과부하가 지연으로 바뀌어</strong> 숨어 있다가, 메모리가 바닥나는 순간 한꺼번에 멈춘다.
+    </p>
+    <p>
+      <strong>백프레셔</strong>는 받는 쪽이 따라가지 못할 때 그 사실을 <span class="blank">보내는 쪽으로 되돌려</span> 보내는 양을 줄이게 하는 장치다. 큐에 상한을 두고, 가득 차면 기다리게 하거나, 거절하거나, 버린다. 무엇을 고를지는 데이터마다 다르다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>상한이 없으면 과부하가 지연으로 숨는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 240" role="img" aria-label="초당 100건이 들어오고 60건을 처리하는 상한 없는 큐에서 성공률은 그대로인데 대기 시간과 메모리만 늘다가 멈춘다">
+        <defs><marker id="bp1-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="22" width="140" height="44" rx="4"/>
+        <text class="f-text" x="90" y="49" text-anchor="middle">들어옴 · 초당 100</text>
+        <line class="f-line" x1="162" y1="44" x2="196" y2="44" marker-end="url(#bp1-a)"/>
+        <rect class="f-hit" x="200" y="22" width="44" height="44"/>
+        <rect class="f-hit" x="244" y="22" width="44" height="44"/>
+        <rect class="f-hit" x="288" y="22" width="44" height="44"/>
+        <rect class="f-hit" x="332" y="22" width="44" height="44"/>
+        <rect class="f-hit" x="376" y="22" width="44" height="44"/>
+        <rect class="f-pad" x="420" y="22" width="60" height="44"/>
+        <text class="f-sub" x="450" y="49" text-anchor="middle">…</text>
+        <line class="f-line" x1="482" y1="44" x2="516" y2="44" marker-end="url(#bp1-a)"/>
+        <rect class="f-box" x="520" y="22" width="140" height="44" rx="4"/>
+        <text class="f-text" x="590" y="49" text-anchor="middle">처리 · 초당 60</text>
+        <text class="f-sub" x="340" y="88" text-anchor="middle">상한 없는 큐. 차이인 초당 40건이 그대로 쌓인다</text>
+
+        <text class="f-strong" x="30" y="122">성공률</text>
+        <line class="f-line" x1="30" y1="132" x2="30" y2="205"/><line class="f-line" x1="30" y1="205" x2="220" y2="205"/>
+        <polyline class="f-barrier" fill="none" points="32,142 215,142"/>
+        <text class="f-sub" x="30" y="226">100%에서 움직이지 않는다</text>
+
+        <text class="f-strong" x="265" y="122">대기 시간</text>
+        <line class="f-line" x1="265" y1="132" x2="265" y2="205"/><line class="f-line" x1="265" y1="205" x2="455" y2="205"/>
+        <polyline class="f-barrier" fill="none" points="267,202 450,140"/>
+        <text class="f-sub" x="265" y="226">큐 길이에 비례해 는다</text>
+
+        <text class="f-strong" x="500" y="122">메모리</text>
+        <line class="f-line" x1="500" y1="132" x2="500" y2="205"/><line class="f-line" x1="500" y1="205" x2="690" y2="205"/>
+        <line class="f-inval" x1="502" y1="146" x2="688" y2="146"/>
+        <text class="f-sub" x="686" y="140" text-anchor="end">한계</text>
+        <polyline class="f-barrier" fill="none" points="502,202 640,148"/>
+        <text class="f-x" x="652" y="160" text-anchor="middle">✕</text>
+        <text class="f-sub" x="500" y="226">한계에 닿는 순간 통째로 멈춘다</text>
+      </svg>
+      <figcaption>같은 과부하를 세 지표가 다르게 말한다. 성공률만 보면 정상이고, 대기 시간을 보면 이상하고, 메모리를 보면 위험하다. 성공률만 보는 대시보드는 마지막 순간까지 속는다.</figcaption>
+    </figure>
+    <p>
+      위 상황에서 1분이면 2,400건, 10분이면 24,000건이 쌓인다. 지금 들어온 요청은 앞의 24,000건이 처리될 때까지 기다리므로 처리량 60으로 나눈 400초 뒤에야 차례가 온다. 클라이언트는 그 전에 포기했고, 서버는 아무도 기다리지 않는 일을 하느라 자원을 쓴다.
+    </p>
+    <p>
+      상한이 있으면 모습이 달라진다. 한계를 넘는 몫만 거절되고 나머지는 정상 속도로 처리되어, 성능이 <strong>서서히</strong> 떨어진다. 상한이 없으면 한동안 멀쩡해 보이다가 <strong>한꺼번에</strong> 무너진다.
+    </p>
+
+    <h3>큐 길이와 대기 시간은 리틀의 법칙으로 이어진다</h3>
+    <p>
+      안정된 상태에서 시스템 안에 머무는 평균 개수(L)는 들어오는 속도(λ)와 한 건이 머무는 평균 시간(W)의 곱이다. <strong>L = λ × W</strong>. 이것을 <span class="blank">리틀의 법칙</span>이라 한다. 큐의 분포나 처리 순서와 상관없이 성립한다.
+    </p>
+    <p>
+      상한을 정할 때 그대로 쓴다. 처리량이 초당 1,000건이고 큐에서 200ms 이상 기다린 요청은 쓸모가 없다면, 큐에 둘 수 있는 것은 1,000 × 0.2 = 200건이다. 그보다 긴 큐는 어차피 늦을 요청을 쌓아 두는 것이다.
+    </p>
+    <p>
+      처리량은 상황에 따라 변하므로 개수보다 <strong>시간</strong>으로 자르는 쪽이 더 정확하다. 넣을 때 시각을 적어 두고, 꺼냈을 때 기한이 지났으면 처리하지 않고 버린다. 처리량이 떨어지면 자동으로 더 많이 버리게 된다.
+    </p>
+
+    <h3>가득 차면 네 가지 중 하나를 고른다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>동작</th><th>어떻게</th><th>맞는 데이터</th><th>.NET <code>BoundedChannelFullMode</code></th></tr></thead>
+        <tbody>
+          <tr><td>기다리게 한다</td><td>자리가 날 때까지 보내는 쪽을 세운다</td><td>보내는 쪽이 내 코드 안에 있고 하나도 잃으면 안 될 때</td><td><code>Wait</code>에서 <code>WriteAsync</code></td></tr>
+          <tr><td>거절한다</td><td>바로 실패를 돌려주고 보내는 쪽이 판단하게 한다</td><td>다시 시도할 수 있는 요청</td><td><code>Wait</code>에서 <code>TryWrite</code>가 <code>false</code></td></tr>
+          <tr><td>오래된 것을 버린다</td><td>가장 오래된 항목을 지우고 새것을 넣는다</td><td>최신 값만 의미 있는 상태(위치, 체력 표시)</td><td><code>DropOldest</code></td></tr>
+          <tr><td>새것을 버린다</td><td>넣으려던 항목을 버리고 큐는 그대로 둔다</td><td>버려도 되는 기록(통계, 디버그 로그)</td><td><code>DropWrite</code> (큐에 있는 가장 새 항목을 지우는 <code>DropNewest</code>도 있다)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Drop 계열 모드에서는 쓰기가 항상 성공으로 끝나고 버려진 항목은 조용히 사라진다. 얼마나 버렸는지 모르면 문제를 놓치므로, 버린 항목을 알려 주는 콜백을 받는 <code>Channel.CreateBounded</code> 오버로드로 개수를 센다. 상한이 있는 큐의 구조 자체는 <a href="../data-structure/stack-queue.html">스택과 큐</a>에서 다룬다.
+    </p>
+    <p>
+      네 가지 중 하나만 고를 수 있으니, 성격이 다른 데이터를 한 큐에 넣으면 안 된다. 위치 갱신과 거래 요청이 같은 줄에 서 있으면 "오래된 것을 버린다"를 고르는 순간 거래도 버려진다. <strong>종류마다 큐를 따로 두고 큐마다 정책을 정한다.</strong>
+    </p>
+
+    <h3>압력은 데이터와 반대 방향으로 전해진다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 190" role="img" aria-label="DB가 느려지면 처리 큐가 차고, 수신 루프가 읽기를 멈추고, 커널 수신 버퍼가 차서 TCP 수신 윈도가 0이 되어 클라이언트가 보내기를 멈춘다">
+        <defs><marker id="bp2-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker><marker id="bp2-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="10" y="30" width="110" height="44" rx="4"/><text class="f-text" x="65" y="57" text-anchor="middle">클라이언트</text>
+        <rect class="f-box" x="150" y="30" width="130" height="44" rx="4"/><text class="f-text" x="215" y="57" text-anchor="middle">커널 수신 버퍼</text>
+        <rect class="f-box" x="310" y="30" width="110" height="44" rx="4"/><text class="f-text" x="365" y="57" text-anchor="middle">수신 루프</text>
+        <rect class="f-hit" x="450" y="30" width="120" height="44" rx="4"/><text class="f-strong" x="510" y="57" text-anchor="middle">처리 큐 (상한)</text>
+        <rect class="f-box" x="600" y="30" width="110" height="44" rx="4"/><text class="f-text" x="655" y="57" text-anchor="middle">로직 · DB</text>
+        <line class="f-line" x1="121" y1="52" x2="147" y2="52" marker-end="url(#bp2-a)"/>
+        <line class="f-line" x1="281" y1="52" x2="307" y2="52" marker-end="url(#bp2-a)"/>
+        <line class="f-line" x1="421" y1="52" x2="447" y2="52" marker-end="url(#bp2-a)"/>
+        <line class="f-line" x1="571" y1="52" x2="597" y2="52" marker-end="url(#bp2-a)"/>
+        <text class="f-sub" x="360" y="20" text-anchor="middle">데이터 →</text>
+        <line class="f-tick" x1="650" y1="104" x2="520" y2="104" marker-end="url(#bp2-b)"/>
+        <line class="f-tick" x1="505" y1="104" x2="372" y2="104" marker-end="url(#bp2-b)"/>
+        <line class="f-tick" x1="358" y1="104" x2="222" y2="104" marker-end="url(#bp2-b)"/>
+        <line class="f-tick" x1="208" y1="104" x2="72" y2="104" marker-end="url(#bp2-b)"/>
+        <text class="f-sub" x="585" y="126" text-anchor="middle">처리가 느려진다</text>
+        <text class="f-sub" x="438" y="126" text-anchor="middle">차면 읽기를 멈춘다</text>
+        <text class="f-sub" x="290" y="126" text-anchor="middle">안 읽으니 버퍼가 찬다</text>
+        <text class="f-sub" x="140" y="126" text-anchor="middle">rwnd 0 · 전송 멈춤</text>
+        <text class="f-strong" x="360" y="166" text-anchor="middle">← 압력</text>
+      </svg>
+      <figcaption>어느 칸이 멈추면 그 앞 칸이 차례로 찬다. 처리 큐가 차서 수신 루프가 소켓을 읽지 않으면, 커널 수신 버퍼가 차고 TCP 수신 윈도가 0이 되어 클라이언트 쪽 TCP가 보내기를 멈춘다. 응용이 따로 알리지 않아도 TCP 흐름 제어가 압력을 끝까지 전한다.</figcaption>
+    </figure>
+    <p>
+      TCP 위라면 "읽기를 멈추는 것"이 가장 단순한 백프레셔다. 상대는 <a href="../network/flow-congestion.html">흐름 제어</a>에 걸려 자연스럽게 늦어진다. 반대로 처리 큐가 꽉 찼는데도 소켓을 계속 읽어 다른 곳(상한 없는 리스트)에 쌓으면, 이 사슬이 끊어지고 서버 메모리가 그 몫을 떠안는다.
+    </p>
+    <p>
+      UDP에는 이 사슬이 없다. 커널 수신 버퍼가 차면 새 <a data-ref="network/tcp-vs-udp">데이터그램</a>은 그냥 버려지고 보내는 쪽은 모른다. 그래서 UDP 프로토콜은 받는 쪽이 처리 여유를 응용 수준에서 알려 주거나, 보내는 쪽이 손실률을 보고 스스로 줄여야 한다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>어디에 어떤 정책을 두나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>자리</th><th>정책</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>외부에서 오는 API 요청</td><td>거절 (HTTP 503, 재시도 간격 안내)</td><td>보내는 쪽을 기다리게 할 방법이 없다. 빨리 실패시켜야 자원이 남는다</td></tr>
+          <tr><td>내부 생산자 → 소비자 (네트워크 스레드 → 로직 스레드)</td><td>기다리게 하거나 소켓 읽기를 멈춘다</td><td>생산자가 내 코드라 늦출 수 있다. 늦추면 압력이 TCP로 전해진다</td></tr>
+          <tr><td>세션 송신 큐 (서버 → 느린 클라이언트)</td><td>최신 상태는 덮어쓰고, 바이트 상한을 넘으면 연결을 끊는다</td><td>한 명 때문에 서버 메모리가 묶이면 안 된다</td></tr>
+          <tr><td>DB 쓰기 큐</td><td>버리지 않는다. 묶어서 처리량을 올리고, 길이가 경보 선을 넘으면 입장을 막는다</td><td>잃으면 안 되는 데이터라 앞단에서 들어오는 양을 줄인다</td></tr>
+          <tr><td>로그 · 통계</td><td>새것을 버리고 버린 수를 센다</td><td>기록 때문에 게임이 멈추면 안 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      어느 경우든 큐 길이와 대기 시간을 지표로 남긴다. 처리량과 성공률만으로는 과부하가 시작된 시점이 보이지 않는다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>로직 스레드는 큐에서 기다리지 않는다.</strong> 틱을 도는 스레드가 가득 찬 큐에 <code>await WriteAsync</code>로 줄을 서면 그동안 틱이 멈추고 모든 플레이어가 함께 멈춘다. 로직 스레드에서는 <code>TryWrite</code>로 넣어 보고, 실패하면 정해진 정책(버림, 세션 끊기)대로 바로 처리한다(<a href="threading-model.html">스레딩 모델</a>).
+      </li>
+      <li>
+        <strong>느린 클라이언트의 송신 큐는 바이트로 상한을 둔다.</strong> 항목 수로 세면 큰 패킷 몇 개에 메모리가 묶인다. 세션마다 몇 MB 같은 바이트 상한을 두고, 넘으면 위치 같은 최신 상태는 오래된 것을 덮어쓰고, 그래도 넘으면 연결을 끊는다. 끊는 쪽이 서버 전체를 지킨다.
+      </li>
+      <li>
+        <strong>클라이언트 하나의 수신량에도 상한을 둔다.</strong> 조작된 클라이언트가 초당 수천 개의 패킷을 보내면 그 세션의 처리 큐가 로직 스레드 시간을 잡아먹는다. 세션별 초당 패킷 수에 상한을 두고, 넘으면 버리거나 끊는다.
+      </li>
+      <li>
+        <strong>접속 폭주는 입장 대기열로 받는다.</strong> 점검이 끝난 직후처럼 로그인이 몰리면 인증·DB 로드를 다 받아 주는 대신 대기 순번을 주고 정해진 속도로만 들여보낸다. 사용자가 보는 백프레셔다.
+      </li>
+      <li>
+        <strong>거절은 재시도 폭주를 부른다.</strong> 거절당한 클라이언트 수천 명이 즉시 다시 보내면 이미 밀린 서버에 같은 요청이 한 번 더 몰린다. 재시도 횟수에 상한을 두고, 간격을 지수로 늘리면서 무작위 흔들림(지터)을 섞어 한꺼번에 몰리지 않게 한다. 계속 실패하는 대상은 아예 호출을 끊어 두는 장치도 쓴다(<a data-ref="operations/dead-letter-circuit">데드 레터와 서킷 브레이커</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>큐를 키워서는 해결되지 않는다.</strong> 들어오는 양이 처리량보다 많다는 사실은 그대로이고, 무너지는 시점만 늦어진다. 처리량을 늘리거나 들어오는 양을 줄여야 해결된다.</li>
+      <li><strong>상한 없는 큐는 곳곳에 숨어 있다.</strong> <code>Channel.CreateUnbounded</code>, <code>ConcurrentQueue</code>, <code>List</code>에 쌓아 두는 송신 버퍼, <a data-ref="operating-system/thread-pool">스레드 풀</a> 작업 큐 모두 기본으로 상한이 없다. 서버 안의 큐를 목록으로 만들고 각각의 상한과 정책을 정한다.</li>
+      <li><strong>상한이 너무 작아도 문제다.</strong> 순간적인 몰림까지 거절하면 평소에도 실패가 난다. 몰림을 흡수할 만큼은 두되, 리틀의 법칙으로 계산한 허용 지연을 넘지 않게 잡는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

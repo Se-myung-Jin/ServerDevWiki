@@ -59,7 +59,7 @@
       </table>
     </div>
     <p>
-      직렬화가 대표적인 자리다. <code>System.Text.Json</code>의 소스 생성 모드나 MessagePack-CSharp의 AOT 코드 생성은, 실행 중에 속성을 탐색하는 대신 빌드 때 그 타입 전용 읽기·쓰기 코드를 만들어 둔다.
+      직렬화가 대표적인 자리다. <code>System.Text.Json</code>의 소스 생성 모드나 <a data-ref="server/protocol-choice">MessagePack</a>-CSharp의 AOT 코드 생성은, 실행 중에 속성을 탐색하는 대신 빌드 때 그 타입 전용 읽기·쓰기 코드를 만들어 둔다.
       반대로 대상 타입이 몇 개 없고 호출도 드물면, 늘어난 <a data-ref="cpp/build-time">빌드 시간</a>과 구성 복잡도를 회수하지 못한다.
     </p>
 

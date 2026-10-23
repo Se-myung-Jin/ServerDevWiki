@@ -102,7 +102,7 @@
         <strong><code>async</code> 코드에서는 스레드 로컬을 믿지 않는다.</strong> <code>await</code> 앞뒤로 다른 스레드에서 이어 실행될 수 있어서 <code>[ThreadStatic]</code> 값이 바뀌어 있을 수 있다. 요청 단위의 문맥(세션 ID, 추적 ID)은 <code>AsyncLocal&lt;T&gt;</code>로 넘긴다.
       </li>
       <li>
-        <strong>세션마다 스레드를 하나씩 두지 않는다.</strong> 접속자 수천 명에 스레드 수천 개를 두면 스택 예약과 전환 비용이 쌓인다. 입출력은 비동기로 처리하고, 로직 스레드는 소수로 두는 구조가 일반적이다(<a href="thread-pool.html">스레드 풀과 실행 모델</a>).
+        <strong>세션마다 스레드를 하나씩 두지 않는다.</strong> 접속자 수천 명에 스레드 수천 개를 두면 스택 예약과 전환 비용이 쌓인다. 입출력은 비동기로 처리하고, <a data-ref="server/threading-model">로직 스레드</a>는 소수로 두는 구조가 일반적이다(<a href="thread-pool.html">스레드 풀과 실행 모델</a>).
       </li>
     </ul>
 

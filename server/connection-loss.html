@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>끊긴 연결 알아차리기 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/connection-loss">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../network/tcp-connection.html">TCP 연결 관리</a> · <a href="small-packet-delay.html">작은 패킷과 지연</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      상대가 연결을 닫거나 프로세스가 죽으면 OS가 소켓을 대신 닫아 FIN이나 RST가 가므로 서버는 바로 안다. 전원이 나가거나, 선이 빠지거나, 중간 공유기가 연결 정보를 잊으면 아무것도 오지 않는다. 서버 소켓은 연결된 채로 남는다(<a href="../network/tcp-connection.html">TCP 연결 관리</a>의 half-open).
+    </p>
+    <p>
+      알아내는 방법은 주기적으로 주고받아 보는 것뿐이다. 게임 서버는 <strong>응용 하트비트</strong>를 두고, 마지막으로 받은 시각에서 <span class="blank">주기 × 허용 실패 횟수</span>가 지나면 끊긴 것으로 본다. 끊김을 알아챈 뒤에는 세션을 언제 정리하고 재접속을 어떻게 이어 붙일지까지가 설계다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>끊기는 방식에 따라 아는 시점이 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>서버에 오는 것</th><th>서버가 아는 시점</th></tr></thead>
+        <tbody>
+          <tr><td>클라이언트가 정상 종료</td><td>FIN</td><td>즉시. 수신이 0바이트로 끝난다</td></tr>
+          <tr><td>클라이언트 프로세스가 죽음</td><td>OS가 소켓을 대신 닫아 FIN이 온다. 읽지 않은 데이터가 남았거나 OS가 강제로 닫으면 RST</td><td>즉시</td></tr>
+          <tr><td>기기가 재부팅됐다</td><td>아무것도 오지 않다가, 서버가 보내면 상대 OS가 RST로 답한다</td><td>다음에 보낼 때</td></tr>
+          <tr><td>전원·선·망이 끊김, NAT가 매핑을 잊음</td><td>아무것도 오지 않는다</td><td>안 보내면 영원히 모른다. 보내면 재전송을 다 해 보고 포기할 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      마지막 경우가 문제다. 서버가 보낼 것이 있어도 바로 알지 못한다. <code>Send</code>는 데이터를 커널 송신 버퍼에 복사하면 성공으로 돌아오고, 커널은 ACK가 안 오는 동안 간격을 늘려 가며 재전송한다. Linux 기본값으로는 15분쯤 지나서야 연결을 포기하고 오류를 돌려준다. Linux의 <code>TCP_USER_TIMEOUT</code>으로 이 시간을 줄일 수 있지만, 보낼 것이 없을 때는 여전히 모른다.
+    </p>
+
+    <h3>TCP keepalive는 커널끼리의 확인이다</h3>
+    <p>
+      TCP keepalive를 켜면 조용한 연결에 OS가 빈 확인 패킷을 보내 본다. 기본값은 쓸모가 없을 만큼 느리다. Linux는 2시간 조용하면 시작해 75초 간격으로 9번, Windows는 2시간 뒤 1초 간격으로 10번 확인한다. .NET에서는 <code>SocketOptionName.KeepAlive</code>를 켠 뒤 <code>TcpKeepAliveTime</code>·<code>TcpKeepAliveInterval</code>·<code>TcpKeepAliveRetryCount</code>로 소켓마다 줄일 수 있다.
+    </p>
+    <p>
+      시간을 줄여도 한계가 남는다. keepalive에 답하는 것은 상대 <strong>커널</strong>이다. 클라이언트 프로그램이 멈춰 있어도 OS가 살아 있으면 연결은 정상으로 보인다. 응용 하트비트는 상대 응용이 직접 받고 답하므로, 연결만이 아니라 상대 프로그램이 일하고 있는지까지 확인한다. 주기와 판정도 게임에 맞게 정할 수 있다.
+    </p>
+
+    <h3>마지막으로 받은 시각에서 센다</h3>
+    <figure class="fig">
+      <svg viewBox="0 36 760 174" role="img" aria-label="마지막 수신 뒤 5초 주기로 세 번 연속 아무것도 받지 못하면 15초에 끊김으로 판정하고, 재접속 유예 시간이 지나면 세션을 정리한다">
+        <defs><marker id="cl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <line class="f-line" x1="120" y1="96" x2="480" y2="96"/>
+        <line class="f-line" x1="120" y1="90" x2="120" y2="102"/>
+        <line class="f-line" x1="480" y1="90" x2="480" y2="102"/>
+        <text class="f-text" x="300" y="86" text-anchor="middle">판정까지 15초 = 주기 5초 × 연속 3번</text>
+        <rect class="f-pad" x="486" y="50" width="190" height="32" rx="4"/>
+        <text class="f-sub" x="581" y="71" text-anchor="middle">재접속 유예 (세션 유지)</text>
+
+        <line class="f-line" x1="60" y1="150" x2="730" y2="150" marker-end="url(#cl-a)"/>
+        <line class="f-tick" x1="120" y1="140" x2="120" y2="160"/>
+        <rect class="f-hit" x="104" y="116" width="32" height="20" rx="3"/><text class="f-strong" x="120" y="131" text-anchor="middle">수신</text>
+        <line class="f-tick" x1="240" y1="140" x2="240" y2="160"/>
+        <text class="f-x" x="240" y="134" text-anchor="middle">✕</text>
+        <line class="f-tick" x1="360" y1="140" x2="360" y2="160"/>
+        <text class="f-x" x="360" y="134" text-anchor="middle">✕</text>
+        <line class="f-tick" x1="480" y1="140" x2="480" y2="160"/>
+        <text class="f-x" x="480" y="134" text-anchor="middle">✕</text>
+        <line class="f-tick" x1="676" y1="140" x2="676" y2="160"/>
+
+        <text class="f-sub" x="120" y="178" text-anchor="middle">마지막 수신</text>
+        <text class="f-sub" x="240" y="178" text-anchor="middle">5초</text>
+        <text class="f-sub" x="360" y="178" text-anchor="middle">10초</text>
+        <text class="f-strong" x="480" y="178" text-anchor="middle">15초 · 끊김 판정</text>
+        <text class="f-strong" x="676" y="178" text-anchor="middle">세션 정리</text>
+        <text class="f-sub" x="725" y="200" text-anchor="end">시간</text>
+      </svg>
+      <figcaption>주기마다 그동안 받은 것이 있는지 본다. 세 번 연속 아무것도 없으면 끊긴 것으로 보고 연결을 닫는다. 캐릭터와 세션은 유예 시간 동안 남겨 두었다가, 그 안에 재접속하지 않으면 정리한다. 숫자는 예시다.</figcaption>
+    </figure>
+    <p>
+      하트비트 패킷만 셀 필요는 없다. 어떤 메시지든 받으면 살아 있다는 증거이므로, 세션마다 <strong>마지막 수신 시각</strong>만 갱신한다. 보낼 것이 없는 조용한 구간에만 클라이언트가 작은 ping을 보내고 서버가 pong으로 답한다. ping에 보낸 시각을 실어 두면 왕복 시간도 함께 잰다.
+    </p>
+    <p>
+      세션마다 타이머를 하나씩 만들지 않는다. 연결이 수만 개면 타이머도 수만 개가 된다. 로직 틱이나 1초 주기 작업에서 세션을 훑어 기준을 넘긴 것을 찾거나, 시각별 칸에 세션을 나눠 담는 타이머 휠을 쓴다(<a href="../data-structure/heap-btree.html">힙과 B-트리</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>주기와 허용 횟수</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇을 보나</th><th>짧게 잡으면</th><th>길게 잡으면</th></tr></thead>
+        <tbody>
+          <tr><td>알아차리는 속도</td><td>빠르다</td><td>느리다. 죽은 세션이 그동안 자리를 차지한다</td></tr>
+          <tr><td>트래픽</td><td>연결 수 × 주기만큼 는다</td><td>적다</td></tr>
+          <tr><td>오탐</td><td>잠깐 망이 흔들린 정상 사용자를 끊는다</td><td>적다</td></tr>
+          <tr><td>모바일 배터리</td><td>무선 모뎀이 자주 깨어 배터리를 쓴다</td><td>덜 쓴다</td></tr>
+          <tr><td>NAT 유지</td><td>공유기 매핑이 살아 있다</td><td>매핑 유지 시간보다 길면 조용히 끊긴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      판정 시간은 주기와 연속 실패 횟수의 곱이다. 한 번 놓쳤다고 끊지 않고 서너 번 연속일 때 끊으면, 판정 시간은 같아도 순간적인 지연에 덜 흔들린다. 실시간 대전은 수 초 안에 판정해야 하고, 턴제나 로비는 더 길어도 된다.
+    </p>
+    <p>
+      주기의 상한은 NAT가 정한다. TCP 규격 권고는 조용한 연결의 매핑을 2시간 넘게 유지하라는 것이지만, 실제 공유기와 통신사 NAT는 그보다 훨씬 짧은 곳이 많다. 하트비트는 끊김 감지와 함께 그 매핑을 살려 두는 일도 한다(<a href="../network/nat-traversal.html">NAT 뒤에서 직접 연결하기</a>).
+    </p>
+
+    <h3>끊긴 뒤에 무엇을 하나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>할 일</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>재접속 유예</td><td>연결이 끊겨도 캐릭터와 세션을 정해진 시간 동안 남긴다. 짧은 끊김에 진행 상황을 잃지 않는다. 전투 중 접속을 끊어 도망치는 것을 막는 정책도 여기서 정한다</td></tr>
+          <tr><td>본인 확인</td><td>로그인 때 받은 세션 토큰으로 다시 붙는다. 비밀번호를 다시 묻지 않는다(<a data-ref="security/auth-session">인증과 세션</a>)</td></tr>
+          <tr><td>옛 연결 정리</td><td>같은 계정의 이전 연결이 아직 살아 있는 것으로 보이면(half-open) 새 연결을 이기게 하고 옛 연결을 닫는다. 반대로 하면 사용자가 다시 들어오지 못한다</td></tr>
+          <tr><td>이어 받기</td><td>신뢰가 필요한 메시지에 순번을 붙이고, 클라이언트가 마지막으로 받은 번호를 알려 주면 그다음부터 다시 보낸다. 간단하게는 현재 상태 전체를 새로 보낸다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>하트비트를 어느 스레드가 답하는지 본다.</strong> I/O 스레드가 ping에 답하면 로직 스레드가 멈춰도 클라이언트는 서버가 살아 있다고 본다. 서버 멈춤까지 잡고 싶으면 로직 루프에서 답하게 한다(<a href="threading-model.html">게임 서버 스레딩 모델</a>).
+      </li>
+      <li>
+        <strong>망이 바뀌면 TCP 연결은 살지 못한다.</strong> 휴대폰이 Wi-Fi에서 LTE로 넘어가면 클라이언트 주소가 바뀌어 기존 연결은 쓸 수 없다. 끊김을 빨리 알아채고 재접속으로 이어 붙이는 것이 실제 해법이다. QUIC은 연결 ID로 주소가 바뀌어도 연결을 유지한다(<a href="../network/http-versions.html">HTTP 버전</a>).
+      </li>
+      <li>
+        <strong>앱이 백그라운드로 가면 하트비트가 멈춘다.</strong> 모바일 OS는 백그라운드 앱의 실행과 소켓을 멈춘다. 서버는 이것을 끊김으로 처리하고, 클라이언트는 앞으로 돌아왔을 때 재접속부터 시도한다.
+      </li>
+      <li>
+        <strong>정리를 빠뜨리면 자원이 샌다.</strong> 끊김 판정 뒤 소켓을 닫고, 세션의 송신 큐와 버퍼를 비우고, 월드에서 캐릭터를 내리는 경로가 한 곳에 모여 있어야 한다. 이 경로가 여럿이면 어느 하나에서 빠지고, 죽은 세션이 메모리와 디스크립터를 계속 잡는다(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong><code>Send</code> 성공은 상대가 받았다는 뜻이 아니다.</strong> 커널 버퍼에 들어갔다는 뜻일 뿐이다. 상대가 이미 사라졌어도 몇 번은 성공하고, 오류는 한참 뒤에 온다.</li>
+      <li><strong>연결이 살아 있다고 상대가 정상인 것은 아니다.</strong> 커널은 답하는데 응용이 멈춘 상태가 있다. TCP keepalive만으로는 이것을 구분하지 못한다.</li>
+      <li><strong>판정 기준을 서버와 클라이언트가 맞춘다.</strong> 클라이언트는 10초 만에 재접속하는데 서버는 30초 뒤에야 옛 세션을 정리하면, 그 사이 들어온 재접속이 "이미 접속 중"으로 막힌다. 새 연결이 옛 연결을 밀어내게 해 두면 이 어긋남이 사라진다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

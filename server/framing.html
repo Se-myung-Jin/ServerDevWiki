@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>메시지 경계와 프레이밍 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/framing">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../network/tcp-vs-udp.html">TCP와 UDP</a> · <a href="threading-model.html">게임 서버 스레딩 모델</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      TCP가 약속하는 것은 바이트가 빠짐없이 순서대로 온다는 것까지다. 보낸 <code>Send</code> 단위가 받는 쪽에 그대로 오지는 않는다(<a href="../network/tcp-vs-udp.html">TCP와 UDP</a>). 그래서 바이트 흐름에서 메시지 하나를 잘라 내는 규칙, 곧 <strong>프레이밍</strong>을 응용이 정해야 한다.
+    </p>
+    <p>
+      게임 서버의 표준은 <span class="blank">길이를 앞에 붙이는 방식</span>이다. 받는 쪽은 받은 바이트를 버퍼에 모으고, 헤더가 다 왔는지, 헤더에 적힌 길이만큼 본문이 다 왔는지를 확인해 하나씩 꺼낸다. 길이 값은 믿지 않고 상한을 검사한다. 한 번 잘못 자르면 그 뒤는 되돌릴 수 없어서 연결을 끊는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>읽기 한 번에 메시지가 몇 개 들어 있을지 모른다</h3>
+    <figure class="fig">
+      <svg viewBox="0 24 760 190" role="img" aria-label="길이 헤더가 붙은 메시지 A, B, C가 세 번의 읽기로 나뉘어 도착한다. 첫 읽기에서 A와 B를 꺼내고, 두 번째 읽기는 C가 덜 와서 남겨 두고, 세 번째 읽기에서 C를 꺼낸다">
+        <text class="f-text" x="138" y="61" text-anchor="end">보낸 메시지</text>
+        <rect class="f-hit" x="150" y="40" width="40" height="32"/><text class="f-strong" x="170" y="61" text-anchor="middle">길이</text>
+        <rect class="f-box" x="190" y="40" width="120" height="32"/><text class="f-text" x="250" y="61" text-anchor="middle">A 본문</text>
+        <rect class="f-hit" x="310" y="40" width="40" height="32"/><text class="f-strong" x="330" y="61" text-anchor="middle">길이</text>
+        <rect class="f-box" x="350" y="40" width="80" height="32"/><text class="f-text" x="390" y="61" text-anchor="middle">B 본문</text>
+        <rect class="f-hit" x="430" y="40" width="40" height="32"/><text class="f-strong" x="450" y="61" text-anchor="middle">길이</text>
+        <rect class="f-box" x="470" y="40" width="220" height="32"/><text class="f-text" x="580" y="61" text-anchor="middle">C 본문</text>
+
+        <line class="f-grid" x1="430" y1="76" x2="430" y2="146"/>
+        <line class="f-grid" x1="560" y1="76" x2="560" y2="146"/>
+
+        <text class="f-text" x="138" y="129" text-anchor="end">읽기 단위</text>
+        <rect class="f-pad" x="152" y="108" width="276" height="32" rx="4"/><text class="f-sub" x="290" y="129" text-anchor="middle">1번째 읽기</text>
+        <rect class="f-pad" x="432" y="108" width="126" height="32" rx="4"/><text class="f-sub" x="495" y="129" text-anchor="middle">2번째 읽기</text>
+        <rect class="f-pad" x="562" y="108" width="126" height="32" rx="4"/><text class="f-sub" x="625" y="129" text-anchor="middle">3번째 읽기</text>
+
+        <text class="f-text" x="138" y="189" text-anchor="end">꺼낸 메시지</text>
+        <text class="f-strong" x="290" y="189" text-anchor="middle">A, B 두 개</text>
+        <text class="f-sub" x="495" y="189" text-anchor="middle">0개, 남겨 둔다</text>
+        <text class="f-strong" x="625" y="189" text-anchor="middle">C 하나</text>
+      </svg>
+      <figcaption>세 메시지가 세 번의 읽기로 왔지만 읽기 경계는 메시지 경계와 맞지 않는다. 첫 읽기에서는 두 개가 나오고, 두 번째는 C가 덜 와서 아무것도 나오지 않는다. 남은 바이트는 버퍼에 두었다가 세 번째 읽기와 이어 붙인다.</figcaption>
+    </figure>
+    <p>
+      받는 쪽 루프는 항상 같은 두 질문을 반복한다. 헤더 크기만큼 모였나, 헤더에 적힌 길이만큼 본문이 모였나. 둘 다 맞으면 하나를 꺼내고 <strong>다시 처음부터</strong> 묻는다. 한 번 읽은 것에서 여러 개가 나올 수 있으니 꺼낼 것이 없을 때까지 돈다. 모자라면 남은 바이트를 버퍼에 그대로 두고 다음 읽기를 기다린다.
+    </p>
+    <p>
+      .NET에서는 <code>System.IO.Pipelines</code>가 이 누적 버퍼를 대신 관리한다. <code>PipeReader</code>가 지금까지 받은 바이트를 <code>ReadOnlySequence&lt;byte&gt;</code>로 넘기고, 응용은 어디까지 썼는지만 알려 준다.
+    </p>
+<pre><code class="language-csharp">const int HeaderSize = 4;            // 길이 2바이트 + 메시지 종류 2바이트
+const int MaxBodySize = 16 * 1024;   // 이보다 크다고 적혀 오면 끊는다
+
+async Task ReadLoopAsync(PipeReader reader)
+{
+    while (true)
+    {
+        ReadResult result = await reader.ReadAsync();
+        ReadOnlySequence&lt;byte&gt; buffer = result.Buffer;
+
+        // 한 번 읽은 것에서 여러 개가 나올 수 있다
+        while (TryReadMessage(ref buffer, out ushort type, out ReadOnlySequence&lt;byte&gt; body))
+            Dispatch(type, body);    // body는 AdvanceTo 전까지만 유효하다. 넘길 거면 복사한다
+
+        // 꺼낸 데까지는 버리고, 끝까지 들여다봤으니 더 올 때까지 기다리게 한다
+        reader.AdvanceTo(buffer.Start, buffer.End);
+        if (result.IsCompleted) break;   // 상대가 FIN을 보냈다
+    }
+    await reader.CompleteAsync();
+}
+
+bool TryReadMessage(ref ReadOnlySequence&lt;byte&gt; buffer, out ushort type, out ReadOnlySequence&lt;byte&gt; body)
+{
+    type = 0; body = default;
+    if (buffer.Length &lt; HeaderSize) return false;            // 헤더가 덜 왔다
+
+    Span&lt;byte&gt; header = stackalloc byte[HeaderSize];
+    buffer.Slice(0, HeaderSize).CopyTo(header);              // 헤더가 두 조각에 걸쳐 있을 수 있다
+    int length = BinaryPrimitives.ReadUInt16LittleEndian(header);
+    type = BinaryPrimitives.ReadUInt16LittleEndian(header[2..]);
+    if (length &gt; MaxBodySize) throw new InvalidDataException("body too large");
+
+    if (buffer.Length &lt; HeaderSize + length) return false;   // 본문이 덜 왔다
+    body = buffer.Slice(HeaderSize, length);
+    buffer = buffer.Slice(HeaderSize + length);
+    return true;
+}</code></pre>
+    <p>
+      <code>AdvanceTo</code>의 두 인자가 핵심이다. 첫째는 "여기까지는 다 썼으니 버려도 된다", 둘째는 "여기까지는 들여다봤다"는 뜻이다. 반쪽 메시지를 남겨 둔 채 둘째 인자를 끝으로 주면, 다음 <code>ReadAsync</code>는 새 바이트가 올 때까지 기다린다. 둘째 인자를 빼먹으면 같은 반쪽을 계속 다시 받아 CPU를 태운다.
+    </p>
+    <p>
+      Pipelines를 쓰지 않으면 세션마다 수신 버퍼를 두고 직접 관리한다. 꺼낸 앞부분을 버린 뒤 남은 바이트를 앞으로 당기거나, <a href="../data-structure/stack-queue.html">원형 버퍼</a>로 감아 쓴다. 버퍼를 메시지마다 새로 할당하지 않고 <code>ArrayPool</code>에서 빌려 쓰는 것이 보통이다(<a href="../system-programming/memory-allocator.html">메모리 할당자</a>, <a data-ref="csharp/ref-span">Span과 ref struct</a>).
+    </p>
+
+    <h3>경계를 만드는 세 가지 방법</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>장점</th><th>단점</th></tr></thead>
+        <tbody>
+          <tr><td>길이를 앞에 붙인다</td><td>헤더에 본문 길이를 적는다</td><td>본문 내용과 상관없이 자를 수 있다. 다 오기 전에 필요한 크기를 안다</td><td>길이 값을 검사하지 않으면 위험하다</td></tr>
+          <tr><td>구분자를 넣는다</td><td>줄바꿈 같은 약속된 바이트로 끊는다</td><td>사람이 읽기 쉽다. 텍스트 프로토콜(HTTP/1.1 헤더, Redis)</td><td>본문에 구분자가 나오면 이스케이프해야 한다. 구분자를 찾으려고 전부 훑는다</td></tr>
+          <tr><td>크기를 고정한다</td><td>모든 메시지를 같은 크기로</td><td>가장 단순하다</td><td>작은 메시지도 큰 칸을 다 쓴다. 가변 데이터를 담기 어렵다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>헤더 설계</h2>
+    <h3>헤더에 적어 두어야 할 약속</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>정할 것</th><th>흔한 선택</th><th>틀리면</th></tr></thead>
+        <tbody>
+          <tr><td>길이 필드 크기</td><td>2바이트(최대 65,535)나 4바이트. Protobuf처럼 가변 길이 정수(varint)도 있다</td><td>2바이트인데 큰 메시지를 보내면 길이가 넘쳐 잘못 잘린다</td></tr>
+          <tr><td>길이에 헤더를 포함하나</td><td>본문만 세거나, 헤더까지 센다. 둘 중 하나로 고정</td><td>헤더 크기만큼 어긋나 첫 메시지부터 깨진다</td></tr>
+          <tr><td>바이트 순서</td><td>네트워크 관례는 빅 엔디안. 양쪽이 모두 x86·ARM이면 리틀 엔디안으로 고정하기도 한다</td><td>같은 바이트를 서로 다른 수로 읽는다(<a href="../computer-architecture/endianness.html">엔디안</a>)</td></tr>
+          <tr><td>메시지 종류</td><td>2바이트 번호(opcode)로 어느 처리기로 보낼지 정한다</td><td>버전이 바뀌며 번호가 겹치면 엉뚱한 처리기가 받는다</td></tr>
+          <tr><td>최대 크기</td><td>메시지 종류에 맞는 상한. 보통 수 KB~수십 KB</td><td>상한이 없으면 길이 값 하나로 메모리를 잡힌다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      약속은 문서와 코드 한곳에 적고, 클라이언트와 서버가 같은 정의를 쓰게 한다. 직렬화 형식(Protobuf, <a data-ref="server/protocol-choice">MessagePack</a>, 직접 만든 이진 형식)은 본문 안의 일이고, 프레이밍은 그 바깥에서 본문이 어디서 끝나는지만 정한다.
+    </p>
+
+    <h3>한 번 어긋나면 되돌릴 수 없다</h3>
+    <p>
+      길이 접두 방식에는 다시 맞출 기준점이 없다. 한 번 잘못 자르면 본문 중간을 다음 헤더로 읽고, 거기 적힌 아무 값을 길이로 쓴다. 파싱은 멈추지 않고 계속 엉뚱한 자리를 자른다. 그래서 증상이 보이는 곳은 원인에서 한참 떨어져 있고, 대개 "가끔 이상한 패킷이 온다"로 나타난다.
+    </p>
+    <p>
+      그러므로 헤더가 말이 안 되면(길이가 상한을 넘거나, 모르는 메시지 종류이거나, 본문 파싱이 실패하면) 그 연결을 바로 끊는다. 건너뛰고 계속 읽으려 해도 다음 메시지의 시작을 찾을 방법이 없다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>길이 값은 공격 경로다.</strong> 헤더에 4GB를 적어 보내는 클라이언트가 있다고 가정한다. 상한 검사 없이 그 크기로 버퍼를 할당하면 패킷 하나로 서버 메모리가 바닥난다. 길이를 읽자마자 상한과 비교하고, 넘으면 할당 전에 끊는다.
+      </li>
+      <li>
+        <strong>덜 온 메시지도 자원을 잡는다.</strong> 헤더에 큰 길이를 적고 본문을 아주 천천히 보내면 서버는 그 버퍼를 계속 들고 기다린다. 세션별 수신 버퍼에 상한을 두고, 메시지 하나가 일정 시간 안에 다 오지 않으면 끊는다. 쌓인 양을 다루는 방법은 <a data-ref="server/backpressure">큐와 백프레셔</a>에서 다룬다.
+      </li>
+      <li>
+        <strong>보낼 때도 경계를 지킨다.</strong> 여러 스레드가 한 소켓에 각자 <code>Send</code>를 부르면 두 메시지의 바이트가 섞여 나갈 수 있다. 세션마다 송신 큐를 하나 두고 한 곳에서만 보낸다. 논블로킹 <code>send</code>는 일부만 보내고 돌아올 수 있으니 남은 바이트를 이어 보내야 한다.
+      </li>
+      <li>
+        <strong>받은 순간 처리하지 않고 넘긴다.</strong> I/O 스레드는 메시지를 잘라 게임 로직 큐로 넘기기만 하고, 처리는 로직 스레드가 한다(<a href="threading-model.html">게임 서버 스레딩 모델</a>). 이때 <code>ReadOnlySequence</code>는 다음 읽기에서 덮어쓰이므로 꺼낸 본문을 복사하거나 바로 역직렬화한다.
+      </li>
+      <li>
+        <strong>쪼개고 붙여 보는 시험을 따로 둔다.</strong> 같은 바이트열을 한 바이트씩 나눠 넣고, 여러 메시지를 한 번에 넣고, 헤더 중간에서 끊어 넣는 시험을 만든다. <code>Pipe</code>에 직접 조각을 써 넣으면 소켓 없이도 재현된다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>로컬에서 잘 돈다는 것은 근거가 아니다.</strong> 작은 메시지가 빠른 망을 지나면 대개 한 번에 하나씩 도착해, 프레이밍이 틀려도 드러나지 않는다. 부하가 걸려 여러 메시지가 한 번에 나가거나 지연으로 나뉘어 올 때 터진다.</li>
+      <li><strong>헤더도 나뉘어 온다.</strong> 본문만 나뉜다고 생각하고 헤더는 한 번에 읽힌다고 가정하면, 헤더 4바이트가 2바이트씩 두 번에 오는 순간 깨진다.</li>
+      <li><strong>UDP에는 이 문제가 없다.</strong> 데이터그램 하나가 메시지 하나다. 대신 한 데이터그램 안에 여러 메시지를 묶어 보낸다면 그 안에서는 길이로 다시 나눠야 한다.</li>
+      <li><strong>0바이트 읽기는 메시지가 아니다.</strong> 상대가 연결을 닫았다는 뜻이다. 이때 버퍼에 덜 온 메시지가 남아 있으면 그대로 버리고 세션을 정리한다(<a href="../network/tcp-connection.html">TCP 연결 관리</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

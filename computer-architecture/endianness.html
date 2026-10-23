@@ -81,7 +81,7 @@
       </table>
     </div>
     <p>
-      <strong>직렬화 라이브러리를 쓰면 포맷이 순서를 정한다.</strong> 예를 들어 MessagePack은 명세상 빅 엔디안이고, Protocol Buffers의 고정 길이 필드와 FlatBuffers는 리틀 엔디안이다. 라이브러리끼리 맞추면 신경 쓸 일이 없고, 직접 파싱할 때만 명세를 확인한다.
+      <strong>직렬화 라이브러리를 쓰면 포맷이 순서를 정한다.</strong> 예를 들어 MessagePack은 명세상 빅 엔디안이고, <a data-ref="server/protocol-choice">Protocol Buffers</a>의 고정 길이 필드와 FlatBuffers는 리틀 엔디안이다. 라이브러리끼리 맞추면 신경 쓸 일이 없고, 직접 파싱할 때만 명세를 확인한다.
     </p>
     <p>
       <strong>텍스트 포맷(JSON 등)은 이 문제가 없다.</strong> UTF-8 텍스트는 바이트 단위로 읽기 때문이다. 상호운용성이 중요하면 텍스트를 고를 수 있지만, 크기가 커지고 파싱 비용이 든다.

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>게임에서 프로토콜 고르기 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/protocol-choice">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../network/tcp-vs-udp.html">TCP와 UDP</a> · <a href="framing.html">메시지 경계와 프레이밍</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      게임 하나가 프로토콜 하나를 쓰지 않는다. 로그인과 상점은 HTTP로, 채팅과 거래는 TCP나 신뢰 채널로, 위치와 입력은 UDP 비신뢰 채널로 보낸다. 데이터마다 <strong>잃어도 되는지, 늦어도 되는지, 어디까지 순서가 맞아야 하는지</strong>가 다르기 때문이다.
+    </p>
+    <p>
+      프로토콜 고르기는 전송 계층만의 문제가 아니다. 먼저 <span class="blank">누가 결과를 정하는지</span>(서버 권위)를 나누고, 데이터마다 채널을 정하고, 바이트로 바꾸는 직렬화 포맷을 고르고, 클라이언트와 서버의 버전이 달라도 통하도록 호환 규칙을 정한다. 이 네 가지가 한 묶음이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>누가 정하는지부터 나눈다</h3>
+    <p>
+      결과에 영향을 주는 것은 서버가 정하고, 클라이언트는 입력을 보내고 결과를 받는다. 클라이언트는 사용자의 손에 있어서 언제든 조작될 수 있기 때문이다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇</th><th>클라이언트가 보내는 것</th><th>서버가 하는 일</th></tr></thead>
+        <tbody>
+          <tr><td>이동</td><td>입력(방향, 속도)이나 희망 위치</td><td>속도와 충돌을 검증하고 확정 위치를 돌려준다</td></tr>
+          <tr><td>공격 · 피격</td><td>"이 방향으로 쐈다"</td><td>명중과 피해를 판정한다</td></tr>
+          <tr><td>아이템 · 재화</td><td>요청만</td><td>지급과 차감을 정하고 저장한다</td></tr>
+          <tr><td>이펙트 · 소리 · UI</td><td>없음</td><td>관여하지 않는다. 클라이언트가 알아서 그린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      서버가 정하면 왕복 시간만큼 결과가 늦게 보인다. 이것을 감추려고 클라이언트가 결과를 먼저 그려 보고 나중에 서버 값으로 맞추는데, 그 방식은 <a data-ref="game-patterns/state-sync">상태 동기화</a>에서 다룬다. 서버를 아예 거치지 않는 P2P는 서버 비용과 지연이 줄지만 판정을 참가자가 나눠 갖는다. 연결 방법과 장단점은 <a href="../network/nat-traversal.html">NAT 뒤에서 직접 연결하기</a>에 있다.
+    </p>
+
+    <h3>데이터마다 채널을 나눈다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="클라이언트와 서버 사이에 HTTPS, 신뢰 순서 채널, UDP 신뢰 비순서 채널, UDP 비신뢰 채널 네 갈래가 나란히 있다">
+        <defs><marker id="pc1-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="110" height="170" rx="6"/>
+        <text class="f-strong" x="75" y="120" text-anchor="middle">클라이언트</text>
+        <rect class="f-box" x="590" y="30" width="110" height="170" rx="6"/>
+        <text class="f-strong" x="645" y="120" text-anchor="middle">서버</text>
+        <text class="f-text" x="360" y="50" text-anchor="middle">HTTPS · 로그인, 상점, 우편, 랭킹</text>
+        <line class="f-line" x1="134" y1="60" x2="586" y2="60" marker-start="url(#pc1-a)" marker-end="url(#pc1-a)"/>
+        <text class="f-text" x="360" y="92" text-anchor="middle">TCP 또는 신뢰·순서 채널 · 채팅, 거래, 인벤토리</text>
+        <line class="f-line" x1="134" y1="102" x2="586" y2="102" marker-start="url(#pc1-a)" marker-end="url(#pc1-a)"/>
+        <text class="f-text" x="360" y="134" text-anchor="middle">UDP 신뢰·비순서 채널 · 스킬 확정, 피격 이펙트</text>
+        <line class="f-line" x1="134" y1="144" x2="586" y2="144" marker-start="url(#pc1-a)" marker-end="url(#pc1-a)"/>
+        <text class="f-strong" x="360" y="176" text-anchor="middle">UDP 비신뢰·최신만 · 위치, 입력, 상태</text>
+        <line class="f-inval" x1="134" y1="186" x2="586" y2="186" marker-start="url(#pc1-a)" marker-end="url(#pc1-a)"/>
+        <text class="f-sub" x="360" y="214" text-anchor="middle">아래 두 채널은 보통 UDP 소켓 하나 위에 함께 얹는다</text>
+      </svg>
+      <figcaption>한 게임 안의 갈래들. 위로 갈수록 보장이 많고 느리며, 아래로 갈수록 보장이 적고 빠르다. 점선은 잃어도 되는 채널이다. 채널끼리는 서로의 손실을 기다리지 않는다.</figcaption>
+    </figure>
+    <p>
+      잃어도 되는지만으로는 부족하다. "순서가 어디까지 맞아야 하나"도 따로 정해야 한다. 순서를 넓게 맞출수록 하나를 잃었을 때 함께 기다리는 범위가 넓어진다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>전달 방식</th><th>잃으면</th><th>순서</th><th>맞는 데이터</th></tr></thead>
+        <tbody>
+          <tr><td>비신뢰</td><td>그대로 잃는다</td><td>맞추지 않는다</td><td>매번 새로 보내는 소리 신호, 효과</td></tr>
+          <tr><td>순번만(sequenced)</td><td>그대로 잃는다</td><td>옛것이 늦게 오면 버린다</td><td>위치, 입력. 최신 하나만 쓴다</td></tr>
+          <tr><td>신뢰 · 비순서</td><td>다시 보낸다</td><td>도착한 대로 넘긴다</td><td>서로 독립인 확정 이벤트(피격, 획득 알림)</td></tr>
+          <tr><td>신뢰 · 순서</td><td>다시 보낸다</td><td>채널 안에서 맞춘다</td><td>채팅, 거래 단계, 인벤토리 변경</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      C#의 LiteNetLib는 이 넷에 가까운 전달 방식(<code>Unreliable</code>, <code>Sequenced</code>, <code>ReliableUnordered</code>, <code>ReliableOrdered</code>, <code>ReliableSequenced</code>)을 메시지마다 고르게 하고, ENet은 채널 번호로 나눠 채널마다 순서를 따로 맞춘다. 신뢰 채널을 직접 만드는 방법은 <a href="../network/tcp-vs-udp.html">TCP와 UDP</a>에서 다뤘다.
+    </p>
+
+    <h3>직렬화 포맷은 크기, 속도, 호환을 맞바꾼다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 200" role="img" aria-label="같은 위치 메시지가 JSON 39바이트, Protocol Buffers 18바이트, 고정 크기 바이너리 16바이트, 양자화 바이너리 10바이트">
+        <text class="f-text" x="150" y="48" text-anchor="end">JSON</text>
+        <rect class="f-bar" x="165" y="28" width="468" height="28"/>
+        <text class="f-text" x="641" y="48">39바이트</text>
+        <text class="f-text" x="150" y="93" text-anchor="end">Protocol Buffers</text>
+        <rect class="f-bar" x="165" y="73" width="216" height="28"/>
+        <text class="f-text" x="389" y="93">18바이트</text>
+        <text class="f-text" x="150" y="138" text-anchor="end">고정 크기 바이너리</text>
+        <rect class="f-bar" x="165" y="118" width="192" height="28"/>
+        <text class="f-text" x="365" y="138">16바이트</text>
+        <text class="f-text" x="150" y="183" text-anchor="end">양자화 바이너리</text>
+        <rect class="f-hit" x="165" y="163" width="120" height="28"/>
+        <text class="f-strong" x="293" y="183">10바이트</text>
+      </svg>
+      <figcaption>id 12345, 좌표 (103.25, −48.5, 7)인 위치 메시지 하나. JSON은 <code>{"id":12345,"x":103.25,"y":-48.5,"z":7}</code>의 글자 수다. Protocol Buffers는 필드마다 1바이트 태그를 붙이고 id는 가변 길이 정수 2바이트, float은 4바이트씩이다. 고정 바이너리는 uint32 하나와 float 셋, 양자화는 좌표를 1cm 단위 16비트 정수로 줄였다(±327m 범위).</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>포맷</th><th>성질</th><th>호환</th><th>맞는 자리</th></tr></thead>
+        <tbody>
+          <tr><td>JSON</td><td>텍스트. 사람이 읽을 수 있고 도구가 많다. 크고 해석이 느리다</td><td>이름으로 찾으므로 필드를 더하기 쉽다. 형식 검사는 없다</td><td>웹 API, 설정, 운영 도구</td></tr>
+          <tr><td>Protocol Buffers</td><td>스키마(.proto)에서 코드를 생성한다. 필드 번호와 가변 길이 정수로 작다</td><td>모르는 필드 번호는 건너뛴다. 번호만 지키면 앞뒤 버전이 통한다</td><td>서버 간 통신(gRPC), 클라이언트 패킷</td></tr>
+          <tr><td>MessagePack</td><td>JSON과 같은 구조를 바이너리로. C#은 MessagePack-CSharp가 빠르다</td><td>정수 키(배열 모드)를 쓰면 키 번호가 호환 기준이 된다</td><td>C# 서버와 Unity 클라이언트 사이</td></tr>
+          <tr><td>FlatBuffers</td><td>버퍼를 객체로 풀지 않고 그 자리에서 읽는다. 역직렬화 비용과 할당이 없다</td><td>새 필드는 테이블 끝에 더하고, 지우지 않고 폐기 표시만 한다</td><td>큰 정적 데이터, 읽기가 잦은 메시지</td></tr>
+          <tr><td>직접 짠 바이너리</td><td>가장 작다. 비트 단위로 묶고 값 범위를 줄일 수 있다</td><td>호환을 전부 직접 관리한다</td><td>초당 수십 번 오가는 위치·입력 패킷</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      많이 쓰는 구성은 섞는 것이다. 대부분의 메시지는 스키마 기반 포맷으로 정의해 호환을 맡기고, 초당 수십 번 오가는 이동 패킷만 직접 짠 바이너리로 줄인다. 크기를 줄이기 전에 보낼 대상부터 줄이는 것이 먼저다(<a href="aoi-broadcast.html">관심 영역과 브로드캐스트</a>).
+    </p>
+
+    <h3>버전이 다른 상대와도 통해야 한다</h3>
+    <p>
+      패치 직후에는 옛 클라이언트와 새 서버가 동시에 존재한다. 서버를 한 대씩 바꾸는 동안에는 서버끼리도 버전이 섞인다. 그래서 메시지 형식은 처음부터 바뀔 것을 전제로 정한다.
+    </p>
+    <ul>
+      <li><strong>필드는 번호로 식별하고 번호를 다시 쓰지 않는다.</strong> 지운 필드의 번호는 남겨 두고(Protocol Buffers의 <code>reserved</code>) 새 필드에는 새 번호를 준다. 옛 번호를 다른 뜻으로 다시 쓰면 옛 상대가 엉뚱한 값으로 읽는다.</li>
+      <li><strong>새 필드는 없어도 동작해야 한다.</strong> 옛 클라이언트는 새 필드를 보내지 않는다. 받는 쪽은 기본값으로 처리할 수 있어야 한다.</li>
+      <li><strong>의미를 바꾸려면 필드를 새로 만든다.</strong> 단위를 초에서 밀리초로 바꾸는 식의 변경은 같은 필드에서 하지 않는다.</li>
+      <li><strong>접속할 때 프로토콜 버전을 주고받는다.</strong> 지원 범위 밖이면 업데이트를 요구하고 끊는다. 메시지 종류 번호와 길이는 <a href="framing.html">프레임 헤더</a>에 둔다.</li>
+    </ul>
+    <p>
+      배포 순서와 함께 맞물리는 호환 전략은 <a data-ref="operations/protocol-compat">프로토콜 호환</a>에서 다룬다.
+    </p>
+
+    <h3>HTTP, WebSocket, gRPC는 자리가 정해져 있다</h3>
+    <p>
+      요청 하나에 응답 하나로 끝나는 기능은 HTTP API가 맞는다. 로드 밸런서, 캐시, 인증 도구를 그대로 쓸 수 있다(<a href="../network/http-versions.html">HTTP 버전</a>). 서버 사이의 호출은 스키마가 있고 한 연결에 여러 호출을 섞는 gRPC가 흔하다. gRPC는 HTTP/2가 필요해서, 브라우저에서는 gRPC-Web과 중계 프록시를 거친다.
+    </p>
+    <p>
+      브라우저는 TCP·UDP 소켓을 직접 열 수 없다. Unity WebGL 빌드도 마찬가지라 실시간 통신은 WebSocket(TCP 위의 양방향 메시지)을 쓴다. 비신뢰 전송이 필요하면 HTTP/3 위의 WebTransport가 데이터그램을 제공한다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>장르별로 흔한 구성</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>장르</th><th>실시간 부분</th><th>나머지</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>MMORPG</td><td>TCP 하나에 모든 게임 메시지</td><td>HTTP API(상점, 공지)</td><td>수백 ms 지연을 견딘다. 순서가 중요하고 구현이 단순하다</td></tr>
+          <tr><td>FPS · 액션 · 배틀로얄</td><td>UDP 위에 신뢰·비신뢰 채널, 전용 서버</td><td>HTTPS 로그인 · 매칭</td><td>수십 ms가 결과를 바꾼다. 판정은 서버가 한다</td></tr>
+          <tr><td>대전 격투</td><td>P2P에 입력만 주고받고 롤백으로 보정, 안 되면 중계</td><td>HTTPS 매칭</td><td>두 명이라 연결 수 부담이 없고 지연이 가장 중요하다</td></tr>
+          <tr><td>모바일 캐주얼 · 턴제</td><td>HTTP 요청-응답, 실시간 알림만 WebSocket이나 TCP</td><td>같은 HTTP API</td><td>망 전환이 잦아 짧은 요청이 다루기 쉽다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      결정 순서는 이렇다. 서버가 판정할 것을 정한다. 데이터를 잃어도 되는지, 늦어도 되는지, 순서 범위로 나눠 채널을 정한다. 대부분은 스키마 기반 포맷으로 정의하고 뜨거운 경로만 손으로 줄인다. 마지막으로 버전 규칙을 정한다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>패킷 정의는 한 곳에 두고 코드를 생성한다.</strong> .NET 서버와 Unity 클라이언트가 같은 스키마 파일에서 클래스를 생성하면 양쪽 정의가 어긋나는 사고가 없다. 손으로 두 벌을 맞추면 필드 순서 하나가 바뀌어도 빌드는 통과하고 실행 중에 값이 틀어진다.
+      </li>
+      <li>
+        <strong>직렬화에서 할당을 줄인다.</strong> 리플렉션 기반 직렬화는 느리고 AOT 환경에서 깨질 수 있다. 소스 생성기를 쓰는 라이브러리(MessagePack-CSharp, Google.Protobuf의 생성 코드)를 쓰고, 버퍼는 풀에서 빌려 <code>IBufferWriter&lt;byte&gt;</code>에 바로 쓴다(<a href="../csharp/jit-aot.html">JIT와 AOT</a>, <a data-ref="csharp/ref-span">ref struct와 Span</a>).
+      </li>
+      <li>
+        <strong>받은 값은 모두 검증한다.</strong> 서버 권위라도 역직렬화한 값의 범위를 보지 않으면 소용이 없다. 길이 필드가 엄청나게 크거나, 수량이 음수거나, 좌표가 맵 밖이면 처리하기 전에 거른다.
+      </li>
+      <li>
+        <strong>모르는 메시지 종류를 받으면 기록하고 버린다.</strong> 새 버전 상대가 보낸 메시지일 수 있다. 바로 예외를 던져 연결을 끊으면 버전이 섞인 기간 동안 접속이 무더기로 끊긴다. 대신 반복되면 조작을 의심해 끊는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>포맷부터 바꾸는 것은 순서가 틀렸다.</strong> JSON을 바이너리로 바꿔 절반으로 줄이는 것보다, 보낼 대상과 빈도를 줄이는 쪽이 훨씬 크게 줄어든다.</li>
+      <li><strong>float을 그대로 보내면 정밀도를 낭비한다.</strong> 화면에서 1cm 차이를 구분하지 못한다면 4바이트 float 대신 범위를 정한 16비트 정수로 충분하다. 대신 범위와 단위를 양쪽이 같이 알아야 한다.</li>
+      <li><strong>HTTP를 실시간 동기화에 쓰지 않는다.</strong> 매 요청에 헤더가 붙고 서버가 먼저 보낼 수 없다. 서버가 밀어 줘야 하는 데이터는 연결을 유지하는 채널로 보낸다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

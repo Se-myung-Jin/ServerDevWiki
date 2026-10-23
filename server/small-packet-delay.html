@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>작은 패킷과 지연 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="server/small-packet-delay">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="framing.html">메시지 경계와 프레이밍</a> · <a href="../network/flow-congestion.html">흐름 제어와 혼잡 제어</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      TCP에는 작은 패킷을 줄이려는 장치가 양쪽에 하나씩 있다. 보내는 쪽의 <strong>Nagle 알고리즘</strong>은 확인받지 못한 데이터가 있으면 작은 조각을 바로 보내지 않고 모은다. 받는 쪽의 <strong>지연 ACK</strong>는 곧 보낼 응답에 실어 보내려고 확인을 잠시 미룬다.
+    </p>
+    <p>
+      둘 다 혼자서는 합리적이다. 그런데 한쪽은 <span class="blank">확인을 기다리고</span> 다른 쪽은 <span class="blank">확인을 미루면</span>, 지연 ACK 타이머가 끝날 때까지 아무것도 나가지 않는다. Linux에서는 40ms 안팎, Windows에서는 200ms다. 게임 서버는 보통 Nagle을 끄고(<code>TCP_NODELAY</code>), 대신 응용이 틱 단위로 직접 모아 보낸다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>두 장치는 각자 낭비를 줄인다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>장치</th><th>어디서</th><th>규칙</th><th>줄이려는 것</th></tr></thead>
+        <tbody>
+          <tr><td>Nagle 알고리즘</td><td>보내는 쪽</td><td>확인받지 못한 데이터가 있는 동안, MSS보다 작은 새 데이터는 모아 둔다. ACK가 오거나 MSS만큼 차면 보낸다</td><td>1바이트에 헤더 40바이트가 붙는 작은 패킷(<a href="../network/packet-headers.html">패킷 헤더</a>)</td></tr>
+          <tr><td>지연 ACK</td><td>받는 쪽</td><td>받자마자 ACK를 보내지 않고 잠시 기다린다. 그사이 보낼 데이터가 생기면 거기에 실어 보낸다. 꽉 찬 세그먼트 두 개를 받으면 바로 보낸다</td><td>ACK만 담은 빈 패킷</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Nagle이 막는 것은 <strong>작은</strong> 조각뿐이다. MSS만큼 찬 데이터는 확인을 기다리지 않고 나간다. 그래서 큰 파일 전송은 이 문제와 상관없고, 작고 잦은 메시지에서만 생긴다. 지연 ACK의 상한은 규격상 500ms이고 실제 구현은 그보다 짧다.
+    </p>
+
+    <h3>보내기-보내기-받기에서 맞물린다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 352" role="img" aria-label="클라이언트가 요청을 두 번에 나눠 보내면 두 번째 조각은 Nagle이 붙잡고, 서버는 요청이 덜 와서 ACK를 미룬다. 지연 ACK 타이머가 끝나야 ACK가 가고 나머지와 응답이 이어진다">
+        <defs><marker id="spd-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker><marker id="spd-b" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="230" y="26" text-anchor="middle">클라이언트</text>
+        <text class="f-strong" x="530" y="26" text-anchor="middle">서버</text>
+        <line class="f-line" x1="230" y1="38" x2="230" y2="340"/>
+        <line class="f-line" x1="530" y1="38" x2="530" y2="340"/>
+
+        <line class="f-line" x1="232" y1="56" x2="526" y2="84" marker-end="url(#spd-a)"/>
+        <text class="f-text" x="380" y="64" text-anchor="middle" transform="rotate(5.4 380 70)">① 요청 앞부분 (작다)</text>
+        <text class="f-sub" x="218" y="60" text-anchor="end">Send ① 바로 나간다</text>
+
+        <text class="f-text" x="218" y="104" text-anchor="end">Send ② 나머지</text>
+        <text class="f-sub" x="218" y="120" text-anchor="end">①의 확인이 없어 붙잡힌다</text>
+        <text class="f-text" x="542" y="98">요청이 덜 왔다</text>
+        <text class="f-sub" x="542" y="114">보낼 것이 없어 ACK를 미룬다</text>
+
+        <rect class="f-pad" x="250" y="138" width="260" height="58" rx="4"/>
+        <text class="f-strong" x="380" y="162" text-anchor="middle">서로를 기다린다</text>
+        <text class="f-sub" x="380" y="182" text-anchor="middle">Linux 40ms 안팎 · Windows 200ms</text>
+
+        <line class="f-line" x1="528" y1="214" x2="234" y2="242" marker-end="url(#spd-a)"/>
+        <text class="f-text" x="380" y="222" text-anchor="middle" transform="rotate(-5.4 380 228)">③ 타이머가 끝나 ACK</text>
+        <text class="f-sub" x="542" y="218">지연 ACK 타이머 만료</text>
+
+        <line class="f-line" x1="232" y1="252" x2="526" y2="280" marker-end="url(#spd-a)"/>
+        <text class="f-text" x="380" y="260" text-anchor="middle" transform="rotate(5.4 380 266)">④ 이제야 나머지</text>
+
+        <line class="f-barrier" x1="528" y1="300" x2="234" y2="328" marker-end="url(#spd-b)"/>
+        <text class="f-text" x="380" y="308" text-anchor="middle" transform="rotate(-5.4 380 314)">⑤ 응답 (ACK도 여기 실린다)</text>
+      </svg>
+      <figcaption>요청 하나를 두 번의 <code>Send</code>로 나눠 보낸 경우다. 두 번째 조각은 첫 조각의 ACK를 기다리고, 서버는 요청을 다 받아야 답할 수 있어 ACK를 미룬다. 둘이 맞물린 시간만큼 응답이 통째로 늦는다.</figcaption>
+    </figure>
+    <p>
+      요청을 <code>Send</code> 한 번에 보냈다면 생기지 않는다. 서버는 요청을 다 받아 바로 응답하고, ACK는 그 응답에 실려 간다. 문제는 헤더와 본문을 따로 쓰거나, 작은 메시지를 연달아 여러 번 쓰는 코드에서 생긴다.
+    </p>
+    <p>
+      서버가 클라이언트에게 상태 갱신을 계속 밀어 보내는 경우도 같다. 클라이언트가 보낼 것이 없으면 ACK를 미루고, 서버의 다음 갱신들은 그 ACK를 기다리며 쌓였다가 한꺼번에 나간다. 지연 ACK가 없어도 Nagle 혼자서 갱신을 최대 한 왕복 시간(RTT)만큼 붙잡는다. 멀리 있는 클라이언트일수록 커진다.
+    </p>
+
+    <h3>어떤 트래픽이 걸리나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>트래픽 모양</th><th>걸리나</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>요청을 한 번에 쓰고 응답을 기다린다</td><td>대개 안 걸린다</td><td>응답에 ACK가 실린다</td></tr>
+          <tr><td>요청 하나를 여러 번에 나눠 쓴다</td><td>걸린다</td><td>위 그림의 경우</td></tr>
+          <tr><td>작은 메시지를 연달아 밀어 보낸다(틱마다 상태 갱신, 채팅)</td><td>걸린다</td><td>첫 조각 뒤로 전부 ACK를 기다린다</td></tr>
+          <tr><td>큰 데이터를 통째로 보낸다</td><td>안 걸린다</td><td>MSS만큼 찬 세그먼트는 바로 나간다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <h3>끄는 방법과 대가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>대가와 한계</th></tr></thead>
+        <tbody>
+          <tr><td>Nagle을 끈다</td><td><code>TCP_NODELAY</code>. .NET은 <code>Socket.NoDelay = true</code>. 모든 주요 OS에 있고 소켓마다 켠다</td><td>작은 <code>Send</code>마다 패킷 하나가 나간다. 패킷 수와 <a data-ref="operating-system/kernel-boundary">시스템 콜</a>이 늘어난다</td></tr>
+          <tr><td>받는 쪽 ACK를 당긴다</td><td>Linux의 <code>TCP_QUICKACK</code></td><td>Linux 전용이고 영구 설정이 아니다. 커널이 다시 지연 모드로 돌아가므로 읽을 때마다 다시 켜야 한다. 상대 OS는 내가 고칠 수 없다</td></tr>
+          <tr><td>OS 전체 ACK 설정을 바꾼다</td><td>Windows 레지스트리의 <code>TcpAckFrequency</code></td><td>네트워크 인터페이스 단위라 그 인터페이스를 쓰는 모든 연결에 적용되고, 재부팅해야 반영된다. 서버 한 프로그램을 위해 쓰기엔 범위가 넓다</td></tr>
+          <tr><td>한 번에 쓴다</td><td>헤더와 본문을 한 버퍼에 만들어 <code>Send</code> 한 번. 흩어진 버퍼는 <code>Socket.SendAsync(IList&lt;ArraySegment&lt;byte&gt;&gt;)</code>로 모아 보낸다</td><td>코드를 고쳐야 한다. 대신 Nagle을 켜 둔 채로도 맞물림이 사라진다</td></tr>
+          <tr><td>응용이 틱 단위로 모은다</td><td>한 틱 동안 보낼 메시지를 세션별 송신 버퍼에 쌓았다가 틱 끝에 한 번 보낸다</td><td>지연의 상한이 틱 간격이 된다. 급한 메시지는 따로 바로 보내는 경로가 필요하다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      게임 서버의 기본 조합은 <strong>Nagle을 끄고 응용이 모으는 것</strong>이다. 언제 보낼지를 커널이 짐작하게 두지 않고, 무엇을 언제 보낼지 아는 응용이 정한다. Nagle만 끄고 메시지마다 <code>Send</code>를 부르면 맞물림은 사라지지만 작은 패킷과 시스템 콜이 그대로 늘어난다(<a href="../system-programming/syscall-cost.html">시스템 콜 비용</a>).
+    </p>
+    <p>
+      반대 방향의 장치도 있다. Linux의 <code>TCP_CORK</code>는 풀어 줄 때까지(최대 200ms) 일부러 모아 두었다가 꽉 채워 보낸다. 응답 헤더와 파일 본문을 한 덩어리로 내보내는 웹 서버가 쓰는 방식이고, 지연에 민감한 게임 트래픽에는 맞지 않는다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>양쪽 모두 끈다.</strong> Nagle은 보내는 쪽 설정이다. 서버만 <code>NoDelay</code>를 켜면 서버가 보내는 것은 빨라져도 클라이언트가 보내는 입력은 여전히 붙잡힌다. 클라이언트 소켓에도 같이 켠다.
+      </li>
+      <li>
+        <strong>프레임워크 기본값을 확인한다.</strong> ASP.NET Core의 Kestrel은 소켓 전송에서 <code>NoDelay</code>를 기본으로 켠다. 직접 만든 <code>Socket</code>은 기본이 꺼져 있다(Nagle이 켜진 상태). 같은 .NET이라도 어느 경로로 만든 소켓인지에 따라 다르다.
+      </li>
+      <li>
+        <strong>틱 끝에 한 번 보낸다.</strong> <a data-ref="server/threading-model">로직 스레드</a>가 틱 동안 만든 메시지를 세션별 버퍼에 쓰고, 틱이 끝나면 세션마다 한 번 송신한다. <code>PipeWriter</code>에 여러 메시지를 쓰고 <code>FlushAsync</code>를 한 번 부르는 방식도 같다(<a href="framing.html">메시지 경계와 프레이밍</a>). 밀려서 쌓이는 경우는 <a data-ref="server/backpressure">큐와 백프레셔</a>에서 다룬다.
+      </li>
+      <li>
+        <strong>분포로 가려낸다.</strong> 왕복 시간을 재서 히스토그램을 보면, 이 문제일 때는 40ms나 200ms 근처에 값이 몰린다. 망 지연이나 재전송이면 넓게 퍼진다. 패킷 캡처에서 작은 세그먼트와 그 ACK 사이가 정확히 수십 ms씩 벌어져 있으면 확정이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>Nagle은 매번 ACK를 기다리는 장치가 아니다.</strong> 작은 조각만 붙잡고, MSS만큼 찬 데이터는 그냥 보낸다. Linux는 여기서 더 나아가, 확인받지 못한 <em>작은</em> 세그먼트가 있을 때만 붙잡는 변형을 쓴다.</li>
+      <li><strong>연결 초반에는 안 보일 수 있다.</strong> Linux는 연결을 막 맺었을 때와 오래 쉬었다 다시 받을 때 ACK를 바로 보내는 모드로 시작한다. 짧은 테스트에서는 재현되지 않다가 오래 붙어 있는 실제 세션에서 나타난다.</li>
+      <li><strong>지연이 튄다고 모두 이 문제는 아니다.</strong> 재전송, 혼잡 제어(<a href="../network/flow-congestion.html">흐름 제어와 혼잡 제어</a>), 서버의 처리 지연도 같은 증상을 낸다. 작고 잦은 메시지라는 조건과 일정한 지연 값이 함께 맞을 때 의심한다.</li>
+      <li><strong>UDP에는 이 장치가 없다.</strong> 보내라는 대로 바로 나간다. 대신 작은 패킷의 헤더 낭비를 막으려면 UDP에서도 응용이 직접 묶어야 한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
