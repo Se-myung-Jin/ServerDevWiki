@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>그래프 알고리즘 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="algorithm/graph-algorithms">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../data-structure/graphs.html">그래프 표현과 탐색</a> · <a href="../data-structure/heap-btree.html">힙과 B-트리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      최단 경로 알고리즘은 <strong>어떤 간선을 허용하느냐</strong>로 나뉜다. 가중치가 없으면 BFS, 음수가 없으면 다익스트라, 음수가 있으면 벨만-포드, 모든 쌍이 필요하면 플로이드-워셜이다. 음수 간선이 있는데 다익스트라를 쓰면 <span class="blank">예외 없이 틀린 답</span>이 나온다.
+    </p>
+    <p>
+      <strong>A*</strong>는 다익스트라에 "목표까지 남은 거리 추정"을 더해 목표 쪽부터 살핀다. 그 추정이 실제보다 크면 빨라지는 대신 <span class="blank">최단 경로를 보장하지 못한다</span>.
+      그래프 표현, BFS·DFS, 위상 정렬, 유니온 파인드는 <a href="../data-structure/graphs.html">그래프 표현과 탐색</a>에서 다뤘다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>최단 경로 알고리즘은 모두 "완화"를 한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 200" role="img" aria-label="s에서 v까지 9였던 거리가 u를 거치는 3 더하기 2로 5가 되어 갱신되는 완화">
+      <defs><marker id="ga-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-text" x="160" y="14" text-anchor="middle">완화 전</text>
+      <line class="f-line" x1="60" y1="138" x2="140" y2="82" marker-end="url(#ga-a)"/><text class="f-sub" x="88" y="96">3</text>
+      <line class="f-line" x1="180" y1="82" x2="260" y2="138" marker-end="url(#ga-a)"/><text class="f-sub" x="228" y="96">2</text>
+      <line class="f-line" x1="62" y1="150" x2="258" y2="150" marker-end="url(#ga-a)"/><text class="f-sub" x="160" y="168" text-anchor="middle">9</text>
+      <circle class="f-hit" cx="40" cy="150" r="20"/><text class="f-strong" x="40" y="155" text-anchor="middle">s</text>
+      <text class="f-sub" x="40" y="122" text-anchor="middle">거리 0</text>
+      <circle class="f-hit" cx="160" cy="72" r="20"/><text class="f-strong" x="160" y="77" text-anchor="middle">u</text>
+      <text class="f-sub" x="160" y="44" text-anchor="middle">거리 3</text>
+      <circle class="f-hit" cx="280" cy="150" r="20"/><text class="f-strong" x="280" y="155" text-anchor="middle">v</text>
+      <text class="f-sub" x="280" y="122" text-anchor="middle">거리 9</text>
+      <text class="f-text" x="530" y="14" text-anchor="middle">완화 후 · 3 + 2 = 5 < 9</text>
+      <line class="f-line" x1="430" y1="138" x2="510" y2="82" marker-end="url(#ga-a)"/><text class="f-sub" x="458" y="96">3</text>
+      <line class="f-line" x1="550" y1="82" x2="630" y2="138" marker-end="url(#ga-a)"/><text class="f-sub" x="598" y="96">2</text>
+      <line class="f-line f-dash" x1="432" y1="150" x2="628" y2="150" marker-end="url(#ga-a)"/><text class="f-sub" x="530" y="168" text-anchor="middle">9</text>
+      <circle class="f-hit" cx="410" cy="150" r="20"/><text class="f-strong" x="410" y="155" text-anchor="middle">s</text>
+      <text class="f-sub" x="410" y="122" text-anchor="middle">거리 0</text>
+      <circle class="f-hit" cx="530" cy="72" r="20"/><text class="f-strong" x="530" y="77" text-anchor="middle">u</text>
+      <text class="f-sub" x="530" y="44" text-anchor="middle">거리 3</text>
+      <circle class="f-miss" cx="650" cy="150" r="20"/><text class="f-on" x="650" y="155" text-anchor="middle">v</text>
+      <text class="f-sub" x="650" y="122" text-anchor="middle">거리 5</text>
+      </svg>
+      <figcaption>s에서 v까지 9로 알고 있었는데, u를 거치면 3 + 2 = 5로 더 짧다. 그래서 v의 거리를 5로 바꾼다. 이 갱신이 완화이고, 바뀐 것은 v의 값 하나뿐이다.</figcaption>
+    </figure>
+    <p>
+      지금 알고 있는 거리보다 더 짧은 길을 찾으면 갱신한다. 이름은 달라도 네 알고리즘이 하는 일은 이것 하나이고, <strong>완화를 어떤 순서로 몇 번 하느냐</strong>만 다르다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>알고리즘</th><th>완화 순서</th><th>구하는 것</th><th>음수 간선</th><th class="num">시간</th></tr></thead>
+        <tbody>
+          <tr><td>BFS</td><td>가까운 층부터 한 번씩</td><td>한 점에서 전부, 가중치 없음</td><td>해당 없음</td><td class="num">O(V+E)</td></tr>
+          <tr><td>다익스트라</td><td>남은 것 중 거리가 가장 작은 노드를 꺼내 확정하고 다시 보지 않는다</td><td>한 점에서 전부</td><td>안 된다</td><td class="num">O((V+E) log V)</td></tr>
+          <tr><td>벨만-포드</td><td>모든 간선을 V−1번 반복한다</td><td>한 점에서 전부</td><td>된다. 음수 사이클도 찾는다</td><td class="num">O(VE)</td></tr>
+          <tr><td>플로이드-워셜</td><td>거쳐 가도 되는 노드를 하나씩 늘려 가며 모든 쌍을 완화한다</td><td>모든 쌍</td><td>된다(음수 사이클은 안 된다)</td><td class="num">O(V³)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      다익스트라가 음수를 못 쓰는 이유는 <strong>한 번 확정한 노드를 다시 보지 않기</strong> 때문이다. 확정한 뒤에 음수 간선을 거쳐 더 짧아질 수 있는데 그 가능성을 무시한다.
+      벨만-포드가 V−1번인 이유는 사이클 없는 최단 경로가 간선을 많아야 V−1개 지나기 때문이다. V번째에도 갱신이 일어나면 계속 짧아지는 음수 사이클이 있다는 뜻이다.
+    </p>
+    <p>
+      다익스트라의 우선순위 큐는 <a href="../data-structure/heap-btree.html">힙</a>이다. C#의 <code>PriorityQueue</code>에는 우선순위를 낮추는 연산이 없으므로, 더 짧은 거리를 찾을 때마다 새 항목을 넣고 꺼냈을 때 이미 확정된 노드면 건너뛴다.
+    </p>
+
+    <h3>A*는 남은 거리 추정을 더한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 260" role="img" aria-label="같은 격자에서 다익스트라는 출발점 둘레로 고르게 퍼지고 A*는 목표 쪽으로 좁게 늘어난다">
+      <text class="f-text" x="163" y="20" text-anchor="middle">다익스트라</text>
+      <rect class="f-cell2" x="20" y="34" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="34" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="34" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="34" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="34" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="152" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="174" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="196" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="34" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="174" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="196" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="56" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="174" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="196" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="78" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="174" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="196" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="122" width="22" height="22"/>
+      <rect class="f-miss" x="86" y="122" width="22" height="22"/>
+      <text class="f-on" x="97" y="138" text-anchor="middle">S</text>
+      <rect class="f-hit" x="108" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="174" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="196" y="122" width="22" height="22"/>
+      <rect class="f-miss" x="218" y="122" width="22" height="22"/>
+      <text class="f-on" x="229" y="138" text-anchor="middle">G</text>
+      <rect class="f-cell2" x="240" y="122" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="122" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="174" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="196" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="174" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="196" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="166" width="22" height="22"/>
+      <rect class="f-hit" x="20" y="188" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="188" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="188" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="188" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="188" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="188" width="22" height="22"/>
+      <rect class="f-hit" x="152" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="174" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="196" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="20" y="210" width="22" height="22"/>
+      <rect class="f-hit" x="42" y="210" width="22" height="22"/>
+      <rect class="f-hit" x="64" y="210" width="22" height="22"/>
+      <rect class="f-hit" x="86" y="210" width="22" height="22"/>
+      <rect class="f-hit" x="108" y="210" width="22" height="22"/>
+      <rect class="f-hit" x="130" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="152" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="174" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="196" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="218" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="240" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="262" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="284" y="210" width="22" height="22"/>
+      <text class="f-sub" x="163" y="254" text-anchor="middle">살펴본 칸 68개</text>
+      <text class="f-text" x="543" y="20" text-anchor="middle">A* (맨해튼 휴리스틱)</text>
+      <rect class="f-cell2" x="400" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="466" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="488" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="510" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="532" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="554" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="576" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="598" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="34" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="466" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="488" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="510" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="532" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="554" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="576" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="598" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="56" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="466" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="488" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="510" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="532" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="554" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="576" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="598" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="78" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="466" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="488" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="510" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="532" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="554" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="576" y="100" width="22" height="22"/>
+      <rect class="f-hit" x="598" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="100" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="122" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="444" y="122" width="22" height="22"/>
+      <rect class="f-miss" x="466" y="122" width="22" height="22"/>
+      <text class="f-on" x="477" y="138" text-anchor="middle">S</text>
+      <rect class="f-hit" x="488" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="510" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="532" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="554" y="122" width="22" height="22"/>
+      <rect class="f-hit" x="576" y="122" width="22" height="22"/>
+      <rect class="f-miss" x="598" y="122" width="22" height="22"/>
+      <text class="f-on" x="609" y="138" text-anchor="middle">G</text>
+      <rect class="f-hit" x="620" y="122" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="122" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="122" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="466" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="488" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="510" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="532" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="554" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="576" y="144" width="22" height="22"/>
+      <rect class="f-hit" x="598" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="144" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="466" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="488" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="510" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="532" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="554" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="576" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="598" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="166" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="466" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="488" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="510" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="532" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="554" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="576" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="598" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="188" width="22" height="22"/>
+      <rect class="f-cell2" x="400" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="422" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="444" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="466" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="488" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="510" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="532" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="554" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="576" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="598" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="620" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="642" y="210" width="22" height="22"/>
+      <rect class="f-cell2" x="664" y="210" width="22" height="22"/>
+      <text class="f-sub" x="543" y="254" text-anchor="middle">살펴본 칸 23개</text>
+      </svg>
+      <figcaption>같은 격자에서 출발(S)부터 목표(G)까지 찾을 때 살펴본 칸이다. 다익스트라는 출발점을 중심으로 사방에 고르게 퍼지고, A*는 목표 쪽으로 길게 늘어난다. 칠해진 칸이 적을수록 꺼내 본 노드가 적다.</figcaption>
+    </figure>
+    <p>
+      다익스트라는 지금까지 온 거리 g만 보고 다음을 고른다. A*는 여기에 목표까지 남은 거리 추정 h를 더한 <code>f = g + h</code>로 고른다. 목표에 가까워 보이는 쪽을 먼저 보므로 살펴볼 범위가 줄어든다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>추정 h</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>항상 0</td><td>다익스트라와 똑같다</td></tr>
+          <tr><td>실제보다 작거나 같다(허용 가능)</td><td>최단 경로를 보장한다</td></tr>
+          <tr><td>허용 가능하면서 일관적이다(이웃으로 한 칸 갈 때 h가 그 간선 비용보다 더 줄지 않는다)</td><td>한 번 닫은 노드를 다시 열 필요가 없다. 보통 구현은 이것을 전제로 한다</td></tr>
+          <tr><td>실제보다 클 때가 있다</td><td>더 빨라질 수 있지만 더 짧은 길을 지나칠 수 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      닫힌 목록(이미 확정한 노드)을 두는 일반적인 A* 구현은 h가 <strong>일관적</strong>이어야 최단을 보장한다. 허용 가능하기만 하고 일관적이지 않으면 닫힌 노드가 나중에 더 짧은 길로 다시 닿을 수 있어, 그 노드를 다시 열어 주어야 한다. 아래 표의 거리들은 해당 이동 규칙에서 둘 다 만족한다.
+    </p>
+
+    <h3>이동 규칙이 휴리스틱을 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>이동</th><th>맞는 휴리스틱</th><th>식 (dx, dy는 좌표 차의 절댓값)</th></tr></thead>
+        <tbody>
+          <tr><td>상하좌우만</td><td>맨해튼</td><td>dx + dy</td></tr>
+          <tr><td>8방향, 대각선도 비용 1</td><td>체비쇼프</td><td>max(dx, dy)</td></tr>
+          <tr><td>8방향, 대각선 비용 √2</td><td>옥타일</td><td>max(dx, dy) + (√2 − 1)·min(dx, dy)</td></tr>
+          <tr><td>자유로운 이동(내비메시)</td><td>유클리드</td><td>√(dx² + dy²)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      8방향 격자에서 맨해튼을 쓰면 <strong>과대평가</strong>가 된다. 대각선 한 번에 가는 거리를 맨해튼은 두 칸으로 센다. 그러면 경로는 나오는데 가끔 돌아간다. 게임 코드에서 흔한 실수다.
+    </p>
+
+    <h3>최소 신장 트리: 크루스칼과 프림</h3>
+    <p>
+      모든 노드를 가장 적은 비용으로 잇는 간선 집합이 <strong>최소 신장 트리(MST)</strong>다. 두 알고리즘 모두 그리디이고, "어떤 분할을 건너는 간선 중 가장 싼 것은 언제나 MST에 들어간다"는 컷 성질로 증명된다(<a href="design-techniques.html">설계 기법</a>).
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>알고리즘</th><th>어떻게</th><th>보조 구조</th><th class="num">시간</th><th>맞는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>크루스칼</td><td>간선을 정렬해 싼 것부터, 사이클이 안 생기면 채택한다</td><td><a href="../data-structure/graphs.html">유니온 파인드</a></td><td class="num">O(E log E)</td><td>간선이 희소하다</td></tr>
+          <tr><td>프림</td><td>한 점에서 시작해 트리에 붙은 가장 싼 간선으로 넓혀 간다</td><td>우선순위 큐</td><td class="num">O(E log V), 인접 행렬이면 O(V²)</td><td>간선이 빽빽하다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th></tr></thead>
+        <tbody>
+          <tr><td>간선 비용이 모두 같다</td><td>BFS</td></tr>
+          <tr><td>한 점에서 한 목표까지, 거리 추정이 가능하다</td><td>A*</td></tr>
+          <tr><td>한 점에서 모든 곳까지, 음수 없음</td><td>다익스트라</td></tr>
+          <tr><td>음수 간선이 있거나 음수 사이클을 찾아야 한다</td><td>벨만-포드</td></tr>
+          <tr><td>노드가 수백 개 이하이고 모든 쌍이 필요하다</td><td>플로이드-워셜. 세 겹 루프라 상수가 작다</td></tr>
+          <tr><td>여러 유닛이 같은 목표로 간다</td><td>목표에서 한 번 다익스트라(또는 BFS)를 돌려 거리 지도를 만든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>격자냐 내비메시냐가 먼저다.</strong> 격자는 단순하고 장애물 갱신이 쉽지만 넓은 맵에서 노드 수가 폭증한다. 내비메시는 걸을 수 있는 영역을 다각형으로 묶어 노드 수가 훨씬 적고, 대신 만들기와 동적 장애물 반영이 어렵다.
+        비용이 같은 격자라면 대칭 경로를 건너뛰는 JPS(Jump Point Search)가 A*보다 꺼내는 노드를 크게 줄인다.
+      </li>
+      <li>
+        <strong>길찾기는 틱 예산 안에서 나눠 한다.</strong> 몬스터 수백 마리가 한 틱에 동시에 A*를 돌리면 틱이 밀린다. 요청을 큐에 넣고 틱마다 정해진 노드 수만큼만 확장하거나(시간 분할), 초당 요청 수에 상한을 둔다. 결과가 나올 때까지는 직선 이동이나 이전 경로로 버틴다.
+      </li>
+      <li>
+        <strong>같은 길은 다시 찾지 않는다.</strong> 존 사이의 큰 경로는 미리 계산하거나 캐시하고(계층적 길찾기), 같은 목표를 쫓는 몬스터 무리는 목표에서 거리 지도(flow field)를 한 번 만들어 함께 쓴다.
+      </li>
+      <li>
+        <strong>플레이어 이동은 계산하지 않고 검증한다.</strong> NPC 경로는 서버가 계산하지만, 플레이어 경로까지 서버가 매번 A*로 다시 찾으면 비용이 크다. 클라이언트가 보낸 이동을 속도 상한·충돌·걸을 수 있는 영역으로 검증하는 쪽이 일반적이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>A*가 언제나 다익스트라보다 빠른 것은 아니다.</strong> h를 계산하는 비용이 들고, 목표까지 길이 막혀 있으면 결국 갈 수 있는 곳을 다 본다. 도달 불가능한 목표를 자주 찾는다면 먼저 연결돼 있는지부터 확인한다.</li>
+      <li><strong>음수 간선 확인 없이 다익스트라를 쓰면 조용히 틀린다.</strong> 직접 구현한 코드는 예외도 없이 최단이 아닌 경로를 준다. 비용이 음수가 될 수 있는 그래프(보상이 비용을 깎는 경로 등)는 입력 단계에서 막는다.</li>
+      <li><strong>동점 처리가 경로 모양을 바꾼다.</strong> f가 같은 노드가 많으면 꺼내는 순서에 따라 지그재그 경로가 나오기도 한다. f가 같으면 h가 작은 쪽을 먼저 꺼내면 목표 쪽으로 곧게 나아가고 꺼내는 노드도 준다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

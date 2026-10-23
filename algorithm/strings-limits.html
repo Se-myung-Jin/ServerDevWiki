@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>문자열 검색과 계산 한계 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="algorithm/strings-limits">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="complexity.html">복잡도 표기</a> · <a href="../data-structure/probabilistic.html">트라이와 블룸 필터</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      단순한 문자열 검색은 어긋날 때마다 본문을 되돌아가 다시 읽어서 최악 O(n×m)이다. <strong>KMP</strong>는 패턴 안의 반복 구조를 미리 계산해 두고, 어긋나면 패턴만 당겨 <span class="blank">본문 인덱스를 뒤로 보내지 않는다</span>. 그래서 O(n+m)이다.
+    </p>
+    <p>
+      <strong>NP 완전</strong>은 못 푸는 문제라는 뜻이 아니다. 답을 검증하기는 쉬운데 최적해를 빠르게(다항 시간에) 구하는 방법이 알려지지 않았을 뿐이다. 그래서 실무에서는 근사와 휴리스틱으로 푼다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>이미 맞은 부분을 버리지 않는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="ababc를 찾다 어긋났을 때 단순 검색은 본문을 되돌아가고 KMP는 패턴만 두 칸 당긴다">
+      <defs><marker id="sl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-text" x="138" y="42" text-anchor="end">본문</text>
+      <rect class="f-box" x="150" y="20" width="34" height="32"/><text class="f-text" x="167" y="41" text-anchor="middle">a</text>
+      <rect class="f-box" x="184" y="20" width="34" height="32"/><text class="f-text" x="201" y="41" text-anchor="middle">b</text>
+      <rect class="f-box" x="218" y="20" width="34" height="32"/><text class="f-text" x="235" y="41" text-anchor="middle">a</text>
+      <rect class="f-box" x="252" y="20" width="34" height="32"/><text class="f-text" x="269" y="41" text-anchor="middle">b</text>
+      <rect class="f-box" x="286" y="20" width="34" height="32"/><text class="f-text" x="303" y="41" text-anchor="middle">a</text>
+      <rect class="f-box" x="320" y="20" width="34" height="32"/><text class="f-text" x="337" y="41" text-anchor="middle">b</text>
+      <rect class="f-box" x="354" y="20" width="34" height="32"/><text class="f-text" x="371" y="41" text-anchor="middle">c</text>
+      <rect class="f-box" x="388" y="20" width="34" height="32"/><text class="f-text" x="405" y="41" text-anchor="middle">a</text>
+      <rect class="f-box" x="422" y="20" width="34" height="32"/><text class="f-text" x="439" y="41" text-anchor="middle">b</text>
+      <text class="f-text" x="138" y="78" text-anchor="end">1차 시도</text>
+      <rect class="f-hit" x="152" y="58" width="30" height="28"/><text class="f-strong" x="167" y="77" text-anchor="middle">a</text>
+      <rect class="f-hit" x="186" y="58" width="30" height="28"/><text class="f-strong" x="201" y="77" text-anchor="middle">b</text>
+      <rect class="f-hit" x="220" y="58" width="30" height="28"/><text class="f-strong" x="235" y="77" text-anchor="middle">a</text>
+      <rect class="f-hit" x="254" y="58" width="30" height="28"/><text class="f-strong" x="269" y="77" text-anchor="middle">b</text>
+      <rect class="f-miss" x="288" y="58" width="30" height="28"/><text class="f-on" x="303" y="77" text-anchor="middle">c</text>
+      <text class="f-sub" x="303" y="108" text-anchor="middle">여기서 어긋난다</text>
+      <text class="f-text" x="138" y="148" text-anchor="end">단순 검색</text>
+      <rect class="f-hit" x="186" y="128" width="30" height="28"/><text class="f-strong" x="201" y="147" text-anchor="middle">a</text>
+      <rect class="f-hit" x="220" y="128" width="30" height="28"/><text class="f-strong" x="235" y="147" text-anchor="middle">b</text>
+      <rect class="f-hit" x="254" y="128" width="30" height="28"/><text class="f-strong" x="269" y="147" text-anchor="middle">a</text>
+      <rect class="f-hit" x="288" y="128" width="30" height="28"/><text class="f-strong" x="303" y="147" text-anchor="middle">b</text>
+      <rect class="f-hit" x="322" y="128" width="30" height="28"/><text class="f-strong" x="337" y="147" text-anchor="middle">c</text>
+      <text class="f-sub" x="368" y="148">본문 1번부터 다시 읽는다</text>
+      <text class="f-text" x="138" y="198" text-anchor="end">KMP</text>
+      <rect class="f-pad" x="220" y="178" width="30" height="28"/><text class="f-sub" x="235" y="197" text-anchor="middle">a</text>
+      <rect class="f-pad" x="254" y="178" width="30" height="28"/><text class="f-sub" x="269" y="197" text-anchor="middle">b</text>
+      <rect class="f-hit" x="288" y="178" width="30" height="28"/><text class="f-strong" x="303" y="197" text-anchor="middle">a</text>
+      <rect class="f-hit" x="322" y="178" width="30" height="28"/><text class="f-strong" x="337" y="197" text-anchor="middle">b</text>
+      <rect class="f-hit" x="356" y="178" width="30" height="28"/><text class="f-strong" x="371" y="197" text-anchor="middle">c</text>
+      <text class="f-sub" x="402" y="198">점선 ab는 이미 맞은 것으로 친다</text>
+      <line class="f-line" x1="303" y1="236" x2="303" y2="214" marker-end="url(#sl-a)"/><text class="f-sub" x="313" y="244">본문 4번에서 바로 이어 비교</text>
+      </svg>
+      <figcaption>패턴 ababc를 찾다가 다섯 번째 글자에서 어긋났다. 이미 맞은 abab의 끝 ab가 패턴의 앞 ab와 같으므로, 단순 검색처럼 본문을 되돌아가지 않고 패턴만 두 칸 당겨 그 자리에서 이어 비교한다.</figcaption>
+    </figure>
+    <p>
+      KMP는 패턴의 위치마다 "여기까지 맞았을 때 접두사와 접미사가 겹치는 최대 길이"를 미리 표로 만든다(전처리 O(m)). 어긋나면 그 길이만큼은 이미 맞은 것으로 치고 이어 가므로 본문을 한 번만 읽는다(검색 O(n)).
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>원리</th><th>맞는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>KMP</td><td>접두사·접미사가 겹치는 길이를 미리 계산</td><td>최악 O(n+m)을 보장해야 할 때</td></tr>
+          <tr><td>라빈-카프</td><td>구간의 해시를 한 칸씩 굴려 가며 비교. 해시가 같으면 실제로 같은지 확인</td><td>같은 길이의 패턴 여러 개, 중복 구간 찾기</td></tr>
+          <tr><td>보이어-무어</td><td>오른쪽 끝부터 맞춰 보고, 안 맞은 글자를 보고 크게 건너뛴다</td><td>패턴이 길 때 평균이 빠르다. 최악은 더 나쁠 수 있다</td></tr>
+          <tr><td>아호-코라식</td><td>패턴 여러 개를 트라이에 모으고 실패 링크로 이어 본문을 한 번만 읽는다</td><td>금칙어처럼 패턴이 아주 많을 때(<a href="../data-structure/probabilistic.html">트라이와 블룸 필터</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      실제 표준 라이브러리는 이 중 하나를 그대로 쓰지 않는 경우가 많다. .NET의 <code>string.IndexOf</code>·<code>Contains</code>(서수 비교)와 <code>Span</code> 검색은 SIMD 벡터 명령으로 여러 글자를 한 번에 비교하도록 최적화돼 있어, 직접 KMP를 짜는 것보다 대개 빠르다.
+    </p>
+    <p>
+      함정이 하나 있다. <code>string.IndexOf(string)</code>은 비교 방식을 주지 않으면 <strong>현재 문화권 기준</strong>으로 비교해서 이 최적화를 받지 못하고 느리며, 서버 문화권 설정에 따라 결과가 달라질 수도 있다. <code>Contains(string)</code>은 기본이 서수 비교라 둘의 동작이 다르다. 서버 코드에서는 <code>IndexOf(s, StringComparison.Ordinal)</code>처럼 비교 방식을 항상 적는다.
+    </p>
+
+    <h3>P, NP, NP 완전</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>부류</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td>P</td><td>다항 시간에 풀 수 있다</td></tr>
+          <tr><td>NP</td><td>답이 주어지면 다항 시간에 검증할 수 있다. P도 여기 들어간다</td></tr>
+          <tr><td>NP 완전</td><td>NP에 속하면서, NP의 모든 문제가 다항 시간 변환으로 이 문제로 바뀐다. 하나만 다항 시간에 풀어도 NP 전부가 풀린다</td></tr>
+          <tr><td>NP 난해</td><td>적어도 NP 완전만큼 어렵다. NP에 속하지 않을 수도 있다(최적화 문제 등)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      SAT, 외판원(결정 문제), 배낭(결정 문제), 그래프 색칠이 NP 완전이다. 다항 시간 해법을 아무도 찾지 못했으니 사실상 없다고 보고, 최적을 포기하거나(근사·휴리스틱) 입력이 작다는 점을 이용한다(완전 탐색 + 가지치기).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>매치메이킹·팀 배치·던전 생성은 대개 NP 난해 문제다.</strong> 실력 합이 가장 비슷하게 팀을 나누거나 대기열 전체를 가장 잘 묶는 최적해는 구하지 않는다. 정렬 후 번갈아 배정하는 그리디나, 정해진 시간 안에서만 개선하는 휴리스틱으로 "충분히 좋은" 답을 빠르게 낸다(<a href="design-techniques.html">설계 기법</a>).
+      </li>
+      <li>
+        <strong>채팅 필터는 패턴을 하나씩 돌리지 않는다.</strong> 금칙어 수천 개마다 <code>Contains</code>를 부르면 메시지마다 수천 번 본문을 읽는다. 아호-코라식으로 한 번에 훑는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>NP 완전은 풀 수 없는 문제가 아니다.</strong> 입력이 작으면 그냥 다 본다. 문제는 입력이 커질 때 시간이 지수로 늘어난다는 것이다.</li>
+      <li><strong>다항 시간처럼 보이는 DP가 다항 시간이 아닐 수 있다.</strong> 배낭 DP의 O(n·W)는 W라는 값 자체에 비례하는데, W를 적는 데 드는 비트 수에 비하면 지수적으로 커질 수 있다. 이런 것을 유사 다항 시간이라고 부른다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

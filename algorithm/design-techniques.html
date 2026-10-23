@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>설계 기법 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="algorithm/design-techniques">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="searching.html">탐색과 재귀</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <strong>동적 계획법(DP)</strong>은 같은 부분 문제를 한 번만 풀고 답을 기억해 둔다. 같은 계산을 다시 하지 않는 것이 전부다.
+      그래서 <span class="blank">최적 부분 구조</span>와 <span class="blank">겹치는 부분 문제</span>가 함께 있어야 이득이 된다.
+    </p>
+    <p>
+      <strong>그리디</strong>는 매 단계 지금 최선을 고르고 되돌아보지 않는다. DP보다 훨씬 빠르지만, 지금 최선이 전체 최선이라는 <strong>증명</strong>을 전제로 한다. 증명 없이 쓰면 대개 어딘가에서 틀린다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>조건 둘이 함께 있어야 DP가 이득이 된다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>조건</th><th>무슨 뜻인가</th><th>없으면</th></tr></thead>
+        <tbody>
+          <tr><td>최적 부분 구조</td><td>큰 문제의 최적해가 작은 문제의 최적해로 만들어진다</td><td>작은 답을 모아도 큰 답이 안 나온다. DP도 그리디도 쓸 수 없다</td></tr>
+          <tr><td>겹치는 부분 문제</td><td>같은 작은 문제가 여러 번 나온다</td><td>기억해 둘 이유가 없다. 그냥 나눠서 푸는 <strong>분할 정복</strong>이다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      분할 정복과 DP는 둘 다 문제를 작게 쪼개지만, 쪼갠 조각이 서로 겹치느냐가 다르다. 병합 정렬처럼 왼쪽 절반과 오른쪽 절반이 겹치지 않으면 분할 정복이고(<a href="sorting.html">정렬</a>),
+      피보나치처럼 같은 값을 여러 갈래에서 다시 구하면 DP로 기억해 둘 가치가 생긴다.
+    </p>
+
+    <h3>위에서 내려가느냐, 아래에서 채우느냐</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="피보나치를 하향식 메모이제이션 트리와 상향식 표로 푸는 모습">
+      <defs><marker id="dt-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+      <text class="f-text" x="170" y="20" text-anchor="middle">하향식 · 큰 것에서 내려간다</text>
+      <line class="f-line" x1="180" y1="64" x2="105" y2="96"/>
+      <line class="f-line" x1="180" y1="64" x2="255" y2="96"/>
+      <line class="f-line" x1="105" y1="124" x2="62" y2="156"/>
+      <line class="f-line" x1="105" y1="124" x2="150" y2="156"/>
+      <line class="f-line" x1="62" y1="184" x2="34" y2="211"/>
+      <line class="f-line" x1="62" y1="184" x2="96" y2="211"/>
+      <rect class="f-hit" x="154" y="36" width="52" height="28" rx="14"/><text class="f-strong" x="180" y="55" text-anchor="middle">f(5)</text>
+      <rect class="f-hit" x="79" y="96" width="52" height="28" rx="14"/><text class="f-strong" x="105" y="115" text-anchor="middle">f(4)</text>
+      <rect class="f-pad" x="229" y="96" width="52" height="28" rx="14"/><text class="f-sub" x="255" y="115" text-anchor="middle">f(3)</text>
+      <rect class="f-hit" x="36" y="156" width="52" height="28" rx="14"/><text class="f-strong" x="62" y="175" text-anchor="middle">f(3)</text>
+      <rect class="f-pad" x="124" y="156" width="52" height="28" rx="14"/><text class="f-sub" x="150" y="175" text-anchor="middle">f(2)</text>
+      <rect class="f-hit" x="8" y="211" width="52" height="28" rx="14"/><text class="f-strong" x="34" y="230" text-anchor="middle">f(2)</text>
+      <rect class="f-hit" x="70" y="211" width="52" height="28" rx="14"/><text class="f-strong" x="96" y="230" text-anchor="middle">f(1)</text>
+      <text class="f-sub" x="262" y="205" text-anchor="middle">점선: 기억해 둔 값</text>
+      <line class="f-grid" x1="360" y1="10" x2="360" y2="240"/>
+      <text class="f-text" x="540" y="20" text-anchor="middle">상향식 · 작은 칸부터 채운다</text>
+      <rect class="f-hit" x="400" y="110" width="52" height="40"/><text class="f-strong" x="426" y="136" text-anchor="middle">0</text>
+      <text class="f-sub" x="426" y="172" text-anchor="middle">f(0)</text>
+      <rect class="f-hit" x="452" y="110" width="52" height="40"/><text class="f-strong" x="478" y="136" text-anchor="middle">1</text>
+      <text class="f-sub" x="478" y="172" text-anchor="middle">f(1)</text>
+      <rect class="f-hit" x="504" y="110" width="52" height="40"/><text class="f-strong" x="530" y="136" text-anchor="middle">1</text>
+      <text class="f-sub" x="530" y="172" text-anchor="middle">f(2)</text>
+      <rect class="f-hit" x="556" y="110" width="52" height="40"/><text class="f-strong" x="582" y="136" text-anchor="middle">2</text>
+      <text class="f-sub" x="582" y="172" text-anchor="middle">f(3)</text>
+      <rect class="f-hit" x="608" y="110" width="52" height="40"/><text class="f-strong" x="634" y="136" text-anchor="middle">3</text>
+      <text class="f-sub" x="634" y="172" text-anchor="middle">f(4)</text>
+      <rect class="f-hit" x="660" y="110" width="52" height="40"/><text class="f-strong" x="686" y="136" text-anchor="middle">5</text>
+      <text class="f-sub" x="686" y="172" text-anchor="middle">f(5)</text>
+      <path class="f-line" d="M582 106 C 596 70, 670 70, 682 106" marker-end="url(#dt-a)"/>
+      <path class="f-line" d="M634 106 C 642 88, 678 88, 686 106" marker-end="url(#dt-a)"/>
+      <text class="f-sub" x="638" y="64" text-anchor="middle">앞의 두 칸으로 다음 칸</text>
+      <text class="f-sub" x="540" y="215" text-anchor="middle">왼쪽에서 오른쪽으로 한 번만 지나간다</text>
+      </svg>
+      <figcaption>같은 점화식(f(n) = f(n−1) + f(n−2))을 두 방향으로 푼다. 왼쪽은 큰 것에서 내려가다 이미 구한 값(점선)을 만나면 다시 계산하지 않는다. 오른쪽은 작은 칸부터 앞의 두 칸으로 다음 칸을 채운다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>어떻게</th><th>장점</th><th>단점</th></tr></thead>
+        <tbody>
+          <tr><td>하향식 · 메모이제이션</td><td>재귀 + 결과 기억</td><td>점화식을 그대로 옮기면 된다. 실제로 필요한 칸만 계산한다</td><td>재귀 깊이만큼 <a href="../system-programming/call-stack.html">호출 스택</a>을 쓰고, 호출 비용이 붙는다</td></tr>
+          <tr><td>상향식 · 타뷸레이션</td><td>작은 것부터 표를 채운다</td><td>재귀가 없고 빠르다. 필요 없어진 줄을 버려 메모리를 줄일 수 있다</td><td>채우는 순서를 따로 정해야 하고, 안 쓸 칸까지 계산할 수 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      앞 한 줄만 보는 점화식이면 상향식은 전체 표 대신 줄 하나만 들고 있으면 된다. 피보나치는 변수 두 개로 끝나고, 배낭 문제는 2차원 표를 1차원 배열 하나로 줄일 수 있다.
+    </p>
+
+    <h3>표보다 상태를 먼저 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>문제</th><th>상태</th><th>어떻게 넘어가나</th><th class="num">시간</th></tr></thead>
+        <tbody>
+          <tr><td>0/1 배낭</td><td>몇 번째 물건까지 봤나, 남은 용량</td><td>이번 물건을 넣은 경우와 안 넣은 경우 중 큰 쪽</td><td class="num">O(n·W)</td></tr>
+          <tr><td>최장 공통 부분 수열(LCS)</td><td>두 문자열을 각각 어디까지 봤나</td><td>글자가 같으면 하나 늘리고, 다르면 한쪽을 한 칸 줄인 둘 중 큰 쪽</td><td class="num">O(n·m)</td></tr>
+          <tr><td>최장 증가 부분 수열(LIS)</td><td>i번째에서 끝나는 수열의 길이</td><td>앞쪽에서 자기보다 작은 값으로 끝나는 것에 이어 붙인다</td><td class="num">O(n²)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      상태에 들어가는 값이 곧 표의 차원이다. 차원이 하나 늘면 메모리와 시간이 그 값의 범위만큼 곱해지므로, 답에 영향을 주지 않는 값은 상태에서 뺀다.
+      반대로 답을 바꾸는 값을 빠뜨리면 최적 부분 구조가 깨져서, 표는 다 차는데 답이 틀린다. 칸마다 "어느 칸에서 왔는지"를 함께 적어 두면 표를 거꾸로 따라가 답의 구성까지 복원할 수 있다.
+    </p>
+
+    <h3>그리디는 증명이 필요하다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 170" role="img" aria-label="액면 1, 4, 5로 8을 만들 때 그리디는 동전 네 개, 최적은 두 개">
+      <text class="f-text" x="150" y="56" text-anchor="end">그리디 (큰 것부터)</text>
+      <circle class="f-box" cx="209" cy="50" r="29"/><text class="f-text" x="209" y="55" text-anchor="middle">5</text>
+      <circle class="f-box" cx="267" cy="50" r="17"/><text class="f-text" x="267" y="55" text-anchor="middle">1</text>
+      <circle class="f-box" cx="313" cy="50" r="17"/><text class="f-text" x="313" y="55" text-anchor="middle">1</text>
+      <circle class="f-box" cx="359" cy="50" r="17"/><text class="f-text" x="359" y="55" text-anchor="middle">1</text>
+      <text class="f-strong" x="404" y="56">= 8 · 동전 4개</text>
+      <text class="f-text" x="150" y="131" text-anchor="end">최적</text>
+      <circle class="f-hit" cx="206" cy="125" r="26"/><text class="f-strong" x="206" y="130" text-anchor="middle">4</text>
+      <circle class="f-hit" cx="270" cy="125" r="26"/><text class="f-strong" x="270" y="130" text-anchor="middle">4</text>
+      <text class="f-strong" x="324" y="131">= 8 · 동전 2개</text>
+      </svg>
+      <figcaption>액면이 1·4·5인 동전으로 8을 만든다. 큰 동전부터 고르는 그리디는 5를 먼저 쥐고 1을 세 번 더해 네 개를 쓰지만, 4를 두 번 쓰면 두 개로 끝난다.</figcaption>
+    </figure>
+    <p>
+      동전 거스름이 대표적인 예다. 큰 동전부터 쓰는 그리디는 원화(10·50·100·500원)처럼 맞는 구성도 있지만, 위처럼 틀리는 구성도 있다. 액면 구성이 바뀌면 그때마다 다시 따져야 한다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>확인할 것</th><th>어떻게</th></tr></thead>
+        <tbody>
+          <tr><td>반례가 있나</td><td>작은 입력 몇 개를 손이나 완전 탐색으로 풀어 그리디 결과와 비교한다. 하나라도 다르면 틀린 것이다</td></tr>
+          <tr><td>교환 논증</td><td>최적해 하나를 가져다 그리디가 고른 것으로 하나씩 바꿔도 답이 나빠지지 않음을 보인다. 그러면 그리디 답도 최적해다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      증명이 끝난 그리디는 DP보다 훨씬 빠르다. 표를 채우지 않고 대개 한 번 정렬해 둔 뒤 앞에서부터 고르면 끝난다. 끝나는 시각이 이른 순서로 회의를 고르는 구간 스케줄링, <a href="graph-algorithms.html">최소 신장 트리</a>, 다익스트라가 증명된 그리디다.
+    </p>
+
+    <h3>앞선 선택을 전부 기억해야 하면 DP가 아니다</h3>
+    <p>
+      N 퀸이나 스도쿠처럼 조건을 만족하는 배치를 찾는 문제는 다음 칸에 무엇을 놓을 수 있는지가 앞서 놓은 것 전부에 걸려 있다. 상태에 이미 놓은 자리를 통째로 담아야 하니 같은 상태가 두 번 나오지 않고, 기억해 둘 것이 없다.
+      이런 문제는 한 칸씩 채워 보다가 조건을 어기면 되돌아오는 <strong>백트래킹</strong>으로 푼다(<a href="searching.html">탐색과 재귀</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>문제에서 보이는 신호</th><th>먼저 의심할 기법</th></tr></thead>
+        <tbody>
+          <tr><td>최적값(최소 비용, 최대 이득)을 묻는다</td><td>DP 또는 그리디</td></tr>
+          <tr><td>경우의 수를 센다</td><td>DP</td></tr>
+          <tr><td>재귀로 풀면 같은 인자로 여러 번 불린다</td><td>DP(메모이제이션부터)</td></tr>
+          <tr><td>매 단계 명확한 최선이 보인다</td><td>그리디. 반례부터 찾아본다</td></tr>
+          <tr><td>쪼갠 조각이 서로 겹치지 않는다</td><td>분할 정복</td></tr>
+          <tr><td>조건을 만족하는 배치를 모두 찾는다</td><td>백트래킹</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>DP로 풀리는 것을 그리디로 풀면 빠르지만 증명이 필요하고, 그리디로 풀리는 것을 DP로 풀면 느리지만 안전하다.</p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>보상·재화 계산의 그리디는 반례부터 돌린다.</strong> "남은 재화를 가장 적은 아이템 개수로 돌려준다", "보상 상자를 가장 적게 쓰는 조합으로 묶는다" 같은 코드는 대개 큰 것부터 고르는 그리디로 짜인다. 기획이 액면이나 상자 구성을 바꾸는 순간 조용히 틀린다.
+        작은 금액 전체를 DP나 완전 탐색으로 계산한 결과와 비교하는 테스트를 하나 두면 구성이 바뀔 때 바로 잡힌다.
+      </li>
+      <li>
+        <strong>서버 코드의 DP는 상향식 배열로 쓴다.</strong> 메모이제이션을 <code>Dictionary</code>와 재귀로 짜면 입력이 커질 때 해시 비용과 재귀 깊이가 함께 늘고, 깊이가 깊으면 <code>StackOverflowException</code>으로 서버가 바로 내려간다. 상태가 정수 범위로 떨어지면 <code>int[]</code> 표를 채운다.
+      </li>
+      <li>
+        <strong>입력의 크기가 표의 크기다.</strong> 배낭 DP는 O(n·W)라 W(용량, 금액)가 커지면 표가 감당할 수 없이 커진다. 인벤토리 칸 수처럼 작은 값이면 DP로 풀고, 금액·무게처럼 큰 값이면 단위를 묶어 줄이거나 그리디 근사로 간다(<a href="strings-limits.html">계산 한계</a>).
+      </li>
+      <li>
+        <strong>매칭·팀 나누기의 "최적"은 대개 근사다.</strong> 실력 합이 비슷하게 두 팀을 나누는 문제는 NP 난해 문제에 속한다. 매 경기 최적해를 찾지 말고, 실력순으로 정렬해 번갈아 배정하는 그리디로 충분히 가까운 답을 빠르게 낸다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>그리디가 예제를 통과했다는 것은 근거가 아니다.</strong> 예제 몇 개를 맞혀도 반례가 있을 수 있다. 증명하거나, 적어도 작은 입력 전부와 비교한다.</li>
+      <li><strong>어려운 것은 표가 아니라 상태다.</strong> 표를 채우는 코드는 눈에 보여 먼저 손이 가지만, 무엇을 상태로 잡고 어떻게 넘어갈지를 세우는 일이 문제마다 새로 필요하다.</li>
+      <li><strong>메모이제이션에 쓰는 키는 상태 전부여야 한다.</strong> 상태의 일부만 키로 쓰면 서로 다른 부분 문제가 같은 칸을 덮어써, 예외 없이 틀린 답이 나온다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
