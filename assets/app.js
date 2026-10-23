@@ -214,34 +214,175 @@
 
   // ---------- pages ----------
 
+  // 학습 로드맵의 단계. 분야 순서(catalog.js)가 곧 학습 순서라서 단계는 그 순서를 묶기만 한다.
+  var ROADMAP = [
+    { name: "기반", desc: "코드가 CPU와 OS 위에서 실제로 어떻게 도는가", dirs: ["computer-architecture", "operating-system", "system-programming"] },
+    { name: "도구", desc: "데이터를 담는 모양과 다루는 방법", dirs: ["data-structure", "algorithm"] },
+    { name: "통신", desc: "바이트가 망을 건너 서버 로직에 닿기까지", dirs: ["network", "server"] },
+    { name: "언어", desc: "서버를 짓는 언어와 런타임의 속사정", dirs: ["csharp", "cpp"] },
+    { name: "설계", desc: "게임 로직, 데이터, 서버 구성", dirs: ["game-patterns", "database", "architecture"] },
+    { name: "운영", desc: "지키고, 배포하고, 살려 두기", dirs: ["security", "operations"] },
+  ];
+  var ROADMAP_SIDE = { name: "클라이언트 접점", desc: "서버가 상대하는 반대편을 알아 두기", dirs: ["unity", "graphics"] };
+
+  // 세 원이 겹치는 자리에 놓을 토픽과 짧은 이름표. 겹친 칸이 좁아서 제목 대신 이름표를 쓴다.
+  // 아직 없는 토픽은 흐리게 표시된다.
+  var VENN = {
+    circles: [
+      { name: "시스템", sub: ["컴퓨터 구조", "운영체제", "시스템 프로그래밍"] },
+      { name: "네트워크", sub: ["네트워크", "서버 프로그래밍"] },
+      { name: "게임", sub: ["게임 패턴", "Unity", "그래픽스"] },
+    ],
+    ab: [["server/io-models", "I/O 모델"], ["server/completion-port", "IOCP"], ["system-programming/syscall-cost", "시스템 콜 비용"]],
+    ac: [["server/tick-loop", "틱 루프"], ["data-structure/memory-layout", "메모리 배치"], ["operating-system/clocks-timers", "시계와 타이머"]],
+    bc: [["server/protocol-choice", "프로토콜 설계"], ["server/aoi-broadcast", "관심 영역"], ["game-patterns/state-sync", "상태 동기화"]],
+    abc: ["server/threading-model", "스레딩 모델"],
+  };
+
+  function importanceCount(cat) {
+    var n = { core: 0, mid: 0, ref: 0 };
+    cat.topics.forEach(function (t) {
+      if (t.importance === "핵심") n.core++;
+      else if (t.importance === "참고") n.ref++;
+      else n.mid++;
+    });
+    return n;
+  }
+
+  // 핵심·보통·참고 구성 막대. 막대 전체 길이는 가장 큰 분야를 기준으로 한 상대 길이다.
+  function mixBar(cat, max) {
+    var n = importanceCount(cat), total = cat.topics.length || 1;
+    var w = Math.round((cat.topics.length / max) * 100);
+    return (
+      '<span class="mix" style="width:' + w + '%" title="핵심 ' + n.core + " · 보통 " + n.mid + " · 참고 " + n.ref + '">' +
+        '<i class="mix__core" style="flex:' + n.core / total + '"></i>' +
+        '<i class="mix__mid" style="flex:' + n.mid / total + '"></i>' +
+        '<i class="mix__ref" style="flex:' + n.ref / total + '"></i>' +
+      "</span>"
+    );
+  }
+
+  function roadmapNode(cat, max) {
+    var empty = cat.topics.length === 0;
+    return (
+      '<a class="rm-node' + (empty ? " is-empty" : "") + '" href="' + catHref(cat) + '">' +
+        '<span class="rm-node__no">' + catNo(cat) + "</span>" +
+        '<span class="rm-node__k">' + esc(cat.title) + "</span>" +
+        '<span class="rm-node__v">' + (empty ? "작성 예정" : "문서 " + cat.topics.length + " · 핵심 " + importanceCount(cat).core) + "</span>" +
+        (empty ? "" : mixBar(cat, max)) +
+      "</a>"
+    );
+  }
+
+  function roadmapStage(stage, i, max, side) {
+    var nodes = stage.dirs.map(findCategory).filter(Boolean).map(function (c) { return roadmapNode(c, max); }).join("");
+    return (
+      '<li class="rm-stage' + (side ? " rm-stage--side" : "") + '">' +
+        '<div class="rm-stage__head">' +
+          '<span class="rm-stage__step">' + (side ? "곁가지" : "STEP " + (i + 1)) + "</span>" +
+          '<span class="rm-stage__name">' + esc(stage.name) + "</span>" +
+          '<span class="rm-stage__desc">' + esc(stage.desc) + "</span>" +
+        "</div>" +
+        '<div class="rm-stage__nodes">' + nodes + "</div>" +
+      "</li>"
+    );
+  }
+
+  // 벤 다이어그램 안의 토픽 한 줄. 등록된 토픽이면 링크, 아니면 흐린 글자.
+  function vennTopic(item, x, y, cls) {
+    var f = findTopic(item[0]);
+    if (!f) return '<text class="vn-topic is-pending" x="' + x + '" y="' + y + '" text-anchor="middle">' + esc(item[1]) + "<title>작성 예정 문서</title></text>";
+    return (
+      '<a href="' + topicHref(f.cat, f.topic) + '"><title>' + esc(f.topic.title) + '</title><text class="vn-topic' + (cls ? " " + cls : "") +
+        '" x="' + x + '" y="' + y + '" text-anchor="middle">' + esc(item[1]) + "</text></a>"
+    );
+  }
+
+  function vennSvg() {
+    var c = VENN.circles;
+    function lines(ids, x, y0) {
+      return ids.map(function (item, i) { return vennTopic(item, x, y0 + i * 20); }).join("");
+    }
+    function subs(list, x, y0, anchor) {
+      return list.map(function (s, i) {
+        return '<text class="vn-sub" x="' + x + '" y="' + (y0 + i * 18) + '" text-anchor="' + anchor + '">' + esc(s) + "</text>";
+      }).join("");
+    }
+    return (
+      '<svg class="venn" viewBox="0 0 720 520" role="img" aria-label="시스템, 네트워크, 게임 세 영역이 겹치는 자리에 게임 서버 프로그래밍이 있다">' +
+        '<circle class="vn-c vn-c1" cx="270" cy="190" r="165"/>' +
+        '<circle class="vn-c vn-c2" cx="450" cy="190" r="165"/>' +
+        '<circle class="vn-c vn-c3" cx="360" cy="345" r="165"/>' +
+        '<text class="vn-name vn-n1" x="170" y="118" text-anchor="middle">' + c[0].name + "</text>" +
+        '<text class="vn-name vn-n2" x="550" y="118" text-anchor="middle">' + c[1].name + "</text>" +
+        '<text class="vn-name vn-n3" x="360" y="492" text-anchor="middle">' + c[2].name + "</text>" +
+        subs(c[0].sub, 170, 146, "middle") +
+        subs(c[1].sub, 550, 146, "middle") +
+        subs(c[2].sub, 360, 424, "middle") +
+        lines(VENN.ab, 360, 92) +
+        lines(VENN.ac, 262, 284) +
+        lines(VENN.bc, 458, 284) +
+        '<text class="vn-core" x="360" y="214" text-anchor="middle">게임 서버</text>' +
+        vennTopic(VENN.abc, 360, 238, "vn-topic--core") +
+      "</svg>"
+    );
+  }
+
+  // 날짜마다 바뀌는 핵심 토픽 하나. 같은 날에는 누구에게나 같은 토픽이 나온다.
+  function topicOfDay() {
+    var pool = [];
+    CATALOG.forEach(function (cat) {
+      cat.topics.forEach(function (t) { if (t.importance === "핵심") pool.push({ cat: cat, topic: t }); });
+    });
+    if (!pool.length) return "";
+    var day = Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / 86400000);
+    var p = pool[(day * 7919) % pool.length];
+    return (
+      '<a class="today" href="' + topicHref(p.cat, p.topic) + '">' +
+        '<span class="today__label">오늘의 토픽 · ' + catNo(p.cat) + " " + esc(p.cat.title) + "</span>" +
+        '<span class="today__title">' + esc(p.topic.title) + "</span>" +
+        '<span class="today__sum">' + esc(p.topic.summary) + "</span>" +
+      "</a>"
+    );
+  }
+
   function renderHome(main) {
     var t = totals();
-    var cards = CATALOG.map(function (cat) {
-      return (
-        '<a class="card" href="' + catHref(cat) + '">' +
-          '<div class="card__no">' + catNo(cat) + "</div>" +
-          '<div class="card__k">' + esc(cat.title) + "</div>" +
-          '<div class="card__v">문서 ' + cat.topics.length + " · 문항 " + questionCount(cat) + "</div>" +
-        "</a>"
-      );
-    }).join("");
-    var rows = CATALOG.map(function (cat) {
-      return (
-        "<tr><td class=\"num\">" + catNo(cat) + '</td><td><a href="' + catHref(cat) + '">' + esc(cat.title) + "</a></td>" +
-        "<td>" + esc(cat.desc) + '</td><td class="num">' + cat.topics.length + '</td><td class="num">' + questionCount(cat) + "</td></tr>"
-      );
-    }).join("");
+    var max = Math.max.apply(null, CATALOG.map(function (c) { return c.topics.length; }).concat([1]));
+    var core = 0, started = 0;
+    CATALOG.forEach(function (c) {
+      core += importanceCount(c).core;
+      if (c.topics.length) started++;
+    });
+    var stages = ROADMAP.map(function (s, i) { return roadmapStage(s, i, max, false); }).join("") +
+      roadmapStage(ROADMAP_SIDE, 0, max, true);
 
     main.insertAdjacentHTML(
       "afterbegin",
-      '<h1 class="doc-title">' + SITE + "</h1>" +
-      '<p class="doc-desc">주제 문서가 본체이고, 점검 문항은 모두 그 문서로 이어진다. 현재 문서 ' +
-        t.topics + "개 · 문항 " + t.questions + "개.</p>" +
-      '<a class="cta" href="' + ROOT + 'quiz.html">점검 문항 · 골라서 무작위로 풀기 →</a>' +
-      '<div class="cards">' + cards + "</div>" +
-      "<h2>분야</h2>" +
-      '<div class="table-scroll"><table><thead><tr><th class="num">#</th><th>분야</th><th>다루는 내용</th>' +
-        '<th class="num">문서</th><th class="num">문항</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+      '<section class="hero">' +
+        '<p class="hero__eyebrow">게임 서버 프로그래머를 위한 기초와 심화</p>' +
+        '<h1 class="hero__title">' + SITE + "</h1>" +
+        '<p class="hero__lead">"어떻게 고쳤나"보다 "왜 그렇게 동작하나"까지. CPU와 커널에서 출발해 네트워크와 서버, ' +
+          "게임 설계와 운영까지 한 줄로 이어지는 이론 정리다. 모든 점검 문항은 그 근거가 되는 문서로 이어진다.</p>" +
+        '<dl class="stats">' +
+          "<div><dt>문서</dt><dd>" + t.topics + "</dd></div>" +
+          "<div><dt>점검 문항</dt><dd>" + t.questions + "</dd></div>" +
+          "<div><dt>★ 핵심 토픽</dt><dd>" + core + "</dd></div>" +
+          "<div><dt>분야</dt><dd>" + started + '<small>/' + CATALOG.length + "</small></dd></div>" +
+        "</dl>" +
+        '<div class="hero__actions">' +
+          '<a class="cta" href="#roadmap">로드맵 보기 ↓</a>' +
+          '<a class="cta cta--ghost" href="' + ROOT + 'quiz.html">점검 문항 무작위로 풀기 →</a>' +
+        "</div>" +
+      "</section>" +
+      topicOfDay() +
+      '<h2 id="roadmap">학습 로드맵</h2>' +
+      '<p class="doc-desc">아래로 갈수록 앞 단계를 딛고 선다. 막대는 분야의 문서 수와 ' +
+        '<span class="key key--core">핵심</span> <span class="key key--mid">보통</span> <span class="key key--ref">참고</span> 구성이다.</p>' +
+      '<ol class="roadmap">' + stages + "</ol>" +
+      "<h2>게임 서버 프로그래머가 서 있는 자리</h2>" +
+      '<p class="doc-desc">시스템, 네트워크, 게임 세 영역이 겹치는 곳이다. 겹친 자리의 토픽을 누르면 그 문서로 간다.</p>' +
+      '<div class="venn-wrap">' + vennSvg() + "</div>"
     );
   }
 
