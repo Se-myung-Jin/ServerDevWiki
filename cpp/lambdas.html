@@ -105,7 +105,7 @@ auto sum = []&lt;class T&gt;(const std::vector&lt;T&gt;&amp; v) {      // C++20:
       </table>
     </div>
     <p>
-      C++23의 <code>std::move_only_function</code>은 복사 요구를 없애, 이동만 되는 람다도 담는다. 부르기만 하고 보관하지 않는다면 템플릿으로 받는 쪽이 낫다. <code>template&lt;class F&gt; void ForEachNearby(F&amp;&amp; f)</code>처럼 받으면 람다 타입이 그대로 넘어와 호출이 인라인된다.
+      C++23의 <code>std::move_only_function</code>은 복사 요구를 없애, 이동만 되는 람다도 담는다. C++26에는 <code>const</code> 정확성을 고친 <code>std::copyable_function</code>과, 소유하지 않고 빌려 부르기만 하는 가벼운 <code>std::function_ref</code>가 더해졌다. 콜백을 보관하지 않고 그 자리에서 부르는 매개변수라면 <code>function_ref</code>가 할당 없이 받는다. 부르기만 하고 보관하지 않는다면 템플릿으로 받는 쪽이 낫다. <code>template&lt;class F&gt; void ForEachNearby(F&amp;&amp; f)</code>처럼 받으면 람다 타입이 그대로 넘어와 호출이 인라인된다.
     </p>
 
     <h2>선택 기준</h2>
@@ -142,6 +142,7 @@ auto sum = []&lt;class T&gt;(const std::vector&lt;T&gt;&amp; v) {      // C++20:
       <li><strong><code>[&amp;]</code>를 기본으로 쓰지 않는다.</strong> 무엇을 참조로 잡았는지 목록에 드러나지 않아, 람다를 콜백으로 바꾸는 날 끊긴 참조가 조용히 생긴다. 보관되는 람다는 캡처를 하나씩 적는다.</li>
       <li><strong><code>[=]</code> 안에서 멤버를 쓰면 <code>this</code>를 잡은 것이다.</strong> 값으로 잡았다고 생각해도 객체가 사라지면 끊긴다. 객체 사본이 필요하면 <code>[*this]</code>, 멤버 하나만 필요하면 <code>[hp = hp_]</code>로 적는다.</li>
       <li><strong><code>std::function</code>을 기본 매개변수 타입으로 쓰지 않는다.</strong> 바로 부르고 끝나는 함수까지 <code>std::function</code>으로 받으면, 쓸 일 없는 할당과 간접 호출을 매번 낸다.</li>
+      <li><strong><code>std::bind</code> 대신 람다를 쓴다.</strong> 람다가 읽기 쉽고, 인자가 언제 평가되는지 분명하고, 인라인도 잘 된다. <code>std::bind</code>가 필요한 자리는 C++14 이후로 거의 없다.</li>
       <li><strong>정적·전역 변수는 캡처되지 않는다.</strong> 캡처 목록에 없어도 람다 안에서 그대로 보이고, 원본을 직접 쓴다. 값으로 잡았다고 착각하기 쉽다.</li>
     </ul>
 

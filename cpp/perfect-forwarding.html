@@ -89,6 +89,7 @@
         <tbody>
           <tr><td><code>template&lt;class T&gt; void f(T&amp;&amp;)</code></td><td>맞다</td><td>이 호출에서 <code>T</code>를 추론한다</td></tr>
           <tr><td><code>auto&amp;&amp; x = expr;</code></td><td>맞다</td><td><code>auto</code>도 같은 추론 규칙을 쓴다. 범위 기반 <code>for (auto&amp;&amp; e : c)</code>가 흔한 예다</td></tr>
+          <tr><td><code>void f(auto&amp;&amp; x)</code> (C++20)</td><td>맞다</td><td>축약 함수 템플릿이라 <code>template&lt;class T&gt; void f(T&amp;&amp;)</code>와 같다. 넘길 때는 <code>std::forward&lt;decltype(x)&gt;(x)</code>다</td></tr>
           <tr><td><code>void f(Item&amp;&amp;)</code></td><td>아니다</td><td>추론이 없다. rvalue만 받는다</td></tr>
           <tr><td><code>template&lt;class T&gt; void f(std::vector&lt;T&gt;&amp;&amp;)</code></td><td>아니다</td><td><code>T&amp;&amp;</code> 모양이 아니다. vector의 rvalue만 받는다</td></tr>
           <tr><td><code>template&lt;class T&gt; void f(const T&amp;&amp;)</code></td><td>아니다</td><td><code>const</code>가 붙으면 rvalue 참조다</td></tr>
@@ -124,7 +125,7 @@ auto m = MakeUnique&lt;Monster&gt;(name, Vec3{1, 2, 3}, 100);
     <h3>반환도 범주를 지키려면 decltype(auto)</h3>
     <p>
       감싸는 함수가 안쪽 함수의 반환값을 그대로 돌려줄 때, 반환 타입을 <code>auto</code>로 두면 참조가 떨어져 값으로 복사된다. <code>decltype(auto)</code>는 반환식의 타입을 참조까지 그대로 쓴다. <code>Get(i)</code>가 <code>Item&amp;</code>를 돌려주면 감싼 함수도 <code>Item&amp;</code>를 돌려준다. 대신 지역 변수를 괄호로 감싸 <code>return (local);</code>로 쓰면 지역 변수의 참조를 돌려주는 <a data-ref="cpp/const-and-references">끊긴 참조</a>가 된다.
-    </p>
+     C++23의 <code>std::forward_like</code>는 감싼 객체의 값 범주에 맞춰 그 멤버를 넘긴다. deducing this로 받은 <code>self</code>의 멤버를 돌려줄 때 쓴다.</p>
 
     <h2>게임 서버에서는</h2>
     <ul>
@@ -146,7 +147,7 @@ auto m = MakeUnique&lt;Monster&gt;(name, Vec3{1, 2, 3}, 100);
       </li>
       <li><strong>같은 인자를 두 번 forward하지 않는다.</strong> 첫 번째 <code>forward</code>가 이동시켰다면 두 번째는 이미 옮겨진 객체를 넘긴다. 여러 곳에 써야 하면 마지막 한 번만 forward하고 앞에서는 lvalue로 쓴다.</li>
       <li><strong><code>auto&amp;&amp;</code>로 받은 것은 <code>std::forward&lt;decltype(x)&gt;(x)</code>로 넘긴다.</strong> 제네릭 람다의 <code>auto&amp;&amp;</code> 매개변수도 같다. 이름 붙은 <code>T</code>가 없으니 <code>decltype</code>으로 범주를 꺼낸다.</li>
-      <li><strong>완벽 전달이 완벽하지 않은 경우가 있다.</strong> <a data-ref="cpp/initialization">중괄호 초기화</a> 목록 <code>{1, 2}</code>, 이름이 같은 오버로드 함수, 비트 필드는 전달 참조로 추론할 수 없어 컴파일 오류가 난다. 부르는 쪽에서 타입을 적어 넘긴다.</li>
+      <li><strong>완벽 전달이 완벽하지 않은 경우가 있다.</strong> <a data-ref="cpp/initialization">중괄호 초기화</a> 목록 <code>{1, 2}</code>, 이름이 같은 오버로드 함수, 비트 필드는 전달 참조로 추론할 수 없어 컴파일 오류가 난다. 널 포인터를 <code>0</code>이나 <code>NULL</code>로 넘기면 정수로 추론되어 포인터 매개변수에 맞지 않는다. <code>nullptr</code>을 쓴다. 부르는 쪽에서 타입을 적어 넘긴다.</li>
     </ul>
 
   </article>

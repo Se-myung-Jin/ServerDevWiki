@@ -93,7 +93,7 @@ uint32_t ok2 = std::bit_cast&lt;uint32_t&gt;(f);           // C++20. 크기가 �
       <table>
         <thead><tr><th>하려는 일</th><th>쓰는 것</th></tr></thead>
         <tbody>
-          <tr><td>숫자 타입 변환(<code>double</code> → <code>int</code>, <code>enum class</code> → 정수)</td><td><code>static_cast</code></td></tr>
+          <tr><td>숫자 타입 변환(<code>double</code> → <code>int</code>, <code>enum class</code> → 정수)</td><td><code>static_cast</code>. 열거형을 밑바탕 정수로 바꿀 때는 C++23 <code>std::to_underlying</code></td></tr>
           <tr><td>파생 → 기반</td><td>캐스트 없이 된다</td></tr>
           <tr><td>기반 → 파생, 타입이 보장된다</td><td><code>static_cast</code></td></tr>
           <tr><td>기반 → 파생, 확실하지 않다</td><td><code>dynamic_cast</code> 뒤에 <code>nullptr</code> 확인</td></tr>
@@ -109,7 +109,7 @@ uint32_t ok2 = std::bit_cast&lt;uint32_t&gt;(f);           // C++20. 크기가 �
     <ul>
       <li>
         <strong>수신 버퍼를 구조체 포인터로 바꿔 읽지 않는다.</strong> <code>auto* p = reinterpret_cast&lt;const MovePacket*&gt;(buf);</code>는 서버 코드에서 흔하지만 문제가 셋 겹친다. 엄격한 앨리어싱 위반이고, 버퍼 위치가 구조체 정렬과 맞는다는 보장이 없고, 패딩과 엔디안이 컴파일러와 CPU에 따라 달라진다. 필드마다 바이트를 읽어 조립하거나 <code>memcpy</code>로 정렬된 지역 구조체에 복사한다(<a href="../computer-architecture/endianness.html">엔디안과 바이트 오더</a>, <a href="../server/framing.html">메시지 경계와 프레이밍</a>).
-      </li>
+       C++23의 <code>std::start_lifetime_as&lt;T&gt;</code>는 바이트 위에 객체 수명을 시작해 별칭 문제를 규격 안에서 푼다. 다만 정렬과 엔디안은 여전히 책임져야 하고, 표준 라이브러리 구현이 아직 고르지 않다.</li>
       <li>
         <strong>메시지 종류 분기에 dynamic_cast 사슬을 쓰지 않는다.</strong> 받은 메시지 객체를 <code>dynamic_cast&lt;MoveMsg*&gt;</code>, <code>dynamic_cast&lt;AttackMsg*&gt;</code>로 차례로 시험하면 메시지마다 계층 확인을 여러 번 한다. 헤더의 메시지 번호로 처리기 표를 찾는 쪽이 빠르고 분명하다.
       </li>

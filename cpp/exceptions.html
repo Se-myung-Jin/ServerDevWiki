@@ -98,7 +98,7 @@
         <thead><tr><th>상황</th><th>맞는 쪽</th><th>이유</th></tr></thead>
         <tbody>
           <tr><td>드물고, 그 자리에서 할 수 있는 일이 없는 실패(설정 파일 손상, 메모리 부족)</td><td>예외</td><td>여러 층을 건너 처리할 곳까지 바로 올라간다</td></tr>
-          <tr><td>자주 일어나는, 예상된 결과(아이템 없음, 패킷 형식 오류, 조회 결과 없음)</td><td>반환값: <code>std::optional</code>, C++23 <code>std::expected</code>, 오류 코드</td><td>던지는 비용이 크고, 흐름이 코드에 보인다</td></tr>
+          <tr><td>자주 일어나는, 예상된 결과(아이템 없음, 패킷 형식 오류, 조회 결과 없음)</td><td>반환값: <code>std::optional</code>, C++23 <code>std::expected</code>(<code>and_then</code>·<code>transform</code>으로 오류 확인 없이 이어 쓴다), 오류 코드</td><td>던지는 비용이 크고, 흐름이 코드에 보인다</td></tr>
           <tr><td>생성자 실패</td><td>예외</td><td>생성자는 반환값이 없다. 예외를 끈 코드는 생성 후 <code>Init()</code>으로 나눈다</td></tr>
           <tr><td>예외를 끈 빌드(<code>-fno-exceptions</code>)</td><td>반환값</td><td>일부 게임 엔진과 플랫폼이 실행 파일 크기와 예측 가능성 때문에 끈다</td></tr>
         </tbody>

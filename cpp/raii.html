@@ -124,7 +124,7 @@ private:
           <tr><td>파일</td><td><code>std::fstream</code></td><td>닫기</td></tr>
           <tr><td>스레드</td><td><code>std::jthread</code>(C++20)</td><td>멈춤 요청 후 합류(<a data-ref="cpp/cpp-concurrency">C++ 동시성</a>)</td></tr>
           <tr><td>OS 핸들, 소켓</td><td>삭제자를 붙인 <code>unique_ptr</code>이나 직접 만든 클래스</td><td><code>CloseHandle</code>, <code>close</code>(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>)</td></tr>
-          <tr><td>"이 블록이 끝나면 할 일"</td><td>스코프 가드(직접 만들거나 라이브러리)</td><td>등록해 둔 함수 실행</td></tr>
+          <tr><td>"이 블록이 끝나면 할 일"</td><td>스코프 가드(직접 만들거나, 라이브러리 기초 TS의 <code>scope_exit</code>·<code>scope_fail</code>, GSL의 <code>finally</code>. 표준 정식 타입은 아직 없다)</td><td>등록해 둔 함수 실행</td></tr>
         </tbody>
       </table>
     </div>

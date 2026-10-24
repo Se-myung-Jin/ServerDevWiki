@@ -70,7 +70,7 @@
       </table>
     </div>
     <p>
-      C++20은 이 장치만 주고, 실제로 쓰는 <code>Task</code> 타입이나 실행기는 주지 않았다. 그래서 직접 promise_type을 짜거나 라이브러리를 쓴다. 서버에서는 Boost.Asio·독립형 Asio의 <code>awaitable&lt;T&gt;</code>, cppcoro, folly의 <code>coro::Task</code>가 흔하다. 표준에는 C++23에서 값을 차례로 내보내는 <code>std::generator</code>가 처음 들어왔다.
+      C++20은 이 장치만 주고, 실제로 쓰는 <code>Task</code> 타입이나 실행기는 주지 않았다. 그래서 직접 promise_type을 짜거나 라이브러리를 쓴다. 서버에서는 Boost.Asio·독립형 Asio의 <code>awaitable&lt;T&gt;</code>, cppcoro, folly의 <code>coro::Task</code>가 흔하다. 표준에는 C++23에서 값을 차례로 내보내는 <code>std::generator</code>가 처음 들어왔다. C++26은 비동기 작업의 표준 틀인 <code>std::execution</code>(senders/receivers)을 더했다. 컴파일러와 라이브러리가 따라오기 전까지 서버는 당분간 Asio 같은 라이브러리를 쓴다.
     </p>
 <pre><code class="language-cpp">// Asio: 세션의 읽기 루프를 순차 코드로 쓴다
 asio::awaitable&lt;void&gt; ReadLoop(std::shared_ptr&lt;Session&gt; s)   // 값으로 받아 수명을 붙잡는다

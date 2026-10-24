@@ -36,7 +36,7 @@
       </table>
     </div>
     <p>
-      <code>unique_ptr</code>은 복사가 막혀 있어서 소유를 넘기려면 <code>std::move</code>를 적어야 한다. 코드에서 소유가 옮겨 가는 지점이 글자로 보인다. 삭제자를 바꿔 끼울 수 있어서 메모리가 아닌 자원도 감싼다. <code>fclose</code>를 삭제자로 붙인 <code>std::unique_ptr&lt;FILE, decltype(&amp;std::fclose)&gt;</code>나, OS 핸들을 닫는 함수 객체를 삭제자로 붙인 것이 그 예다(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>).
+      <code>unique_ptr</code>은 복사가 막혀 있어서 소유를 넘기려면 <code>std::move</code>를 적어야 한다. 코드에서 소유가 옮겨 가는 지점이 글자로 보인다. 삭제자를 바꿔 끼울 수 있어서 메모리가 아닌 자원도 감싼다. <code>fclose</code>를 부르는 상태 없는 함수 객체(<code>struct FileCloser { void operator()(std::FILE* f) const noexcept { std::fclose(f); } };</code>)를 삭제자로 붙인 <code>std::unique_ptr&lt;std::FILE, FileCloser&gt;</code>나, OS 핸들을 닫는 함수 객체를 삭제자로 붙인 것이 그 예다. 삭제자로 함수 포인터를 넘기면 그 포인터만큼 <code>unique_ptr</code>이 커지고, 표준 라이브러리 함수의 주소를 얻는 것(<code>&amp;std::fclose</code>)은 C++20부터 규격이 보장하지 않는다. C API가 <code>T**</code> 출력 인자로 핸들을 돌려줄 때는 C++23 <code>std::out_ptr</code>로 <code>unique_ptr</code>에 바로 받는다. 곧 덮어쓸 버퍼는 C++20 <code>std::make_unique_for_overwrite</code>로 만들면 0으로 채우는 비용을 건너뛴다(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>).
     </p>
 
     <h3>제어 블록과 make_shared</h3>
@@ -44,7 +44,7 @@
       <code>shared_ptr</code>은 객체 말고도 <strong>제어 블록</strong>을 하나 더 쓴다. 강한 참조 수, 약한 참조 수, 삭제자가 여기 있다. <code>std::shared_ptr&lt;T&gt;(new T)</code>로 만들면 객체와 제어 블록을 따로 할당해 두 번 할당한다. <code>std::make_shared&lt;T&gt;()</code>는 둘을 한 덩어리로 한 번에 할당하므로 할당 횟수가 줄고 둘이 메모리에서 붙어 있다(<a href="../system-programming/memory-allocator.html">메모리 할당자</a>).
     </p>
     <p>
-      대가도 있다. 한 덩어리라서 따로 놓을 수 없다. 강한 참조가 모두 사라지면 객체의 소멸자는 바로 불리지만, <code>weak_ptr</code>이 하나라도 남아 있으면 제어 블록이 남아야 하므로 <strong>객체가 쓰던 메모리까지 함께 남는다.</strong> 큰 객체를 오래 사는 <code>weak_ptr</code>이 가리키면 이것이 누수처럼 보인다. 그럴 때는 따로 할당하는 쪽이 낫다.
+      대가도 있다. 한 덩어리라서 따로 놓을 수 없다. 강한 참조가 모두 사라지면 객체의 소멸자는 바로 불리지만, <code>weak_ptr</code>이 하나라도 남아 있으면 제어 블록이 남아야 하므로 <strong>객체가 쓰던 메모리까지 함께 남는다.</strong> 큰 객체를 오래 사는 <code>weak_ptr</code>이 가리키면 이것이 누수처럼 보인다. 그럴 때는 따로 할당하는 쪽이 낫다. make 함수를 쓸 수 없는 경우도 있다. 삭제자를 직접 지정해야 할 때와 중괄호 초기화로 만들어야 할 때다. 그때는 <code>new</code>로 만든 포인터를 그 문장 안에서 바로 스마트 포인터 생성자에 넘긴다.
     </p>
 
     <h3>서로 가리키면 영원히 남는다</h3>

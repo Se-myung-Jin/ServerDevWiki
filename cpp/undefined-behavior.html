@@ -82,7 +82,7 @@
       </table>
     </div>
     <p>
-      부호 없는 정수는 넘쳐도 UB가 아니다. 2ⁿ으로 나눈 나머지로 감싸 도는 것이 정의되어 있다. 부호 있는 정수를 2의 보수로 표현한다는 것은 C++20에서 정해졌지만, 그것은 표현의 이야기이고 넘쳤을 때의 동작은 여전히 미정의다.
+      부호 없는 정수는 넘쳐도 UB가 아니다. 2ⁿ으로 나눈 나머지로 감싸 도는 것이 정의되어 있다. 부호 있는 정수를 2의 보수로 표현한다는 것은 C++20에서 정해졌지만, 그것은 표현의 이야기이고 넘쳤을 때의 동작은 여전히 미정의다. 그리고 C++26부터 초기화하지 않은 지역 변수를 읽는 것은 미정의 동작이 아니라 "잘못된 동작(erroneous behavior)"으로 바뀐다. 값은 구현이 정한 무언가이고, 컴파일러는 진단할 수 있지만 그 읽기를 없는 일로 가정해 코드를 지우지는 못한다. 그 전 표준에서도 GCC·Clang의 <code>-ftrivial-auto-var-init=zero</code>로 지역 변수를 0으로 채워 비슷한 효과를 얻는다.
     </p>
 
     <h3>미정의, 구현 정의, 미지정은 다르다</h3>
@@ -135,10 +135,11 @@ float f = std::bit_cast&lt;float&gt;(raw);</code></pre>
         <thead><tr><th>도구</th><th>잡는 것</th><th>비용과 제약</th></tr></thead>
         <tbody>
           <tr><td>컴파일러 경고를 오류로(<code>-Wall -Wextra -Werror</code>, MSVC <code>/W4 /WX</code>)</td><td>반환 누락, 초기화 안 된 변수 일부, 부호 섞인 비교</td><td>없다. 가장 먼저 켠다</td></tr>
-          <tr><td>ASan(<code>-fsanitize=address</code>, MSVC <code>/fsanitize=address</code>)</td><td>범위 밖 접근, 해제 후 사용, 이중 해제, 누수</td><td>대략 2배 느리고 메모리를 몇 배 쓴다</td></tr>
+          <tr><td>ASan(<code>-fsanitize=address</code>, MSVC <code>/fsanitize=address</code>)</td><td>범위 밖 접근, 해제 후 사용, 이중 해제, 누수(누수 검사는 Linux·macOS의 GCC·Clang에서)</td><td>대략 2배 느리고 메모리를 몇 배 쓴다</td></tr>
           <tr><td>UBSan(<code>-fsanitize=undefined</code>)</td><td>부호 있는 넘침, 시프트, 널, 정렬, 잘못된 enum 값</td><td>가볍다. ASan과 함께 켤 수 있다</td></tr>
           <tr><td>TSan(<code>-fsanitize=thread</code>)</td><td>데이터 경쟁</td><td>5~15배 느리고 메모리를 5~10배 쓴다. ASan과 함께 켤 수 없다</td></tr>
           <tr><td>MSan(Clang <code>-fsanitize=memory</code>)</td><td>초기화 안 된 값 읽기</td><td>링크하는 라이브러리까지 모두 MSan으로 빌드해야 한다</td></tr>
+          <tr><td>하드닝된 표준 라이브러리(libstdc++ <code>_GLIBCXX_ASSERTIONS</code>, libc++ <code>_LIBCPP_HARDENING_MODE</code>)</td><td>컨테이너·<code>span</code>의 범위 밖 인덱스, 빈 컨테이너 접근 같은 전제 조건 위반</td><td>비용이 몇 % 안팎이라 운영 빌드에 켜 두기도 한다. C++26이 표준으로 정했다</td></tr>
           <tr><td>정적 분석(clang-tidy, MSVC <code>/analyze</code>)</td><td>실행해 보지 않은 경로의 의심 지점</td><td>오탐이 있다</td></tr>
         </tbody>
       </table>

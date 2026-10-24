@@ -167,8 +167,9 @@
         <tbody>
           <tr><td>대부분의 경우</td><td><code>vector</code></td><td>상수가 가장 작고 순회가 가장 빠르다</td></tr>
           <tr><td>개수가 컴파일 때 정해진다</td><td><code>array</code></td><td>동적 할당이 없다</td></tr>
+          <tr><td>상한은 정해져 있고 개수만 바뀐다</td><td><code>std::inplace_vector</code>(C++26), 그 전에는 Boost <code>static_vector</code></td><td>객체 안에 고정 용량을 품어 할당이 없고, 크기는 vector처럼 늘고 준다</td></tr>
           <tr><td>양 끝에서 넣고 뺀다</td><td><code>deque</code>, 또는 원형 버퍼</td><td>앞 삽입이 O(1)이다. MSVC에서는 원형 버퍼가 낫다</td></tr>
-          <tr><td>원소 주소가 오래 유지돼야 한다</td><td>노드 기반, 또는 인덱스로 가리키기</td><td>vector는 재할당 때 주소가 바뀐다</td></tr>
+          <tr><td>원소 주소가 오래 유지돼야 한다</td><td>노드 기반, 인덱스로 가리키기, 또는 <code>std::hive</code>(C++26)</td><td>vector는 재할당 때 주소가 바뀐다. hive는 블록에 담아 지운 칸을 재사용하면서 다른 원소를 옮기지 않는다</td></tr>
           <tr><td>키로 찾고 순서는 필요 없다</td><td><code>unordered_map</code>(성능이 중요하면 열린 주소 해시)</td><td>평균 O(1)</td></tr>
           <tr><td>키로 찾고 정렬 순회·범위 조회가 필요하다</td><td><code>map</code></td><td>정렬이 유지된다</td></tr>
           <tr><td>한 번 만들고 주로 조회만 한다</td><td>정렬된 <code>vector</code>, <code>flat_map</code></td><td>노드가 없어 캐시에 잘 맞는다</td></tr>
@@ -185,7 +186,7 @@
         <strong>엔티티 표는 해시보다 인덱스가 빠르다.</strong> 엔티티 ID → 객체를 <code>unordered_map</code>으로 들면 조회마다 해시와 노드 점프가 든다. ID에 배열 인덱스와 세대 번호를 넣고 <code>vector</code>에 담는 <a data-ref="data-structure/memory-layout">슬롯 맵</a> 방식이면 조회가 배열 접근 한 번이고, 지워진 칸을 재사용해도 옛 ID는 세대 번호가 달라 걸러진다(<a data-ref="game-patterns/ecs-storage">ECS 저장 구조</a>).
       </li>
       <li>
-        <strong>map의 [ ]로 조회하지 않는다.</strong> <code>players[id]</code>는 키가 없으면 기본값 원소를 만들어 넣는다. 끊긴 플레이어를 조회만 했는데 빈 세션이 쌓인다. 있는지 볼 때는 <code>find</code>나 <code>contains</code>(C++20), 반드시 있어야 하면 <code>at</code>을 쓴다.
+        <strong>map의 [ ]로 조회하지 않는다.</strong> <code>players[id]</code>는 키가 없으면 기본값 원소를 만들어 넣는다. 끊긴 플레이어를 조회만 했는데 빈 세션이 쌓인다. 있는지 볼 때는 <code>find</code>나 <code>contains</code>(C++20), 반드시 있어야 하면 <code>at</code>을 쓴다. 넣을 때도 <code>[ ]</code> 대신 <code>try_emplace</code>(없을 때만 만든다)와 <code>insert_or_assign</code>(C++17)으로 뜻을 드러낸다. 문자열 키 표는 투명 비교자와 투명 해시를 주면(C++20 이종 조회) <code>string_view</code>로 찾을 때 임시 <code>std::string</code>을 만들지 않는다.
       </li>
       <li>
         <strong>틱마다 쓰는 임시 컨테이너는 다시 쓴다.</strong> 주변 대상 목록이나 송신 대기열을 틱마다 새로 만들면 할당이 반복된다. 멤버로 두고 <code>clear()</code>만 하면 용량이 남아 할당이 없다. 틱 단위로 몽땅 버리는 할당은 <code>std::pmr::monotonic_buffer_resource</code> 같은 영역 할당자로 받기도 한다(<a href="../system-programming/memory-allocator.html">메모리 할당자</a>).

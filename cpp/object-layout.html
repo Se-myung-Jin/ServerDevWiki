@@ -72,7 +72,7 @@
           <tr><td><code>is_trivially_copyable</code></td><td>복사·이동 생성과 대입, 소멸자가 모두 컴파일러가 만든 사소한 것이다. 가상 함수와 가상 기반이 없다</td><td><code>memcpy</code>로 복사해 다른 객체를 만들 수 있다. 바이트를 버퍼로 옮겼다 되돌려도 같은 값이다</td></tr>
           <tr><td><code>is_trivially_destructible</code></td><td>소멸자가 사소하다</td><td>소멸자를 부르지 않고 메모리를 재사용해도 된다. 풀 할당자가 정리 단계를 건너뛸 수 있다</td></tr>
           <tr><td><code>is_standard_layout</code></td><td>모든 비정적 멤버의 접근 지정이 같고, 가상 함수가 없고, 멤버가 한 클래스에만 모여 있다</td><td>C 구조체와 배치가 호환된다. <code>offsetof</code>를 쓸 수 있고, 첫 멤버의 주소가 객체 주소와 같다</td></tr>
-          <tr><td><code>is_aggregate</code></td><td>사용자 생성자, private 멤버, 가상 함수가 없다</td><td>중괄호로 멤버를 바로 초기화한다(<a href="initialization.html">초기화</a>)</td></tr>
+          <tr><td><code>is_aggregate</code></td><td>사용자가 선언한 생성자(C++20부터는 <code>= default</code>로 선언만 해도 해당), private 멤버, 가상 함수가 없다</td><td>중괄호로 멤버를 바로 초기화한다(<a href="initialization.html">초기화</a>)</td></tr>
           <tr><td><code>has_unique_object_representations</code></td><td>같은 값이면 바이트도 같다. 패딩이 없고 부동소수점이 없다</td><td>바이트를 그대로 해시하거나 비교해도 된다</td></tr>
         </tbody>
       </table>

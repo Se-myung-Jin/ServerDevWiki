@@ -108,7 +108,7 @@ std::scoped_lock both(from.mutex, to.mutex);</code></pre>
       <code>std::atomic&lt;T&gt;</code>은 읽기, 쓰기, 증감, 비교 교환을 쪼개지지 않게 하고, 다른 스레드가 보는 순서를 정한다. 연산마다 메모리 순서를 줄 수 있고 기본은 가장 강한 <code>memory_order_seq_cst</code>다. 통계 카운터처럼 순서가 상관없으면 <code>relaxed</code>, 데이터를 준비한 뒤 플래그로 넘기는 경우는 쓰는 쪽 <code>release</code>와 읽는 쪽 <code>acquire</code>를 짝지어 쓴다. 각 순서가 무엇을 보장하는지는 <a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>, 원자 연산으로 만든 자료구조는 <a href="../data-structure/concurrent-structures.html">동시성 자료구조</a>에서 다룬다.
     </p>
     <p>
-      <code>std::atomic</code>이 늘 락 없이 도는 것은 아니다. 큰 구조체를 담으면 구현이 안에서 락을 쓴다. <code>is_always_lock_free</code>로 확인한다. C++20부터는 <code>std::atomic&lt;std::shared_ptr&lt;T&gt;&gt;</code>와, 값이 바뀔 때까지 잠드는 <code>wait</code>·<code>notify_one</code>도 있다.
+      <code>std::atomic</code>이 늘 락 없이 도는 것은 아니다. 큰 구조체를 담으면 구현이 안에서 락을 쓴다. <code>is_always_lock_free</code>로 확인한다. C++20부터는 <code>std::atomic&lt;std::shared_ptr&lt;T&gt;&gt;</code>와, 값이 바뀔 때까지 잠드는 <code>wait</code>·<code>notify_one</code>도 있다. 이미 있는 일반 변수를 잠깐만 원자적으로 다루려면 <code>std::atomic_ref</code>(C++20)를 쓴다. 다만 <code>atomic&lt;shared_ptr&gt;</code>는 주요 구현에서 안에 락을 쓰므로 빠른 락 없는 구조가 아니다. 락 없는 구조의 메모리 회수 문제는 C++26의 <code>std::hazard_pointer</code>와 RCU(<code>&lt;rcu&gt;</code>)가 표준 도구로 맡는다.
     </p>
     <p>
       <code>volatile</code>은 원자성도 순서도 주지 않는다. "컴파일러가 이 읽기를 지우지 말라"는 뜻일 뿐이고, 하드웨어 레지스터를 읽을 때 쓰는 것이다. C#과 Java의 <code>volatile</code>은 획득·해제 순서를 보장하므로 이름만 같고 뜻이 다르다.
@@ -124,7 +124,7 @@ std::scoped_lock both(from.mutex, to.mutex);</code></pre>
 
     <h3>결과를 돌려받는 future</h3>
     <p>
-      <code>std::promise</code>에 값을 넣으면 짝인 <code>std::future</code>에서 <code>get()</code>으로 기다렸다 받는다. 작업 안에서 던진 예외도 같은 통로로 넘어와 <code>get()</code>에서 다시 던져진다. 공유 변수와 조건 변수를 직접 짜는 것보다 실수가 적다. 기다리는 동안 스레드를 잡아 두지 않고 결과가 오면 이어서 실행하려면 코루틴을 쓴다(<a href="coroutines.html">C++20 코루틴</a>).
+      <code>std::promise</code>에 값을 넣으면 짝인 <code>std::future</code>에서 <code>get()</code>으로 기다렸다 받는다. 작업 안에서 던진 예외도 같은 통로로 넘어와 <code>get()</code>에서 다시 던져진다. 공유 변수와 조건 변수를 직접 짜는 것보다 실수가 적다. 기다리는 동안 스레드를 잡아 두지 않고 결과가 오면 이어서 실행하려면 코루틴을 쓴다(<a href="coroutines.html">C++20 코루틴</a>). C++26은 비동기 작업을 조합하는 표준 틀로 <code>std::execution</code>(senders/receivers)을 더했다. future와 async를 대신할 방향이다.
     </p>
     <p>
       <code>std::async</code>에는 함정이 둘 있다. 기본 실행 정책은 구현이 "새 스레드에서 바로"와 "<code>get()</code>을 부를 때 그 자리에서" 중 고를 수 있다. 반드시 다른 스레드에서 돌려야 하면 <code>std::launch::async</code>를 명시한다. 그리고 <code>std::async</code>가 돌려준 <code>future</code>는 소멸자에서 작업이 끝나기를 기다린다. 돌려받은 값을 버리면 그 줄에서 바로 기다리므로, 비동기로 던졌다고 생각한 일이 동기로 돈다.
@@ -142,6 +142,9 @@ std::scoped_lock both(from.mutex, to.mutex);</code></pre>
           <tr><td>한 번만 초기화</td><td>함수 안 <code>static</code> 지역 변수, 또는 <code>std::call_once</code></td></tr>
           <tr><td>오래 도는 작업 스레드</td><td><code>std::jthread</code> + <code>stop_token</code></td></tr>
           <tr><td>작업 하나의 결과를 받는다</td><td><code>std::future</code>. 작업을 많이 돌린다면 스레드 풀에 넣고 future로 받는다</td></tr>
+          <tr><td>여러 스레드가 다 끝나기를 한 번 기다린다, 신호를 한 번만 보낸다</td><td><code>std::latch</code>(C++20). 예전처럼 <code>std::promise&lt;void&gt;</code>로 일회성 통지를 흉내 낼 필요가 없다</td></tr>
+          <tr><td>단계마다 모든 스레드가 모였다가 함께 넘어간다</td><td><code>std::barrier</code>(C++20)</td></tr>
+          <tr><td>동시에 들어가는 수를 제한한다</td><td><code>std::counting_semaphore</code>(C++20)</td></tr>
         </tbody>
       </table>
     </div>

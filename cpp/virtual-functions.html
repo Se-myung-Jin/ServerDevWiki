@@ -100,7 +100,7 @@ delete m;   // Monster의 소멸자만 불린다. skills는 정리되지 않는�
         <thead><tr><th>이 클래스를</th><th>소멸자</th><th>이유</th></tr></thead>
         <tbody>
           <tr><td>기반 포인터로 지울 수 있다</td><td><code>public virtual</code></td><td>파생 소멸자부터 기반 소멸자까지 역순으로 다 불린다</td></tr>
-          <tr><td>기반으로 쓰지만 기반 포인터로 지우지 않는다</td><td><code>protected</code>, 비가상</td><td>밖에서 기반 포인터로 <code>delete</code>하면 컴파일 오류가 난다. vptr가 생기지 않는다</td></tr>
+          <tr><td>기반으로 쓰지만 기반 포인터로 지우지 않는다</td><td><code>protected</code>, 비가상</td><td>밖에서 기반 포인터로 <code>delete</code>하면 컴파일 오류가 난다. 소멸자 때문에 vptr가 새로 생기지는 않는다</td></tr>
           <tr><td>상속할 일이 없다</td><td>그대로 두고 클래스에 <code>final</code></td><td>상속 자체를 막는다</td></tr>
         </tbody>
       </table>
@@ -143,7 +143,7 @@ delete m;   // Monster의 소멸자만 불린다. skills는 정리되지 않는�
         <thead><tr><th>상황</th><th>맞는 것</th><th>대가</th></tr></thead>
         <tbody>
           <tr><td>실행 중에 타입이 정해지고, 종류가 열려 있다(플러그인, 스크립트가 만든 객체)</td><td>가상 함수</td><td>간접 호출, 인라인 불가</td></tr>
-          <tr><td>컴파일 때 타입을 안다</td><td>템플릿, CRTP(<a data-ref="cpp/templates-constexpr">템플릿과 컴파일 시점 계산</a>)</td><td>타입마다 코드가 생겨 빌드와 실행 파일이 커진다</td></tr>
+          <tr><td>컴파일 때 타입을 안다</td><td>템플릿, CRTP나 C++23 deducing this(<a href="templates-constexpr.html">템플릿과 컴파일 시점 계산</a>)</td><td>타입마다 코드가 생겨 빌드와 실행 파일이 커진다</td></tr>
           <tr><td>종류가 몇 개로 닫혀 있다</td><td><code>std::variant</code> + <code>std::visit</code>, 또는 종류 값과 <code>switch</code></td><td>종류를 더할 때 모든 분기를 고친다. 대신 빠뜨리면 컴파일러가 알려 준다</td></tr>
           <tr><td>같은 종류를 대량으로 처리한다</td><td>종류별 배열로 모아 종류마다 반복문</td><td>객체 하나를 통째로 다루기 불편하다</td></tr>
         </tbody>
