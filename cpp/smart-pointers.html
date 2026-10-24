@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>스마트 포인터와 소유권 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/smart-pointers">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="raii.html">RAII</a> · <a href="move-semantics.html">이동 시맨틱</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      스마트 포인터는 <strong>누가 이 자원을 책임지는지를 타입으로 적는</strong> RAII 객체다. <code>std::unique_ptr</code>은 "주인이 하나다", <code>std::shared_ptr</code>은 "여럿이 나눠 갖고 마지막이 치운다", <code>std::weak_ptr</code>은 "가리키지만 주인은 아니다"를 뜻한다. 날 포인터(<code>T*</code>)는 이제 "빌려 볼 뿐 책임지지 않는다"는 뜻으로만 쓴다.
+    </p>
+    <p>
+      기본은 <code>unique_ptr</code>이다. 크기가 포인터 하나이고 비용이 없으며 소멸 시점이 코드에 보인다. <code>shared_ptr</code>은 편하지만 소유 질문의 답을 미룰 뿐이다. 누가 마지막인지 코드만 보고는 알 수 없게 되고, 서로를 가리키면 <span class="blank">영원히 해제되지 않는다</span>.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>세 가지의 비용과 뜻</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th><code>unique_ptr&lt;T&gt;</code></th><th><code>shared_ptr&lt;T&gt;</code></th><th><code>weak_ptr&lt;T&gt;</code></th></tr></thead>
+        <tbody>
+          <tr><td>크기</td><td>포인터 하나(상태 있는 삭제자면 그만큼 더)</td><td>포인터 둘: 객체와 제어 블록</td><td>포인터 둘</td></tr>
+          <tr><td>복사</td><td>안 된다. 이동만 된다</td><td>된다. 강한 참조 수가 1 오른다</td><td>된다. 약한 참조 수가 1 오른다</td></tr>
+          <tr><td>참조 수</td><td>없다</td><td>원자적으로 늘고 준다</td><td>객체를 살려 두지 않는다</td></tr>
+          <tr><td>언제 해제되나</td><td>그 포인터가 소멸하거나 <code>reset</code>될 때</td><td>마지막 <code>shared_ptr</code>이 사라질 때</td><td>해제에 관여하지 않는다</td></tr>
+          <tr><td>쓰는 법</td><td><code>std::make_unique&lt;T&gt;(...)</code></td><td><code>std::make_shared&lt;T&gt;(...)</code></td><td><code>lock()</code>으로 <code>shared_ptr</code>을 얻어 쓴다. 이미 없으면 빈 포인터</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>unique_ptr</code>은 복사가 막혀 있어서 소유를 넘기려면 <code>std::move</code>를 적어야 한다. 코드에서 소유가 옮겨 가는 지점이 글자로 보인다. 삭제자를 바꿔 끼울 수 있어서 메모리가 아닌 자원도 감싼다. <code>fclose</code>를 삭제자로 붙인 <code>std::unique_ptr&lt;FILE, decltype(&amp;std::fclose)&gt;</code>나, OS 핸들을 닫는 함수 객체를 삭제자로 붙인 것이 그 예다(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>).
+    </p>
+
+    <h3>제어 블록과 make_shared</h3>
+    <p>
+      <code>shared_ptr</code>은 객체 말고도 <strong>제어 블록</strong>을 하나 더 쓴다. 강한 참조 수, 약한 참조 수, 삭제자가 여기 있다. <code>std::shared_ptr&lt;T&gt;(new T)</code>로 만들면 객체와 제어 블록을 따로 할당해 두 번 할당한다. <code>std::make_shared&lt;T&gt;()</code>는 둘을 한 덩어리로 한 번에 할당하므로 할당 횟수가 줄고 둘이 메모리에서 붙어 있다(<a href="../system-programming/memory-allocator.html">메모리 할당자</a>).
+    </p>
+    <p>
+      대가도 있다. 한 덩어리라서 따로 놓을 수 없다. 강한 참조가 모두 사라지면 객체의 소멸자는 바로 불리지만, <code>weak_ptr</code>이 하나라도 남아 있으면 제어 블록이 남아야 하므로 <strong>객체가 쓰던 메모리까지 함께 남는다.</strong> 큰 객체를 오래 사는 <code>weak_ptr</code>이 가리키면 이것이 누수처럼 보인다. 그럴 때는 따로 할당하는 쪽이 낫다.
+    </p>
+
+    <h3>서로 가리키면 영원히 남는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="부모와 자식이 서로 shared_ptr로 가리키면 바깥 참조가 없어도 둘 다 참조 수가 1로 남는다. 자식이 부모를 weak_ptr로 가리키면 고리가 끊긴다">
+        <defs><marker id="sp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker>
+        <marker id="sp-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="180" y="24" text-anchor="middle">서로 shared_ptr</text>
+        <text class="f-strong" x="540" y="24" text-anchor="middle">자식 → 부모는 weak_ptr</text>
+        <line class="f-grid" x1="360" y1="12" x2="360" y2="222"/>
+
+        <rect class="f-hit" x="40" y="70" width="110" height="50" rx="6"/>
+        <text class="f-text" x="95" y="92" text-anchor="middle">부모</text>
+        <text class="f-sub" x="95" y="110" text-anchor="middle">강한 참조 1</text>
+        <rect class="f-hit" x="210" y="70" width="110" height="50" rx="6"/>
+        <text class="f-text" x="265" y="92" text-anchor="middle">자식</text>
+        <text class="f-sub" x="265" y="110" text-anchor="middle">강한 참조 1</text>
+        <path class="f-line" d="M150,82 C175,62 185,62 208,82" marker-end="url(#sp-b)"/>
+        <path class="f-line" d="M210,110 C185,130 175,130 152,110" marker-end="url(#sp-b)"/>
+        <text class="f-sub" x="180" y="56" text-anchor="middle">소유</text>
+        <text class="f-sub" x="180" y="144" text-anchor="middle">소유</text>
+        <text class="f-sub" x="180" y="182" text-anchor="middle">바깥 참조가 모두 사라져도</text>
+        <text class="f-sub" x="180" y="200" text-anchor="middle">서로가 서로를 1로 붙잡아 해제되지 않는다</text>
+
+        <rect class="f-cell" x="400" y="70" width="110" height="50" rx="6"/>
+        <text class="f-text" x="455" y="92" text-anchor="middle">부모</text>
+        <text class="f-sub" x="455" y="110" text-anchor="middle">강한 참조 0</text>
+        <rect class="f-cell" x="570" y="70" width="110" height="50" rx="6"/>
+        <text class="f-text" x="625" y="92" text-anchor="middle">자식</text>
+        <text class="f-sub" x="625" y="110" text-anchor="middle">강한 참조 0</text>
+        <path class="f-line" d="M510,82 C535,62 545,62 568,82" marker-end="url(#sp-a)"/>
+        <path class="f-pad" d="M570,110 C545,130 535,130 512,110" marker-end="url(#sp-a)"/>
+        <text class="f-sub" x="540" y="56" text-anchor="middle">소유</text>
+        <text class="f-sub" x="540" y="144" text-anchor="middle">관찰만 (참조 수가 오르지 않음)</text>
+        <text class="f-sub" x="540" y="182" text-anchor="middle">부모가 사라지면 자식도 따라 사라진다</text>
+        <text class="f-sub" x="540" y="200" text-anchor="middle">자식은 쓸 때 lock()으로 살아 있는지 본다</text>
+      </svg>
+      <figcaption>참조 수는 "몇 명이 붙잡고 있나"만 센다. 고리 안에서 서로를 붙잡으면 바깥에서 아무도 안 가리켜도 0이 되지 않는다. 한쪽을 관찰로 바꾸면 고리가 끊긴다.</figcaption>
+    </figure>
+    <p>
+      GC가 있는 언어에는 이 문제가 없다. GC는 참조 수가 아니라 뿌리(스택, 정적 변수)에서 닿을 수 있는지를 보므로, 서로를 가리키는 두 객체도 뿌리에서 닿지 않으면 함께 회수한다(<a data-ref="csharp/gc-basics">GC 기초</a>). 대신 언제 회수될지 모른다. 참조 수 방식은 마지막 참조가 사라지는 순간 정확히 해제하는 대신 고리를 스스로 풀지 못한다.
+    </p>
+    <p>
+      흔한 모양은 <strong>위에서 아래로는 소유, 아래에서 위로는 관찰</strong>이다. 부모가 자식을 <code>shared_ptr</code>이나 <code>unique_ptr</code>로, 자식이 부모를 <code>weak_ptr</code>이나 날 포인터로 가리킨다. 어느 쪽을 약하게 둘지가 곧 소유 구조의 설계다.
+    </p>
+
+    <h3>무엇이 스레드 안전한가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇</th><th>여러 스레드에서</th></tr></thead>
+        <tbody>
+          <tr><td>서로 다른 <code>shared_ptr</code> 사본이 참조 수를 바꾸는 것</td><td>안전하다. 참조 수는 원자적으로 바뀐다</td></tr>
+          <tr><td>가리키는 객체의 내용</td><td>안전하지 않다. 객체는 따로 보호해야 한다</td></tr>
+          <tr><td>같은 <code>shared_ptr</code> 변수 하나를 한쪽이 읽고 한쪽이 대입하는 것</td><td>안전하지 않다. 각자 사본을 들거나, C++20의 <code>std::atomic&lt;std::shared_ptr&lt;T&gt;&gt;</code>를 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      참조 수가 원자적이라는 것을 "shared_ptr은 스레드 안전하다"로 넓혀 읽는 실수가 많다. 보호되는 것은 수명이지 내용이 아니다(<a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>).
+    </p>
+
+    <h3>this를 shared_ptr로 넘겨야 할 때</h3>
+<pre><code class="language-cpp">class Session : public std::enable_shared_from_this&lt;Session&gt; {
+public:
+    void StartRead() {
+        auto self = shared_from_this();                 // 완료될 때까지 나를 살려 둔다
+        socket_.async_read_some(buffer_, [self](auto ec, std::size_t n) {
+            if (!ec) self-&gt;OnRead(n);
+        });
+    }
+};
+
+auto s = std::make_shared&lt;Session&gt;(...);   // 먼저 shared_ptr로 소유돼 있어야 한다
+s-&gt;StartRead();</code></pre>
+    <p>
+      비동기 요청을 걸어 두고 함수가 돌아가면, 완료 콜백이 불리기 전에 세션이 사라질 수 있다. 콜백에 날 <code>this</code>를 넘기면 이미 해제된 객체를 만진다. 그래서 콜백이 세션의 <code>shared_ptr</code>을 하나 들고 있게 한다. 이때 <code>std::shared_ptr&lt;Session&gt;(this)</code>로 새로 만들면 <strong>제어 블록이 하나 더 생겨</strong> 두 무리가 각자 0을 세고 객체를 두 번 지운다. <code>enable_shared_from_this</code>를 상속하면 객체가 자기 제어 블록을 기억해 두었다가 같은 블록의 사본을 내준다. 생성자 안에서는 아직 소유하는 <code>shared_ptr</code>이 없으므로 부를 수 없다(C++17부터 <code>std::bad_weak_ptr</code> 예외).
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>쓸 것</th></tr></thead>
+        <tbody>
+          <tr><td>주인이 분명하다(대부분)</td><td><code>unique_ptr</code>. 필요하면 소유를 <code>std::move</code>로 넘긴다</td></tr>
+          <tr><td>함수가 잠깐 쓰기만 한다</td><td><code>T&amp;</code>나 <code>T*</code>로 빌려준다. 스마트 포인터를 값으로 넘기지 않는다</td></tr>
+          <tr><td>누가 마지막일지 정말 정할 수 없다(비동기 콜백, 여러 시스템이 함께 붙잡는 객체)</td><td><code>shared_ptr</code></td></tr>
+          <tr><td>살아 있으면 쓰고, 없으면 넘어간다(캐시, 관찰자, 부모 역참조)</td><td><code>weak_ptr</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>shared_ptr</code>을 값으로 받는 함수는 부를 때마다 원자적 증가와 감소를 한 번씩 낸다. 소유를 나눠 가질 생각이 없으면 <code>const T&amp;</code>로 받는다. 원자 연산은 여러 코어가 같은 제어 블록을 건드리면 <a data-ref="computer-architecture/memory-hierarchy">캐시 라인</a>을 두고 다툰다(<a href="../computer-architecture/cache-coherence.html">캐시 일관성과 false sharing</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>세션은 <code>shared_ptr</code>이 맞는 드문 자리다.</strong> 세션 관리자, 걸려 있는 수신 요청, 송신 요청, 타이머가 저마다 세션을 붙잡고, 누가 마지막일지는 끊기는 순간의 타이밍이 정한다(<a href="../server/completion-port.html">완료 알림 기반 서버</a>). 콜백은 <code>shared_from_this()</code>로 붙잡고, "살아 있으면 <a data-ref="server/connection-loss">하트비트</a>를 보내라" 같은 타이머는 <code>weak_from_this()</code>로 들어 세션 수명을 늘리지 않는다.
+      </li>
+      <li>
+        <strong>게임 객체는 핸들로 가리킨다.</strong> 몬스터·아이템처럼 수만 개가 생겼다 사라지는 객체를 <code>shared_ptr</code>로 서로 가리키면, 어디서 마지막 참조가 풀릴지 몰라 소멸이 틱 중간에 몰려 터지고 고리가 쉽게 생긴다. 엔진과 서버는 보통 배열 인덱스와 세대 번호를 묶은 핸들을 들고, 쓸 때 세대가 맞는지 확인한다. 크기가 작고, 소멸 시점은 소유한 쪽(월드)이 정하며, 고리가 생기지 않는다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>).
+      </li>
+      <li>
+        <strong>C#은 소유를 적지 않는 대신 다른 곳에서 샌다.</strong> GC가 고리를 풀어 주므로 C#에는 <code>weak_ptr</code>이 필요한 자리가 거의 없다. 대신 이벤트 구독, 정적 컬렉션, 캐시가 객체를 뿌리에 붙잡아 두면 GC도 회수하지 못한다. C++의 순환 참조에 해당하는 C#의 누수가 이쪽이다(<a data-ref="csharp/memory-leaks">메모리 누수</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>같은 날 포인터로 <code>shared_ptr</code>을 두 번 만들지 않는다.</strong> 제어 블록이 둘 생겨 이중 해제가 난다. <code>shared_ptr</code>은 <code>make_shared</code>로 만들고, 이미 소유된 객체의 사본은 기존 <code>shared_ptr</code>을 복사하거나 <code>shared_from_this</code>로 얻는다.</li>
+      <li><strong><code>shared_ptr</code>을 기본으로 쓰면 소유 설계가 사라진다.</strong> "누가 책임지나"를 미루면 소멸 시점을 설명할 수 없는 코드가 된다. 기본은 <code>unique_ptr</code>이고, <code>shared_ptr</code>은 이유를 댈 수 있을 때만 쓴다.</li>
+      <li><strong>람다에 <code>this</code>를 캡처하면 수명을 보장하지 않는다.</strong> 비동기로 나중에 불리는 람다라면 <code>shared_from_this()</code>나 <code>weak_from_this()</code>를 캡처한다(<a href="lambdas.html">람다와 함수 객체</a>).</li>
+      <li><strong>소멸이 연쇄로 몰린다.</strong> 큰 객체 그래프의 마지막 <code>shared_ptr</code>이 풀리면 그 아래 전부가 그 스레드에서 한꺼번에 소멸한다. <a data-ref="server/threading-model">로직 스레드</a>에서 수만 개가 한 번에 지워지면 틱이 튄다. 큰 정리는 다른 스레드로 넘기거나 여러 틱에 나눈다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

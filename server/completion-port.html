@@ -129,7 +129,7 @@
         <strong>.NET은 IOCP를 직접 감춘다.</strong> Windows의 비동기 소켓은 내부에서 IOCP를 쓰고, 완료되면 <code>await</code> 뒤 코드를 <a data-ref="operating-system/thread-pool">스레드 풀</a>에서 이어 실행한다. <code>SocketAsyncEventArgs</code>는 요청 객체를 재사용해 할당을 없애는 예전 방식이고, 지금은 <code>Memory&lt;byte&gt;</code>를 받는 <code>ReceiveAsync</code>가 <code>ValueTask</code>로 같은 효과를 낸다(<a data-ref="csharp/task-valuetask">Task와 ValueTask</a>).
       </li>
       <li>
-        <strong>세션을 닫을 때 걸어 둔 요청부터 정리한다.</strong> 소켓을 닫으면 걸려 있던 요청이 실패로 완료되어 큐에 들어온다. 세션 객체를 먼저 풀어 버리면 그 완료를 처리하는 스레드가 이미 사라진 객체를 만진다. 걸어 둔 요청 수를 세어 0이 된 뒤에 세션을 반납한다.
+        <strong>세션을 닫을 때 걸어 둔 요청부터 정리한다.</strong> 소켓을 닫으면 걸려 있던 요청이 실패로 완료되어 큐에 들어온다. 세션 객체를 먼저 풀어 버리면 그 완료를 처리하는 스레드가 이미 사라진 객체를 만진다. 걸어 둔 요청 수를 세어 0이 된 뒤에 세션을 반납한다. C++에서는 요청마다 세션의 shared_ptr을 쥐게 해 같은 효과를 낸다(<a href="../cpp/smart-pointers.html">스마트 포인터와 소유권</a>).
       </li>
     </ul>
 

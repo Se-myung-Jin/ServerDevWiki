@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>C++20 코루틴 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/coroutines">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="cpp-concurrency.html">C++ 동시성</a> · <a href="../server/io-models.html">I/O 모델</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      코루틴은 실행을 중간에 멈췄다가 나중에 그 자리에서 이어 갈 수 있는 함수다. 본문에 <code>co_await</code>, <code>co_yield</code>, <code>co_return</code> 중 하나라도 있으면 컴파일러가 그 함수를 코루틴으로 바꾼다. 비동기 I/O를 걸고 완료를 기다리는 코드를 콜백으로 쪼개지 않고, 위에서 아래로 읽히는 순차 코드로 쓸 수 있게 해 준다.
+    </p>
+    <p>
+      C++20 코루틴은 <span class="blank">스택 없는(stackless)</span> 코루틴이다. 멈출 때 <a data-ref="system-programming/call-stack">호출 스택</a>을 통째로 보관하지 않고, 이어 가는 데 필요한 지역 변수와 재개 지점만 <strong>코루틴 프레임</strong>에 담아 둔다. 프레임은 대개 힙에 할당된다. 멈춘 동안 스택에 있던 것은 사라지므로, 참조로 받은 인자와 임시 객체의 수명을 직접 챙겨야 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>멈추면 프레임만 남고, 재개는 깨운 쪽 스레드에서 한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="코루틴이 co_await에서 멈추면 지역 변수와 재개 지점이 힙의 코루틴 프레임에 남고, 호출한 스레드는 다른 일을 하며, I/O가 끝나면 완료를 받은 스레드가 프레임에서 이어 실행한다">
+        <defs><marker id="co-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-text" x="20" y="54">호출한 스레드</text>
+        <text class="f-text" x="20" y="194">I/O 완료 스레드</text>
+        <line class="f-grid" x1="150" y1="60" x2="740" y2="60"/>
+        <line class="f-grid" x1="150" y1="200" x2="740" y2="200"/>
+
+        <rect class="f-hit" x="160" y="38" width="190" height="34" rx="4"/>
+        <text class="f-text" x="255" y="60" text-anchor="middle">ReadLoop 시작 → co_await</text>
+        <rect class="f-box" x="370" y="38" width="250" height="34" rx="4"/>
+        <text class="f-sub" x="495" y="60" text-anchor="middle">돌아와서 다른 세션의 일을 한다</text>
+
+        <rect class="f-pad" x="300" y="104" width="230" height="44" rx="4"/>
+        <text class="f-strong" x="415" y="122" text-anchor="middle">코루틴 프레임 (힙)</text>
+        <text class="f-sub" x="415" y="140" text-anchor="middle">지역 변수 · 재개 지점</text>
+        <line class="f-line" x1="320" y1="72" x2="340" y2="102" marker-end="url(#co-a)"/>
+        <text class="f-sub" x="190" y="96">멈추며 상태를 맡긴다</text>
+
+        <rect class="f-hit" x="540" y="182" width="190" height="34" rx="4"/>
+        <text class="f-text" x="635" y="204" text-anchor="middle">재개 → 처리 → 다음 co_await</text>
+        <line class="f-line" x1="510" y1="148" x2="560" y2="180" marker-end="url(#co-a)"/>
+        <text class="f-sub" x="570" y="166">I/O 완료가 깨운다</text>
+      </svg>
+      <figcaption>세션 읽기 루프가 수신을 걸고 <code>co_await</code>에서 멈춘다. 호출한 스레드는 바로 돌아가 다른 일을 하고, 데이터가 오면 완료를 받은 스레드가 프레임에 적힌 재개 지점부터 이어 실행한다. 코드는 한 함수처럼 읽히지만 앞뒤가 다른 스레드에서 돌 수 있다.</figcaption>
+    </figure>
+    <p>
+      컴파일러는 코루틴을 상태 기계로 바꾼다. 지역 변수 가운데 중단 지점을 넘어 살아야 하는 것은 프레임으로 옮기고, "몇 번째 중단 지점에서 멈췄나"를 프레임에 적어 둔다. 재개하면 그 번호로 뛰어 이어 간다. 스택을 통째로 바꾸는 스택 있는 코루틴(파이버)과 달리 멈춘 코루틴 하나가 쓰는 메모리는 프레임 크기뿐이라, 수만 개를 띄워도 부담이 작다.
+    </p>
+    <p>
+      프레임은 기본으로 <code>operator new</code>로 할당된다. 코루틴의 수명이 호출한 함수 안에서 끝나는 것이 확실하면 컴파일러가 할당을 없애고 호출자 스택에 두기도 하지만(HALO), 이것은 최적화이고 보장이 아니다. 세션 루프처럼 오래 사는 코루틴은 할당이 일어난다고 보는 것이 맞다.
+    </p>
+
+    <h3>세 키워드와 두 약속 객체</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>요소</th><th>하는 일</th></tr></thead>
+        <tbody>
+          <tr><td><code>co_await expr</code></td><td>expr이 준비됐는지 묻고, 아니면 멈춘다. 준비되면 그 결과를 값으로 돌려받는다</td></tr>
+          <tr><td><code>co_yield v</code></td><td>값 하나를 내보내고 멈춘다. 생성기(generator)에서 쓴다</td></tr>
+          <tr><td><code>co_return v</code></td><td>코루틴을 끝내고 결과를 남긴다</td></tr>
+          <tr><td>promise_type</td><td>반환 타입(예: <code>Task&lt;T&gt;</code>) 안에 정의한다. 처음에 바로 멈출지, 결과와 예외를 어디에 둘지, 끝나면 누구를 깨울지를 정한다</td></tr>
+          <tr><td>awaiter</td><td><code>co_await</code> 대상이 제공한다. <code>await_ready</code>(멈출 필요가 있나), <code>await_suspend</code>(멈출 때 할 일, 보통 I/O를 걸고 재개 핸들을 맡긴다), <code>await_resume</code>(재개할 때 돌려줄 값)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      C++20은 이 장치만 주고, 실제로 쓰는 <code>Task</code> 타입이나 실행기는 주지 않았다. 그래서 직접 promise_type을 짜거나 라이브러리를 쓴다. 서버에서는 Boost.Asio·독립형 Asio의 <code>awaitable&lt;T&gt;</code>, cppcoro, folly의 <code>coro::Task</code>가 흔하다. 표준에는 C++23에서 값을 차례로 내보내는 <code>std::generator</code>가 처음 들어왔다.
+    </p>
+<pre><code class="language-cpp">// Asio: 세션의 읽기 루프를 순차 코드로 쓴다
+asio::awaitable&lt;void&gt; ReadLoop(std::shared_ptr&lt;Session&gt; s)   // 값으로 받아 수명을 붙잡는다
+{
+    std::array&lt;std::byte, 4096&gt; buf;          // 프레임에 담겨 중단을 넘어 산다
+    for (;;) {
+        std::size_t n = co_await s-&gt;socket.async_read_some(
+            asio::buffer(buf), asio::use_awaitable);    // 여기서 멈추고, 완료되면 이어 간다
+        s-&gt;OnBytes({buf.data(), n});
+    }
+}
+
+asio::co_spawn(ioContext, ReadLoop(session), asio::detached);</code></pre>
+
+    <h3>예외와 재개 스레드</h3>
+    <p>
+      코루틴 안에서 던진 예외는 promise_type의 <code>unhandled_exception</code>으로 가서 결과에 담기고, 그 코루틴을 <code>co_await</code>한 쪽에서 다시 던져진다. 기다리는 쪽이 없으면(<code>detached</code>로 띄운 경우 등) 라이브러리 정책에 따라 버려지거나 프로그램이 끝나므로, 최상위 루프는 안에서 잡아 기록한다.
+    </p>
+    <p>
+      어느 스레드에서 이어지는지는 언어가 정하지 않는다. awaiter가 재개 핸들을 누구에게 넘기느냐가 정한다. 보통은 I/O 완료를 받은 스레드가 그 자리에서 재개한다. Asio는 코루틴이 묶인 실행기(executor)로 재개를 보내므로, 실행기를 strand나 한 스레드짜리 <code>io_context</code>로 잡으면 재개 위치를 고정할 수 있다(<a href="../server/completion-port.html">완료 알림 기반 서버</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>I/O를 여러 번 주고받는 흐름(로그인 절차, 세션 읽기 루프, 외부 API 호출 사슬)</td><td>코루틴</td><td>콜백 중첩 없이 순서대로 읽히고, 지역 변수가 단계 사이에 그대로 남는다</td></tr>
+          <tr><td>한 번 걸고 한 번 받는 단순 작업</td><td>콜백이나 future</td><td>코루틴 타입과 실행기를 갖추는 비용이 이득보다 크다</td></tr>
+          <tr><td>CPU를 오래 쓰는 계산</td><td><a data-ref="operating-system/thread-pool">스레드 풀</a></td><td>코루틴은 기다림을 감추는 장치이지 병렬화가 아니다</td></tr>
+          <tr><td>값을 하나씩 흘려 내보내는 순회</td><td><code>std::generator</code>(C++23)</td><td>반복자 클래스를 직접 짜지 않아도 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>세션마다 읽기 루프 하나를 코루틴으로 띄운다.</strong> 수신을 걸고, 받고, 프레이밍하고, 다시 거는 일을 for 문 하나로 쓴다(<a href="../server/framing.html">메시지 경계와 프레이밍</a>). 수만 세션이면 코루틴도 수만 개지만, 각자 프레임 하나와 수신 버퍼만 쓴다.
+      </li>
+      <li>
+        <strong>게임 상태는 여전히 로직 스레드에서 고친다.</strong> I/O 완료 스레드에서 재개된 코드가 그 자리에서 캐릭터를 고치면 단일 쓰기 규칙이 깨진다. 받은 패킷은 작업 큐에 넣거나, 로직 스레드 실행기로 옮겨 간 뒤 고친다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).
+      </li>
+      <li>
+        <strong>세션을 shared_ptr 값으로 받는다.</strong> 코루틴이 멈춘 동안 세션이 해제되면 재개된 코드가 해제된 객체를 만진다. 매개변수를 <code>shared_ptr</code> 값으로 받으면 그 사본이 프레임에 남아 코루틴이 사는 동안 세션을 붙잡는다(<a href="smart-pointers.html">스마트 포인터와 소유권</a>).
+      </li>
+      <li>
+        <strong>짧고 잦은 코루틴의 할당을 잰다.</strong> 패킷마다 작은 코루틴을 새로 띄우면 프레임 할당이 그만큼 생긴다. promise_type에 <code>operator new</code>를 두어 풀에서 받거나, 오래 사는 루프 안에서 처리하도록 구조를 바꾼다(<a href="../system-programming/memory-allocator.html">메모리 할당자</a>).
+      </li>
+      <li>
+        <strong>C#의 async/await와 생각보다 많이 다르다.</strong> C#은 컴파일러가 만드는 상태 기계와 <code>Task</code>, 스레드 풀, <code>SynchronizationContext</code>까지 런타임이 함께 준다. 재개 위치는 컨텍스트가 정하고, 서버처럼 컨텍스트가 없으면 스레드 풀에서 이어진다. C++은 타입과 실행기를 고르는 일부터 내 몫이고, <a data-ref="csharp/gc-basics">GC</a>가 없으니 멈춘 동안의 수명도 내가 챙긴다(<a data-ref="csharp/async-basics">async와 await</a>, <a data-ref="csharp/sync-context">동기화 컨텍스트</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>참조 매개변수는 첫 중단 뒤에 끊길 수 있다.</strong> <code>Task Send(const std::string&amp; msg)</code>를 <code>Send("hi"s)</code>처럼 임시로 부르면, 호출한 문장이 끝나는 순간 임시가 사라지고 프레임에는 끊긴 참조만 남는다. 중단을 넘어 쓸 인자는 값으로 받는다(<a href="const-and-references.html">const와 참조</a>).</li>
+      <li><strong>람다 코루틴의 캡처는 프레임에 들어가지 않는다.</strong> 캡처는 람다 객체의 멤버이고, 코루틴 프레임은 그 람다 객체를 가리킬 뿐이다. 람다 객체가 먼저 사라지면 캡처도 함께 사라진다. 코루틴 람다는 캡처 대신 매개변수로 넘긴다(<a href="lambdas.html">람다와 함수 객체</a>).</li>
+      <li><strong>멤버 함수 코루틴의 this도 같다.</strong> 객체가 먼저 해제되면 재개된 코드가 끊긴 this를 쓴다. <code>shared_from_this()</code>로 얻은 사본을 지역 변수로 들고 시작한다.</li>
+      <li><strong>멈춘 코루틴을 아무도 재개하거나 파괴하지 않으면 프레임이 샌다.</strong> 코루틴 핸들은 직접 <code>destroy()</code>를 불러야 프레임이 해제된다. 직접 promise_type을 짠다면 <a data-ref="cpp/raii">RAII</a>로 핸들을 감싼다.</li>
+      <li><strong>락을 쥔 채 co_await하지 않는다.</strong> 멈춘 동안 락이 계속 잡혀 있고, 다른 스레드에서 재개되면 잡은 스레드와 푸는 스레드가 달라져 <code>std::mutex</code> 규칙이 깨진다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>const와 참조 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/const-and-references">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../system-programming/call-stack.html">호출 스택</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <code>const</code>는 붙은 자리에 따라 고정하는 대상이 다르다. <code>const int* p</code>는 <span class="blank">가리키는 값</span>을, <code>int* const p</code>는 <span class="blank">포인터 자신</span>을 고정한다. 선언을 오른쪽에서 왼쪽으로 읽으면 헷갈리지 않는다.
+    </p>
+    <p>
+      함수에 인자를 넘기는 방법은 셋이다. 값으로 복사해 넘기거나, 참조로 원본의 별칭을 넘기거나, 포인터로 주소를 넘긴다. 복사 비용, 원본을 고칠지, 없을 수도 있는지를 보고 고른다. 참조는 널이 될 수 없지만 원본보다 오래 살 수 없다는 점은 포인터와 똑같다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>const는 바로 왼쪽을 고정한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 200" role="img" aria-label="const의 위치에 따라 포인터와 가리키는 값 중 무엇이 고정되는지 비교">
+        <defs><marker id="cr-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="330" y="22" text-anchor="middle">포인터 p</text>
+        <text class="f-sub" x="560" y="22" text-anchor="middle">가리키는 값 *p</text>
+
+        <text class="f-text" x="20" y="60"><tspan class="f-strong">const</tspan> int* p</text>
+        <rect class="f-box" x="260" y="38" width="140" height="34" rx="6"/><text class="f-text" x="330" y="60" text-anchor="middle">바꿀 수 있다</text>
+        <line class="f-line" x1="400" y1="55" x2="486" y2="55" marker-end="url(#cr-a)"/>
+        <rect class="f-miss" x="490" y="38" width="140" height="34" rx="6"/><text class="f-on" x="560" y="60" text-anchor="middle">고정</text>
+
+        <text class="f-text" x="20" y="112">int* <tspan class="f-strong">const</tspan> p</text>
+        <rect class="f-miss" x="260" y="90" width="140" height="34" rx="6"/><text class="f-on" x="330" y="112" text-anchor="middle">고정</text>
+        <line class="f-line" x1="400" y1="107" x2="486" y2="107" marker-end="url(#cr-a)"/>
+        <rect class="f-box" x="490" y="90" width="140" height="34" rx="6"/><text class="f-text" x="560" y="112" text-anchor="middle">바꿀 수 있다</text>
+
+        <text class="f-text" x="20" y="164"><tspan class="f-strong">const</tspan> int* <tspan class="f-strong">const</tspan> p</text>
+        <rect class="f-miss" x="260" y="142" width="140" height="34" rx="6"/><text class="f-on" x="330" y="164" text-anchor="middle">고정</text>
+        <line class="f-line" x1="400" y1="159" x2="486" y2="159" marker-end="url(#cr-a)"/>
+        <rect class="f-miss" x="490" y="142" width="140" height="34" rx="6"/><text class="f-on" x="560" y="164" text-anchor="middle">고정</text>
+      </svg>
+      <figcaption>칠한 칸이 고정된 쪽이다. <code>*</code>보다 왼쪽의 const는 가리키는 값을, 오른쪽의 const는 포인터 자신을 고정한다. <code>const int</code>와 <code>int const</code>는 같은 뜻이다.</figcaption>
+    </figure>
+    <p>
+      규칙은 하나다. const는 바로 왼쪽에 있는 것을 고정하고, 왼쪽에 아무것도 없으면 오른쪽 것을 고정한다. 그래서 <code>int* const p</code>는 오른쪽에서 왼쪽으로 "p는 상수인 포인터이고, int를 가리킨다"로 읽힌다. <code>const int&amp; r</code>은 r로 본 대상을 고칠 수 없다는 뜻이다. 참조는 원래 다른 대상으로 다시 묶을 수 없으므로 <code>int&amp; const</code> 같은 표기는 없다.
+    </p>
+
+    <h3>const 멤버 함수는 "객체를 안 바꾼다"는 약속이다</h3>
+    <p>
+      멤버 함수 뒤에 붙인 <code>const</code>는 그 함수 안에서 <code>this</code>가 <code>const T*</code>가 된다는 뜻이다. 멤버를 고칠 수 없고, const 객체나 const 참조로는 이런 함수만 부를 수 있다. const 유무가 다른 두 멤버 함수는 서로 오버로드가 된다(<a href="overload-override.html">오버로딩과 오버라이딩</a>).
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구멍</th><th>무슨 일이 생기나</th></tr></thead>
+        <tbody>
+          <tr><td><code>mutable</code> 멤버</td><td>const 함수 안에서도 고칠 수 있다. 결과 캐시, 통계, 내부 락처럼 바깥에서 보이는 상태는 그대로인 것에만 쓴다</td></tr>
+          <tr><td>포인터 멤버</td><td>고정되는 것은 포인터 값뿐이다. 그 포인터가 가리키는 객체는 const 함수 안에서도 고칠 수 있다. const는 포인터 너머로 전파되지 않는다</td></tr>
+          <tr><td><code>const_cast</code></td><td>const를 떼어 낼 수 있다. 원래 const로 만든 객체를 그렇게 고치면 <a data-ref="cpp/undefined-behavior">미정의 동작</a>이다(<a href="casting.html">캐스팅</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      멀티스레드에서는 const에 뜻이 하나 더 붙는다. 표준 라이브러리는 같은 객체의 const 멤버 함수를 여러 스레드가 동시에 불러도 안전하다고 가정한다. 그래서 const 함수 안에서 <code>mutable</code> 캐시를 고친다면 그 캐시는 락이나 원자적 변수로 지켜야 한다. "읽기만 하니 안전하겠지"가 깨지는 자리다.
+    </p>
+
+    <h3>참조는 별칭이고, 포인터는 주소를 담은 변수다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>참조 <code>T&amp;</code></th><th>포인터 <code>T*</code></th></tr></thead>
+        <tbody>
+          <tr><td>널</td><td>안 된다. 만들 때 반드시 대상이 있어야 한다</td><td>된다. "없음"을 표현할 수 있다</td></tr>
+          <tr><td>다른 대상으로 바꾸기</td><td>안 된다. 한 번 묶이면 끝까지 같은 대상이다</td><td>된다</td></tr>
+          <tr><td>쓰는 법</td><td>원본처럼 쓴다(<code>r.x</code>)</td><td>역참조한다(<code>p-&gt;x</code>, <code>*p</code>)</td></tr>
+          <tr><td>배열·산술</td><td>없다</td><td>포인터 산술로 이웃 원소를 가리킨다</td></tr>
+          <tr><td>원본이 사라지면</td><td>끊긴 참조가 된다</td><td>끊긴 포인터가 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      참조는 "반드시 있다"를 타입으로 말한다. 대신 안전한 포인터가 아니다. 가리키는 대상의 수명을 늘려 주지 않으므로, 원본이 사라진 뒤 쓰면 포인터와 똑같이 미정의 동작이다.
+    </p>
+
+    <h3>임시 객체는 그 문장이 끝나면 사라진다</h3>
+    <p>
+      함수가 값으로 돌려준 임시 객체는 그 값을 만든 문장(완전한 식)이 끝날 때 파괴된다. 예외가 하나 있다. 임시를 <code>const T&amp;</code>나 <code>T&amp;&amp;</code> 지역 변수에 <strong>직접</strong> 묶으면 그 참조가 사는 동안 임시도 산다. 이 연장은 처음 묶은 자리에서만 일어난다. 그 참조를 다른 함수에 넘겨 거기서 다시 묶거나, 반환값으로 내보내면 연장되지 않는다.
+    </p>
+<pre><code class="language-cpp">std::string MakeName();
+
+const std::string&amp; a = MakeName();          // 괜찮다. a가 사는 동안 임시도 산다
+const char* b = MakeName().c_str();          // 끊긴다. 문장이 끝나면 임시 문자열이 사라진다
+std::string_view c = MakeName();             // 끊긴다. string_view는 수명을 늘리지 않는다
+
+const std::string&amp; Pick(const std::string&amp; s) { return s; }
+const std::string&amp; d = Pick(MakeName());    // 끊긴다. 연장은 Pick의 매개변수에서 끝났다
+
+const std::string&amp; Local() {
+    std::string s = "x";
+    return s;                                // 끊긴다. 함수가 끝나면 s는 없다
+}</code></pre>
+    <p>
+      C++17의 <code>std::string_view</code>와 C++20의 <code>std::span</code>은 참조처럼 남의 메모리를 들여다보는 타입이다. 빌린 것이므로 원본보다 오래 들고 있으면 안 된다. 컴파일러가 다 잡아 주지 않는다. 최근 GCC·Clang·MSVC는 이런 경우 일부를 경고한다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>인자를 무엇으로 받나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>받는 방식</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>작은 값을 읽기만 한다(int, double, 포인터 두 개 크기 이하의 구조체)</td><td>값 <code>T</code></td><td>복사가 싸고 대개 레지스터로 넘어간다. Linux(System V)는 16바이트까지 구조체를 레지스터에 싣지만, Windows x64는 8바이트를 넘는 구조체를 주소로 넘긴다. 참조로 받으면 매번 메모리를 거쳐 읽는다</td></tr>
+          <tr><td>큰 객체를 읽기만 한다</td><td><code>const T&amp;</code></td><td>복사가 없다</td></tr>
+          <tr><td>안에서 사본을 어차피 보관한다</td><td>값 <code>T</code>로 받고 <code>std::move</code>로 옮긴다</td><td>호출자가 임시를 넘기면 복사 없이 이동으로 끝난다(<a data-ref="cpp/move-semantics">이동 시맨틱</a>)</td></tr>
+          <tr><td>결과를 돌려준다</td><td>반환값. 여러 개면 구조체</td><td>출력 참조 매개변수보다 읽기 쉽고, 반환값 최적화로 복사도 대개 없다</td></tr>
+          <tr><td>호출자의 객체를 고친다</td><td><code>T&amp;</code></td><td>반드시 있는 대상이다</td></tr>
+          <tr><td>없을 수도 있다</td><td><code>T*</code>(고칠 때), <code>const T*</code>(읽을 때)</td><td>널로 "없음"을 표현한다</td></tr>
+          <tr><td>연속된 바이트나 문자열을 읽는다</td><td><code>std::span&lt;const T&gt;</code>, <code>std::string_view</code></td><td>담은 컨테이너 종류와 상관없이 받는다. 호출 동안만 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      const는 기본으로 붙이고 고쳐야 할 때만 뗀다. 컴파일러가 실수로 고치는 코드를 막아 주고, 읽는 사람은 함수 선언만 보고 무엇이 바뀌는지 안다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>패킷 처리기는 const 참조나 뷰로 받는다.</strong> <code>void OnMove(Session&amp; s, const MovePacket&amp; p)</code>처럼 바꿀 것(세션)과 읽기만 할 것(패킷)을 시그니처에서 갈라 둔다. 수신 버퍼를 <code>std::span</code>으로 넘겼다면 그 뷰는 처리기가 끝나면 버린다. 다음 수신이 같은 버퍼를 덮어쓰기 때문이다(<a href="../server/framing.html">메시지 경계와 프레이밍</a>).
+      </li>
+      <li>
+        <strong>const 조회 함수에 숨은 캐시를 두면 스레드 문제가 된다.</strong> 여러 스레드가 읽기 전용이라 믿고 부르는 <code>GetStat() const</code> 안에서 <code>mutable</code> 캐시를 채우면 경쟁 상태가 된다. 캐시를 쓰려면 <code>std::mutex</code>나 <code>std::atomic</code>을 함께 두거나, 계산을 미리 끝내 둔다(<a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>).
+      </li>
+      <li>
+        <strong>C#의 const와 readonly는 C++ const와 범위가 다르다.</strong> C#의 <code>const</code>는 컴파일 시점에 정해지는 리터럴 상수뿐이다. <code>readonly</code> 필드는 필드에 다른 참조를 넣는 것만 막고, 그 참조가 가리키는 객체의 내용은 고칠 수 있다. C++의 <code>T* const</code>에 가깝다. C#에는 "객체를 안 바꾸는 메서드"를 표시하는 const 멤버 함수가 없고, 구조체의 <code>readonly</code> 멤버(C# 8)와 <code>readonly struct</code>가 그 역할을 일부 맡는다(<a data-ref="csharp/immutability-null">불변성과 null</a>).
+      </li>
+      <li>
+        <strong>C#의 in과 ref readonly는 const T&amp;와 비슷하다.</strong> <code>in</code> 매개변수는 큰 구조체를 복사 없이 읽기 전용으로 넘긴다. 다만 readonly가 아닌 구조체의 메서드를 부르면 컴파일러가 원본을 보호하려고 방어적 복사를 만들어 이득이 사라진다. C++ const 참조에는 이런 숨은 복사가 없다. 대신 C++은 수명을 지켜 주지 않는다(<a data-ref="csharp/struct-design">구조체 설계</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>const는 컴파일러의 검사일 뿐 메모리 보호가 아니다.</strong> 고치려는 코드를 컴파일 단계에서 막을 뿐이고, 캐스트나 포인터 별칭으로 우회할 수 있다. 원래 const로 정의한 객체를 우회해 고치면 미정의 동작이다.</li>
+      <li><strong>값을 const로 반환하지 않는다.</strong> <code>const std::string Name()</code>처럼 반환 타입에 const를 붙이면 받는 쪽이 그 값에서 이동하지 못하고 복사하게 된다.</li>
+      <li><strong>매개변수의 맨 바깥 const는 시그니처에 들어가지 않는다.</strong> <code>void f(int)</code>와 <code>void f(const int)</code>는 같은 함수다. 함수 안에서 그 지역 사본을 고치지 않겠다는 표시일 뿐이다.</li>
+      <li><strong>참조를 멤버로 두면 대입이 막힌다.</strong> 참조는 다시 묶을 수 없으므로 참조 멤버가 있는 클래스는 대입 연산자가 자동으로 생기지 않는다. 컨테이너에 넣기 어려워진다. 바꿀 수 있어야 하면 포인터나 <code>std::reference_wrapper</code>를 쓴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

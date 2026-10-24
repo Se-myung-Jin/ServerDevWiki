@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>반복자 무효화 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/iterator-invalidation">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="stl-containers.html">STL 컨테이너 고르기</a> · <a href="../data-structure/array-list.html">배열과 연결 리스트</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      반복자, 원소를 가리키는 참조와 포인터는 모두 컨테이너 안의 <strong>어느 메모리 자리</strong>를 가리킨다. 컨테이너가 원소를 옮기거나 지우면 그 자리에는 더 이상 그 원소가 없다. 이것을 무효화라고 한다. <code>vector</code>는 용량이 차서 커질 때 더 큰 버퍼를 새로 잡아 전부 옮기므로, 그 순간 들고 있던 것이 <span class="blank">전부 무효</span>가 된다.
+    </p>
+    <p>
+      무효가 된 반복자를 쓰면 <a href="undefined-behavior.html">미정의 동작</a>이다. 예외도 오류 코드도 없다. 해제된 메모리가 아직 덮어써지지 않았으면 한동안 멀쩡히 도는 것처럼 보이다가, 전혀 다른 곳에서 터진다. 그래서 규칙을 외우는 것보다 "언제 저장소가 바뀌나"를 컨테이너마다 아는 것이 중요하다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>vector는 커질 때 통째로 이사한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="용량이 찬 vector에 원소를 하나 더 넣으면 새 버퍼로 옮기고 옛 버퍼를 해제해, 옛 자리를 가리키던 반복자가 무효가 된다">
+        <defs><marker id="ii-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker><marker id="ii-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-text" x="185" y="77" text-anchor="end">옛 버퍼 · 용량 4</text>
+        <rect class="f-pad" x="200" y="56" width="50" height="34"/><text class="f-sub" x="225" y="78" text-anchor="middle">a</text>
+        <rect class="f-pad" x="250" y="56" width="50" height="34"/><text class="f-sub" x="275" y="78" text-anchor="middle">b</text>
+        <rect class="f-pad" x="300" y="56" width="50" height="34"/><text class="f-sub" x="325" y="78" text-anchor="middle">c</text>
+        <rect class="f-pad" x="350" y="56" width="50" height="34"/><text class="f-sub" x="375" y="78" text-anchor="middle">d</text>
+        <text class="f-sub" x="420" y="70">해제됨</text>
+        <text class="f-sub" x="420" y="86">it와 &amp;v[1]은 여전히 이 자리를 가리킨다</text>
+        <line class="f-tick" x1="275" y1="22" x2="275" y2="52" marker-end="url(#ii-b)"/>
+        <text class="f-strong" x="285" y="26">it, &amp;v[1]</text>
+        <line class="f-line" x1="225" y1="92" x2="225" y2="146" marker-end="url(#ii-a)"/>
+        <line class="f-line" x1="275" y1="92" x2="275" y2="146" marker-end="url(#ii-a)"/>
+        <line class="f-line" x1="325" y1="92" x2="325" y2="146" marker-end="url(#ii-a)"/>
+        <line class="f-line" x1="375" y1="92" x2="375" y2="146" marker-end="url(#ii-a)"/>
+        <text class="f-sub" x="395" y="124">옮긴다(이동 또는 복사)</text>
+        <text class="f-text" x="185" y="171" text-anchor="end">새 버퍼 · 용량 8</text>
+        <rect class="f-cell" x="200" y="150" width="50" height="34"/><text class="f-text" x="225" y="172" text-anchor="middle">a</text>
+        <rect class="f-cell" x="250" y="150" width="50" height="34"/><text class="f-text" x="275" y="172" text-anchor="middle">b</text>
+        <rect class="f-cell" x="300" y="150" width="50" height="34"/><text class="f-text" x="325" y="172" text-anchor="middle">c</text>
+        <rect class="f-cell" x="350" y="150" width="50" height="34"/><text class="f-text" x="375" y="172" text-anchor="middle">d</text>
+        <rect class="f-hit" x="400" y="150" width="50" height="34"/><text class="f-strong" x="425" y="172" text-anchor="middle">e</text>
+        <rect class="f-pad" x="450" y="150" width="50" height="34"/>
+        <rect class="f-pad" x="500" y="150" width="50" height="34"/>
+        <rect class="f-pad" x="550" y="150" width="50" height="34"/>
+        <text class="f-sub" x="200" y="212">push_back(e)를 했더니 용량이 모자랐다. 원소는 새 버퍼에 있고, 옛 자리를 가리키던 것은 모두 무효다</text>
+      </svg>
+      <figcaption>용량 4가 꽉 찬 상태에서 원소를 하나 더 넣었다. vector는 더 큰 버퍼(보통 1.5~2배)를 잡고 원소를 옮긴 뒤 옛 버퍼를 해제한다. 반복자 <code>it</code>와 참조 <code>&amp;v[1]</code>은 값이 바뀌지 않은 채 해제된 자리를 가리킨다.</figcaption>
+    </figure>
+    <p>
+      재할당이 일어나지 않아도 무효화는 생긴다. 중간에 넣으면 그 뒤의 원소가 한 칸씩 밀리므로, 넣은 자리부터 끝까지를 가리키던 것이 무효다. <code>end()</code>도 한 칸 밀리므로 무효가 된다. 반대로 중간을 지우면 뒤가 한 칸씩 당겨지므로 지운 자리부터 끝까지가 무효다.
+    </p>
+    <p>
+      재할당이 일어나는지는 크기가 아니라 <strong>용량</strong>이 정한다. <code>size()</code>는 들어 있는 개수, <code>capacity()</code>는 다시 잡지 않고 담을 수 있는 개수다. <code>reserve(n)</code>는 용량만 늘리고, <code>resize(n)</code>는 원소를 실제로 만든다. <code>clear()</code>는 원소를 모두 없애 반복자를 전부 무효로 만들지만 용량은 그대로 둔다.
+    </p>
+
+    <h3>컨테이너마다 저장소가 바뀌는 때가 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>컨테이너</th><th>넣을 때 무효가 되는 것</th><th>지울 때 무효가 되는 것</th></tr></thead>
+        <tbody>
+          <tr><td><code>vector</code>, <code>string</code></td><td>재할당되면 전부. 아니면 넣은 자리부터 끝까지(<code>end()</code> 포함)</td><td>지운 자리부터 끝까지</td></tr>
+          <tr><td><code>deque</code></td><td>가운데에 넣으면 전부. 양 끝에 넣으면 반복자는 전부 무효지만 원소의 참조와 포인터는 그대로다</td><td>양 끝을 지우면 지운 원소만(맨 뒤를 지우면 <code>end()</code>도). 가운데를 지우면 전부</td></tr>
+          <tr><td><code>list</code>, <code>forward_list</code></td><td>없다</td><td>지운 원소만</td></tr>
+          <tr><td><code>map</code>, <code>set</code>과 multi 계열</td><td>없다</td><td>지운 원소만</td></tr>
+          <tr><td><code>unordered_map</code>, <code>unordered_set</code></td><td>재해시되면 반복자는 전부 무효, 참조와 포인터는 그대로다. 재해시가 없으면 없다</td><td>지운 원소만</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      갈림길은 연속 저장이냐 노드냐다(<a href="stl-containers.html">STL 컨테이너 고르기</a>). 연속 저장은 자리를 늘리려면 통째로 옮겨야 하고, 노드 기반은 원소마다 따로 할당한 노드가 제자리에 있으므로 다른 원소를 넣고 빼도 움직이지 않는다.
+    </p>
+    <p>
+      해시 컨테이너가 특이하다. 원소는 노드에 담겨 있어 주소가 그대로지만, 원소 수가 버킷 수 × 최대 적재율을 넘으면 버킷 배열을 새로 만들어 노드를 다시 나눠 단다(재해시, <a href="../data-structure/hashing.html">해시 테이블</a>). 순회 순서가 버킷 순서라서 반복자는 쓸 수 없게 되고, 참조와 포인터는 노드를 가리키므로 살아남는다. 미리 <code>reserve(n)</code>를 부르면 n개까지는 재해시가 없다.
+    </p>
+
+    <h3>순회하면서 지우기</h3>
+    <p>
+      가장 흔한 버그는 순회 중에 지운 반복자를 그대로 증가시키는 것이다. <code>erase</code>는 지운 다음 원소의 반복자를 돌려주므로 그것을 받아 이어 간다. <code>map</code>, <code>list</code>, 해시 컨테이너도 C++11부터 같은 모양으로 쓴다.
+    </p>
+<pre><code class="language-cpp">// 틀린 코드: erase 뒤의 it는 무효인데 ++it를 한다
+for (auto it = npcs.begin(); it != npcs.end(); ++it)
+    if (it-&gt;dead) npcs.erase(it);
+
+// 맞는 코드: erase가 돌려준 다음 위치에서 이어 간다
+for (auto it = npcs.begin(); it != npcs.end(); )
+    it = it-&gt;dead ? npcs.erase(it) : std::next(it);
+
+// C++20: 조건으로 한 번에 지운다. vector라면 O(n)이다
+std::erase_if(npcs, [](const Npc&amp; n) { return n.dead; });</code></pre>
+    <p>
+      <code>vector</code>에서는 두 번째 방식도 느리다. 지울 때마다 뒤를 당기므로 많이 지우면 O(n²)이다. <code>std::erase_if</code>(C++20 이전에는 <code>v.erase(std::remove_if(...), v.end())</code>)는 남길 원소를 앞으로 모은 뒤 끝을 한 번 잘라 내므로 O(n)이고 반복자를 직접 다룰 일도 없다.
+    </p>
+    <p>
+      순회 중에 넣는 것은 더 위험하다. 범위 기반 <code>for (auto&amp; x : v)</code> 안에서 <code>v.push_back</code>을 부르면, 재할당이 일어나는 순간 루프가 쥔 반복자와 <code>x</code>가 모두 무효다. 넣을 것은 따로 모았다가 순회가 끝난 뒤 넣는다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>무효화를 피하는 방법</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>맞는 때</th></tr></thead>
+        <tbody>
+          <tr><td>용량을 미리 잡는다</td><td><code>reserve(n)</code>로 재할당을 없앤다. 옮기는 비용도 함께 사라진다</td><td>최대 개수를 대략 알 때</td></tr>
+          <tr><td>주소 대신 인덱스나 ID를 들고 있는다</td><td>재할당이 일어나도 인덱스는 같은 원소를 가리킨다. 지우기가 있으면 ID와 세대 번호를 함께 둔다</td><td>다른 객체가 원소를 오래 가리켜야 할 때</td></tr>
+          <tr><td>원소를 따로 할당해 포인터만 담는다</td><td><code>vector&lt;unique_ptr&lt;T&gt;&gt;</code>는 포인터 배열이 옮겨 가도 객체 자체는 제자리에 있다</td><td>객체 주소가 바뀌면 안 될 때. 순회는 한 번 더 따라가야 해서 느려진다</td></tr>
+          <tr><td>노드 기반 컨테이너를 쓴다</td><td><code>list</code>, <code>map</code>은 다른 원소를 넣고 빼도 움직이지 않는다</td><td>주소 안정성이 순회 속도보다 중요할 때</td></tr>
+          <tr><td>지우기와 넣기를 모았다가 한 번에</td><td>표시만 해 두고 순회가 끝난 뒤 <code>erase_if</code>, 넣을 것은 대기 목록에</td><td>순회 중에 남이 목록을 고칠 수 있을 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 중에는 표시만 하고 틱 끝에 정리한다.</strong> 전투 처리 중 몬스터가 죽었다고 그 자리에서 목록에서 지우면, 같은 틱에 그 목록을 순회하던 AI나 시야 처리가 무효 반복자를 쓴다. 죽음 표시만 하고 틱 마지막 단계에서 <code>erase_if</code>로 한 번에 지운다(<a href="../server/tick-loop.html">서버 틱 루프</a>).
+      </li>
+      <li>
+        <strong>콜백이 같은 목록을 고치는 재진입을 막는다.</strong> 몬스터를 순회하며 <code>OnDeath</code>를 불렀더니 그 안에서 소환수를 스폰해 같은 <code>vector</code>에 넣는 식이다. 코드상으로는 멀리 떨어져 있어 눈에 띄지 않는다. 순회 중 추가는 대기 목록으로 받아 순회 뒤에 합친다.
+      </li>
+      <li>
+        <strong>다른 객체가 들고 있을 것은 포인터 대신 ID로 준다.</strong> 파티원이 "내 대상"을 <code>Npc*</code>로 들고 있으면, 그 NPC가 재할당으로 옮겨 가거나 지워진 뒤에 끊긴 포인터가 된다. 엔티티 ID를 들고 있다가 쓸 때마다 찾고, 지워진 슬롯을 재사용한다면 세대 번호로 옛 ID를 걸러 낸다.
+      </li>
+      <li>
+        <strong>디버그 빌드의 반복자 검사를 켠다.</strong> MSVC의 디버그 빌드는 기본으로 반복자 디버깅(<code>_ITERATOR_DEBUG_LEVEL</code>)이 켜져 무효 반복자 사용에서 바로 멈춘다. libstdc++는 <code>_GLIBCXX_DEBUG</code>로 같은 검사를 켠다. 릴리스에서는 아무 검사도 없다.
+      </li>
+      <li>
+        <strong>C#과는 실패하는 방식이 다르다.</strong> C#의 <code>List&lt;T&gt;</code>는 내부 버전 번호를 두어, <code>foreach</code> 중에 목록을 고치면 다음 <code>MoveNext</code>에서 <code>InvalidOperationException</code>을 던진다. .NET Core 3.0 이후의 <code>Dictionary</code>는 순회 중 <code>Remove</code>를 허용한다. C++은 같은 실수를 알려 주지 않고 메모리를 망가뜨린다. C# 서버 코드를 옮길 때 "예외가 안 나니 괜찮다"고 보면 안 된다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"크기를 안 넘었으니 재할당이 없다"는 틀린 판단이다.</strong> 재할당은 용량을 넘을 때 일어난다. 그리고 재할당이 없어도 넣은 자리 뒤는 무효다.</li>
+      <li><strong>무효화된 반복자는 대개 바로 터지지 않는다.</strong> 해제된 옛 버퍼가 덮어써지기 전까지는 옛 값을 읽는다. 테스트를 통과하고 부하가 걸린 운영 서버에서 엉뚱한 크래시로 나타난다.</li>
+      <li><strong>해시 컨테이너 순회 중에 넣으면 재해시로 반복자가 무효가 될 수 있다.</strong> 넣을 수를 알면 <code>reserve</code>로 버킷을 미리 잡고, 아니면 순회와 넣기를 나눈다.</li>
+      <li><strong>참조와 포인터도 같은 규칙을 따른다.</strong> <code>auto&amp; hp = v[i].hp;</code>로 잡아 둔 참조는 <code>v</code>가 재할당되면 끊긴다. 반복자만 조심하면 된다고 생각하기 쉽다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

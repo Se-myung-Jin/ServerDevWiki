@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>가상 함수와 다형성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/virtual-functions">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="overload-override.html">오버로딩과 오버라이딩</a> · <a href="../system-programming/inline-codegen.html">인라인과 코드 생성</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      가상 함수는 어느 구현을 부를지 실행 중에 정한다. 거의 모든 컴파일러가 같은 방법으로 구현한다. 클래스마다 함수 주소를 늘어놓은 표(vtable)를 하나 두고, 객체마다 그 표를 가리키는 숨은 포인터(vptr)를 하나 넣는다. 호출은 <span class="blank">vptr → 표의 슬롯 → 함수 주소</span>로 간접 점프하는 것이다.
+    </p>
+    <p>
+      비용은 셋이다. 객체가 포인터 하나만큼 커지고, 호출이 메모리를 두 번 더 읽고, 어느 구현이 불릴지 몰라 <strong>인라인이 막힌다</strong>. 실제로 크게 나타나는 것은 마지막이다. 그리고 기반 클래스 포인터로 객체를 지울 계획이면 소멸자를 반드시 가상으로 둔다. 그러지 않으면 파생 부분이 정리되지 않는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>호출은 표를 거쳐 구현으로 간다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 300" role="img" aria-label="Monster 객체 둘은 같은 Monster vtable을, Boss 객체는 Boss vtable을 가리킨다. Boss는 Update와 소멸자 슬롯만 자기 구현으로 바꿨다">
+        <defs><marker id="vf-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="20" y="24">Monster a</text>
+        <rect class="f-hit" x="20" y="32" width="150" height="20"/><text class="f-strong" x="30" y="47">vptr</text>
+        <rect class="f-cell" x="20" y="52" width="150" height="20"/><text class="f-text" x="30" y="67">hp</text>
+        <rect class="f-cell" x="20" y="72" width="150" height="20"/><text class="f-text" x="30" y="87">pos</text>
+        <text class="f-sub" x="20" y="114">Monster b</text>
+        <rect class="f-hit" x="20" y="122" width="150" height="20"/><text class="f-strong" x="30" y="137">vptr</text>
+        <rect class="f-cell" x="20" y="142" width="150" height="20"/><text class="f-text" x="30" y="157">hp</text>
+        <rect class="f-cell" x="20" y="162" width="150" height="20"/><text class="f-text" x="30" y="177">pos</text>
+        <text class="f-sub" x="20" y="204">Boss c</text>
+        <rect class="f-hit" x="20" y="212" width="150" height="20"/><text class="f-strong" x="30" y="227">vptr</text>
+        <rect class="f-cell" x="20" y="232" width="150" height="20"/><text class="f-text" x="30" y="247">hp · pos</text>
+        <rect class="f-cell" x="20" y="252" width="150" height="20"/><text class="f-text" x="30" y="267">phase</text>
+
+        <line class="f-line" x1="170" y1="42" x2="267" y2="56" marker-end="url(#vf-a)"/>
+        <line class="f-line" x1="170" y1="132" x2="267" y2="72" marker-end="url(#vf-a)"/>
+        <line class="f-line" x1="170" y1="222" x2="267" y2="216" marker-end="url(#vf-a)"/>
+        <text class="f-sub" x="219" y="34" text-anchor="middle">① vptr</text>
+
+        <text class="f-sub" x="270" y="34">Monster의 vtable</text>
+        <rect class="f-box" x="270" y="42" width="160" height="28"/><text class="f-text" x="280" y="61">0  ~Monster()</text>
+        <rect class="f-box" x="270" y="70" width="160" height="28"/><text class="f-text" x="280" y="89">1  Update()</text>
+        <rect class="f-box" x="270" y="98" width="160" height="28"/><text class="f-text" x="280" y="117">2  OnHit()</text>
+        <text class="f-sub" x="270" y="194">Boss의 vtable</text>
+        <rect class="f-hit" x="270" y="202" width="160" height="28"/><text class="f-text" x="280" y="221">0  ~Boss()</text>
+        <rect class="f-hit" x="270" y="230" width="160" height="28"/><text class="f-text" x="280" y="249">1  Update()</text>
+        <rect class="f-box" x="270" y="258" width="160" height="28"/><text class="f-text" x="280" y="277">2  OnHit()</text>
+
+        <line class="f-line" x1="430" y1="84" x2="517" y2="84" marker-end="url(#vf-a)"/>
+        <text class="f-sub" x="474" y="76" text-anchor="middle">② 슬롯</text>
+        <line class="f-line" x1="430" y1="112" x2="517" y2="150" marker-end="url(#vf-a)"/>
+        <line class="f-line" x1="430" y1="244" x2="517" y2="244" marker-end="url(#vf-a)"/>
+        <line class="f-line" x1="430" y1="272" x2="517" y2="162" marker-end="url(#vf-a)"/>
+
+        <rect class="f-cell2" x="520" y="70" width="180" height="28"/><text class="f-text" x="610" y="89" text-anchor="middle">Monster::Update()</text>
+        <rect class="f-cell2" x="520" y="140" width="180" height="28"/><text class="f-text" x="610" y="159" text-anchor="middle">Monster::OnHit()</text>
+        <rect class="f-cell2" x="520" y="230" width="180" height="28"/><text class="f-text" x="610" y="249" text-anchor="middle">Boss::Update()</text>
+      </svg>
+      <figcaption>같은 클래스의 객체는 모두 한 표를 가리킨다. Boss는 오버라이딩한 소멸자와 Update 슬롯(칠한 칸)만 자기 구현으로 바꾸고, OnHit 슬롯에는 Monster의 구현 주소가 그대로 들어 있다. 슬롯 번호는 컴파일 때 정해지므로 이름으로 찾는 일은 없다.</figcaption>
+    </figure>
+    <p>
+      <code>m-&gt;Update()</code> 한 줄은 대략 세 명령이 된다. 객체 앞부분에서 vptr를 읽고, 표에서 Update 슬롯을 읽고, 그 주소로 간접 호출한다. 이름 검색은 없다. 어느 슬롯인지는 컴파일러가 클래스 선언을 보고 미리 정해 둔다.
+    </p>
+    <p>
+      이 표와 포인터는 C++ 규격이 정한 것이 아니다. 규격은 "실제 타입의 오버라이딩이 불린다"는 결과만 정하고, vtable은 그 결과를 내는 거의 유일한 구현 방식이다. 그래서 세부 배치는 ABI마다 다르다. GCC와 Clang이 따르는 Itanium C++ ABI는 표 앞쪽에 타입 정보 포인터와 오프셋을 두고 소멸자 슬롯을 두 개(객체만 정리, 정리 후 메모리 해제) 쓴다. MSVC는 다르게 배치한다. 서로 다른 컴파일러로 빌드한 모듈끼리 C++ 클래스를 주고받기 어려운 이유 가운데 하나다.
+    </p>
+
+    <h3>생성자와 소멸자 안에서는 그 단계의 클래스까지만 본다</h3>
+    <p>
+      Boss를 만들 때는 Monster 생성자가 먼저 돈다. 그 시점에 Boss의 멤버는 아직 초기화되지 않았다. 그래서 규격은 생성자와 소멸자 안의 가상 호출이 <strong>지금 실행 중인 생성자·소멸자의 클래스</strong>까지의 오버라이딩만 부르도록 정했다. Monster 생성자에서 <code>Update()</code>를 부르면 <code>Boss::Update</code>가 아니라 <code>Monster::Update</code>가 불린다.
+    </p>
+    <p>
+      구현은 단계마다 vptr를 바꿔 끼운다. Monster 생성자가 도는 동안 객체의 vptr는 Monster의 표를 가리키고, Boss 생성자에 들어가면서 Boss의 표로 바뀐다. 소멸은 그 역순이다. 이때 부르는 함수가 순수 가상이면 부를 구현이 없다. 직접 부르면 미정의 동작이고, 다른 함수를 거쳐 부르면 대개 "pure virtual function call"로 프로세스가 죽는다.
+    </p>
+
+    <h3>가상 소멸자가 없으면 파생 부분이 남는다</h3>
+<pre><code class="language-cpp">struct Monster {
+    virtual void Update();
+    ~Monster();                 // 가상이 아니다
+};
+struct Boss : Monster {
+    std::vector&lt;Skill&gt; skills;  // Boss만 가진 자원
+    void Update() override;
+};
+
+Monster* m = new Boss();
+delete m;   // Monster의 소멸자만 불린다. skills는 정리되지 않는다 — 미정의 동작</code></pre>
+    <p>
+      기반 클래스 포인터로 파생 객체를 지울 때 소멸자가 가상이 아니면 정적 타입인 Monster의 소멸자만 불린다. 규격상 <a data-ref="cpp/undefined-behavior">미정의 동작</a>이다. 흔히 보는 결과는 파생 멤버의 누수지만, 해제하는 크기가 맞지 않아 힙이 깨질 수도 있다. 파생 클래스에 정리할 것이 하나도 없어도 미정의 동작인 것은 같다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>이 클래스를</th><th>소멸자</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>기반 포인터로 지울 수 있다</td><td><code>public virtual</code></td><td>파생 소멸자부터 기반 소멸자까지 역순으로 다 불린다</td></tr>
+          <tr><td>기반으로 쓰지만 기반 포인터로 지우지 않는다</td><td><code>protected</code>, 비가상</td><td>밖에서 기반 포인터로 <code>delete</code>하면 컴파일 오류가 난다. vptr가 생기지 않는다</td></tr>
+          <tr><td>상속할 일이 없다</td><td>그대로 두고 클래스에 <code>final</code></td><td>상속 자체를 막는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      모든 클래스에 가상 소멸자를 붙이는 것도 답이 아니다. 가상 함수가 하나도 없던 클래스에 붙이면 vptr가 새로 생겨 객체가 8바이트 커지고, 메모리 배치가 C 구조체와 달라져 그대로 복사하거나 네트워크 버퍼에 담을 수 없게 된다. <code>std::unique_ptr&lt;Monster&gt;</code>로 Boss를 들고 있어도 같은 규칙이 적용된다. 지울 때 부르는 것은 결국 <code>delete</code>다(<a data-ref="cpp/smart-pointers">스마트 포인터와 소유권</a>).
+    </p>
+
+    <h3>다중 상속은 this를 보정한다</h3>
+    <p>
+      기반이 둘이면 객체 안에 기반마다 부분 객체가 있고, vptr도 부분 객체마다 하나씩 있다. <code>struct Boss : Monster, IDamageable</code>에서 <code>IDamageable*</code>로 바꾼 포인터는 객체의 시작이 아니라 IDamageable 부분 객체를 가리킨다. 포인터 값 자체가 달라진다.
+    </p>
+    <p>
+      그 포인터로 Boss가 오버라이딩한 함수를 부르면, 함수는 Boss 객체 전체의 시작 주소를 <code>this</code>로 받아야 한다. 그래서 두 번째 표의 슬롯에는 함수 본문 대신 <code>this</code>에서 정해진 거리를 빼고 본문으로 뛰는 작은 코드(썽크, thunk)가 들어간다. 가상 상속까지 쓰면 그 거리도 실행 중에 표에서 읽어야 해서 한 단계가 더 붙는다. <code>dynamic_cast</code>는 객체의 타입 정보를 따라가 상속 관계를 확인하므로 일반 가상 호출보다 훨씬 비싸다.
+    </p>
+
+    <h3>비용은 인라인이 막히는 데서 나온다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>비용</th><th>무엇이 늘어나나</th><th>언제 커지나</th></tr></thead>
+        <tbody>
+          <tr><td>공간</td><td>객체마다 포인터 하나(64비트 8바이트)</td><td>작은 객체를 수만 개 들고 있을 때. 16바이트짜리 객체라면 절반이 늘어난다</td></tr>
+          <tr><td>호출</td><td>vptr와 슬롯을 읽는 메모리 접근 두 번과 간접 분기</td><td>한 호출 지점에서 불리는 구현이 자꾸 바뀔 때. 늘 같은 구현이면 분기 예측이 맞아 거의 공짜다(<a href="../computer-architecture/pipeline-branch-prediction.html">파이프라인과 분기 예측</a>)</td></tr>
+          <tr><td>인라인 불가</td><td>본문을 펼치지 못해 상수 전파, 죽은 코드 제거, 벡터화가 함께 막힌다</td><td>본문이 몇 줄짜리인 작은 함수를 반복문 안에서 부를 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      간접 호출 자체는 수 ns 안쪽이다. 손해가 큰 것은 <code>GetHp()</code> 같은 한 줄짜리 함수를 가상으로 만들어 반복문에서 부를 때다. 인라인이 되면 반복문 전체가 레지스터 몇 개로 줄어들 수 있었는데, 가상이면 매번 <a data-ref="system-programming/call-stack">호출 규약</a>을 지키며 함수에 들어갔다 나온다. 인라인이 왜 다른 최적화의 문을 여는지는 <a href="../system-programming/inline-codegen.html">인라인과 코드 생성</a>에서 다뤘다.
+    </p>
+    <p>
+      컴파일러가 실제 타입을 알 수 있으면 가상 호출을 직접 호출로 바꾼다(비가상화, devirtualization). 클래스나 함수에 <code>final</code>을 붙이면 더 오버라이딩될 수 없다는 것이 확실해져 그 타입으로의 호출이 직접 호출이 된다. 지역 객체처럼 타입이 뻔한 경우, 링크 시점 최적화(LTO)로 프로그램 전체를 보고 파생 클래스가 하나뿐임을 알아낸 경우에도 바뀐다. 프로파일 기반 최적화(PGO)는 자주 불리는 타입을 기록해 두었다가 "그 타입이면 직접 호출, 아니면 가상 호출"로 갈라 넣는다. 다만 어디까지 해 주는지는 컴파일러마다 달라서, 이것을 믿고 설계하지는 않는다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>다형성이 정말 실행 중에 필요한가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 것</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>실행 중에 타입이 정해지고, 종류가 열려 있다(플러그인, 스크립트가 만든 객체)</td><td>가상 함수</td><td>간접 호출, 인라인 불가</td></tr>
+          <tr><td>컴파일 때 타입을 안다</td><td>템플릿, CRTP(<a data-ref="cpp/templates-constexpr">템플릿과 컴파일 시점 계산</a>)</td><td>타입마다 코드가 생겨 빌드와 실행 파일이 커진다</td></tr>
+          <tr><td>종류가 몇 개로 닫혀 있다</td><td><code>std::variant</code> + <code>std::visit</code>, 또는 종류 값과 <code>switch</code></td><td>종류를 더할 때 모든 분기를 고친다. 대신 빠뜨리면 컴파일러가 알려 준다</td></tr>
+          <tr><td>같은 종류를 대량으로 처리한다</td><td>종류별 배열로 모아 종류마다 반복문</td><td>객체 하나를 통째로 다루기 불편하다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      마지막 방식이 게임에서 자주 쓰인다. 몬스터, 투사체, 함정을 한 배열에 섞어 두고 <code>e-&gt;Update()</code>를 부르면 반복마다 다른 표, 다른 코드로 뛴다. 종류별 배열로 나누면 한 반복문 안에서는 늘 같은 코드가 돌아 가상 호출이 사라지고, 같은 모양의 데이터가 연속으로 놓여 캐시도 잘 맞는다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>, <a data-ref="game-patterns/ecs-storage">ECS 저장 구조</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>패킷 처리기는 번호로 찾는 표 하나면 충분하다.</strong> 패킷 종류마다 클래스를 만들어 가상 <code>Handle()</code>을 두는 방식과, 메시지 번호를 인덱스로 함수 포인터 배열을 두는 방식은 비용이 거의 같다. 둘 다 간접 호출 한 번이다. 고를 기준은 성능이 아니라 등록과 검증을 어디서 하느냐다.
+      </li>
+      <li>
+        <strong>틱마다 수만 번 부르는 작은 함수는 가상으로 두지 않는다.</strong> 이동 계산, 거리 검사, 상태 확인처럼 반복문 안에서 도는 한 줄짜리 함수는 인라인이 되는 쪽이 훨씬 빠르다. 다형성은 객체 하나의 큰 행동 단위(AI 판단, 스킬 실행)에 둔다.
+      </li>
+      <li>
+        <strong>오버라이딩에는 반드시 <code>override</code>를 쓴다.</strong> 기반 함수의 시그니처가 바뀌었는데 파생 쪽이 따라가지 못하면, <code>override</code>가 없을 때는 새 함수가 하나 생길 뿐 컴파일은 통과한다. 그 뒤로 파생 구현은 아무도 부르지 않는다(<a href="overload-override.html">오버로딩과 오버라이딩</a>).
+      </li>
+      <li>
+        <strong>C#은 기본이 비가상이다.</strong> C# 메서드는 <code>virtual</code>을 적어야 가상이 되고, C++처럼 vtable(메서드 테이블)로 부른다. 클래스나 메서드를 <code>sealed</code>로 두면 <a data-ref="csharp/jit-aot">JIT</a>가 직접 호출로 바꿔 인라인까지 할 수 있다. .NET 8부터 기본으로 켜진 동적 PGO는 실행 중에 자주 오는 타입을 보고 "그 타입이면 직접 호출"로 갈라 넣는다. 인터페이스 호출은 별도의 분배 구조를 거쳐 가상 호출보다 조금 더 든다(<a data-ref="csharp/interface-abstract">인터페이스와 추상 클래스</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>값으로 넘기면 파생 부분이 잘린다.</strong> <code>void Spawn(Monster m)</code>에 Boss를 넘기면 Monster 부분만 복사되고, 복사본의 vptr는 Monster의 표를 가리킨다. 이것을 객체 슬라이싱이라 한다. 다형성이 필요한 객체는 참조나 포인터로 넘긴다.</li>
+      <li><strong>기본 인자는 정적 타입을 따른다.</strong> 가상 함수의 기본 인자는 호출하는 포인터의 타입에 적힌 값이 쓰이고, 본문은 실제 타입의 것이 불린다. 기반과 파생의 기본 인자가 다르면 둘이 섞인다. 가상 함수에는 기본 인자를 두지 않는다.</li>
+      <li><strong>생성자에서 파생 구현을 기대하지 않는다.</strong> 생성자 안의 가상 호출은 지금 만들고 있는 클래스의 구현으로 간다. 파생 쪽 초기화 동작이 필요하면 생성 뒤에 따로 부르는 초기화 함수로 뺀다.</li>
+      <li><strong>호출 비용보다 설계 비용을 먼저 본다.</strong> 상속 계층이 깊어지면 어느 구현이 불리는지 따라가기 어렵다. 동작을 바꿔 끼우는 것이 목적이면 상속보다 구성(멤버로 전략 객체를 들기)이 대개 단순하다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

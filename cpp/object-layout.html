@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>객체 배치와 타입 특성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/object-layout">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../computer-architecture/alignment.html">정렬과 패딩</a> · <a href="casting.html">캐스팅</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      C++ 객체의 크기와 배치는 멤버 선언 순서와 정렬 규칙이 정하고, 컴파일러가 숨겨 넣는 것이 몇 가지 더 있다. 빈 클래스도 크기가 1이고, 가상 함수가 하나라도 있으면 객체 앞에 표를 가리키는 포인터(vptr)가 붙는다. 같은 필드를 가진 구조체라도 이런 것 때문에 크기가 달라진다.
+    </p>
+    <p>
+      "이 타입을 <code>memcpy</code>로 복사해도 되나", "C 구조체와 배치가 같은가"는 감으로 정하지 않는다. 표준 라이브러리의 <span class="blank">타입 특성</span>(<code>&lt;type_traits&gt;</code>)이 답을 준다. 생성자 하나, 소멸자 하나, 가상 함수 하나를 더하는 순간 그 답이 바뀌므로, 패킷이나 <a data-ref="operating-system/ipc">공유 메모리</a>에 담을 구조체는 <code>static_assert</code>로 답을 빌드 때 고정해 둔다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>크기는 필드 합이 아니다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 270" role="img" aria-label="빈 멤버, no_unique_address, 빈 기반 최적화, 가상 함수 추가에 따라 같은 int 하나를 가진 구조체의 크기가 8, 4, 4, 16바이트로 달라진다">
+        <text class="f-sub" x="300" y="22">한 칸 = 1바이트</text>
+        <text class="f-sub" x="640" y="22">sizeof</text>
+
+        <text class="f-text" x="20" y="50">struct A { int x; Empty e; };</text>
+        <text class="f-sub" x="20" y="68">빈 멤버도 1바이트를 차지한다</text>
+        <rect class="f-hit" x="300" y="38" width="80" height="30"/><text class="f-text" x="340" y="58" text-anchor="middle">x</text>
+        <rect class="f-box" x="380" y="38" width="20" height="30"/><text class="f-text" x="390" y="58" text-anchor="middle">e</text>
+        <rect class="f-pad" x="400" y="38" width="60" height="30"/><text class="f-sub" x="430" y="58" text-anchor="middle">패딩</text>
+        <text class="f-strong" x="640" y="58">8</text>
+
+        <text class="f-text" x="20" y="110">[[no_unique_address]] Empty e;</text>
+        <text class="f-sub" x="20" y="128">C++20. 빈 멤버가 자리를 겹쳐 쓴다</text>
+        <rect class="f-hit" x="300" y="98" width="80" height="30"/><text class="f-text" x="340" y="118" text-anchor="middle">x</text>
+        <text class="f-strong" x="640" y="118">4</text>
+
+        <text class="f-text" x="20" y="170">struct B : Empty { int x; };</text>
+        <text class="f-sub" x="20" y="188">빈 기반 클래스는 자리를 차지하지 않는다</text>
+        <rect class="f-hit" x="300" y="158" width="80" height="30"/><text class="f-text" x="340" y="178" text-anchor="middle">x</text>
+        <text class="f-strong" x="640" y="178">4</text>
+
+        <text class="f-text" x="20" y="230">struct C { int x; virtual void f(); };</text>
+        <text class="f-sub" x="20" y="248">가상 함수 하나에 vptr이 붙는다(64비트)</text>
+        <rect class="f-miss" x="300" y="218" width="160" height="30"/><text class="f-on" x="380" y="238" text-anchor="middle">vptr</text>
+        <rect class="f-hit" x="460" y="218" width="80" height="30"/><text class="f-text" x="500" y="238" text-anchor="middle">x</text>
+        <rect class="f-pad" x="540" y="218" width="80" height="30"/><text class="f-sub" x="580" y="238" text-anchor="middle">패딩</text>
+        <text class="f-strong" x="640" y="238">16</text>
+      </svg>
+      <figcaption>모두 <code>int</code> 하나를 가진 구조체다. 빈 멤버, 빈 기반, 가상 함수 하나가 크기를 4에서 16까지 바꾼다. 패딩 계산 자체는 정렬과 패딩에서 다뤘다.</figcaption>
+    </figure>
+    <p>
+      빈 클래스의 크기가 0이 아니라 1인 것은 서로 다른 객체가 서로 다른 주소를 가져야 하기 때문이다. 빈 객체 배열의 원소마다 주소가 달라야 한다. 그래서 빈 타입을 멤버로 두면 1바이트를 차지하고, 뒤따르는 정렬 때문에 실제로는 그 이상이 늘어난다.
+    </p>
+    <p>
+      예외가 둘 있다. 빈 클래스를 <strong>기반 클래스</strong>로 두면 자리를 차지하지 않는다(빈 기반 최적화, EBO). 표준 라이브러리의 할당자나 비교자처럼 상태 없는 정책 객체를 들고 다니는 컨테이너가 크기를 늘리지 않는 비결이다. C++20부터는 멤버에 <code>[[no_unique_address]]</code>를 붙여 같은 효과를 낸다. 다만 MSVC는 이 속성을 무시하고 <code>[[msvc::no_unique_address]]</code>만 따른다.
+    </p>
+    <p>
+      가상 함수가 하나라도 생기면 컴파일러는 객체에 vptr을 넣는다. 64비트에서 8바이트이고, 대개 객체 맨 앞에 놓인다. 이 포인터는 실행할 때마다 값이 같지 않고 프로세스마다 다르므로, 이런 객체를 바이트로 저장하거나 보내는 것은 의미가 없다(<a href="virtual-functions.html">가상 함수와 다형성</a>).
+    </p>
+
+    <h3>타입 특성이 허락하는 일을 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>특성</th><th>조건(요약)</th><th>허락하는 것</th></tr></thead>
+        <tbody>
+          <tr><td><code>is_trivially_copyable</code></td><td>복사·이동 생성과 대입, 소멸자가 모두 컴파일러가 만든 사소한 것이다. 가상 함수와 가상 기반이 없다</td><td><code>memcpy</code>로 복사해 다른 객체를 만들 수 있다. 바이트를 버퍼로 옮겼다 되돌려도 같은 값이다</td></tr>
+          <tr><td><code>is_trivially_destructible</code></td><td>소멸자가 사소하다</td><td>소멸자를 부르지 않고 메모리를 재사용해도 된다. 풀 할당자가 정리 단계를 건너뛸 수 있다</td></tr>
+          <tr><td><code>is_standard_layout</code></td><td>모든 비정적 멤버의 접근 지정이 같고, 가상 함수가 없고, 멤버가 한 클래스에만 모여 있다</td><td>C 구조체와 배치가 호환된다. <code>offsetof</code>를 쓸 수 있고, 첫 멤버의 주소가 객체 주소와 같다</td></tr>
+          <tr><td><code>is_aggregate</code></td><td>사용자 생성자, private 멤버, 가상 함수가 없다</td><td>중괄호로 멤버를 바로 초기화한다(<a href="initialization.html">초기화</a>)</td></tr>
+          <tr><td><code>has_unique_object_representations</code></td><td>같은 값이면 바이트도 같다. 패딩이 없고 부동소수점이 없다</td><td>바이트를 그대로 해시하거나 비교해도 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      예전의 POD(plain old data)는 C++20에서 폐기되었고, 지금은 이처럼 하려는 일마다 필요한 특성을 따로 묻는다. 복사해도 되는지는 trivially copyable, C와 맞물려도 되는지는 standard layout이다. 둘은 다른 질문이다. private 멤버가 섞여 standard layout이 아니어도 trivially copyable일 수 있고, 그 반대도 있다.
+    </p>
+
+    <h3>멤버 하나가 답을 바꾼다</h3>
+<pre><code class="language-cpp">struct Move {                 // trivially copyable, standard layout
+    uint32_t entityId;
+    float x, y, z;
+};
+
+struct MoveV2 {
+    uint32_t entityId;
+    float x, y, z;
+    std::string reason;       // 이 한 줄로 trivially copyable이 아니다. 문자열 버퍼는 힙에 있다
+};
+
+struct MoveV3 {
+    uint32_t entityId;
+    float x, y, z;
+    ~MoveV3() { Log(); }      // 사용자 소멸자 하나로 trivially copyable이 아니다
+};
+
+static_assert(std::is_trivially_copyable_v&lt;Move&gt;);
+static_assert(std::is_standard_layout_v&lt;Move&gt;);
+static_assert(sizeof(Move) == 16, "패킷 배치가 바뀌었다");</code></pre>
+    <p>
+      <code>static_assert</code>는 빌드 때 조건을 검사한다. 누군가 패킷 구조체에 <code>std::string</code>이나 소멸자를 더하는 순간, 런타임에서 엉뚱한 바이트가 나가기 전에 컴파일 오류로 알려 준다. 크기까지 고정해 두면 멤버 순서를 바꿔 패딩이 달라진 것도 잡힌다.
+    </p>
+
+    <h3>trivially copyable이어도 그대로 보내면 안 되는 이유</h3>
+    <ul>
+      <li><strong>엔디안.</strong> 바이트 복사는 이 기계의 바이트 순서를 그대로 옮긴다. 순서가 다른 상대에게는 다른 값이다(<a href="../computer-architecture/endianness.html">엔디안과 바이트 오더</a>).</li>
+      <li><strong>패딩 내용.</strong> 패딩 바이트에는 이전에 그 메모리에 있던 값이 남는다. 그대로 보내면 서버 메모리 내용이 밖으로 샌다. <code>{}</code>로 값 초기화하거나 필드 단위로 직렬화한다.</li>
+      <li><strong>포인터 멤버.</strong> 포인터도 trivially copyable이다. 하지만 주소는 그 프로세스 안에서만 의미가 있다. 받는 쪽에서 그 값은 아무것도 가리키지 않는다.</li>
+      <li><strong>컴파일러와 플랫폼.</strong> <code>long</code>의 크기, 정렬 규칙, <code>bool</code>의 표현은 플랫폼마다 다를 수 있다. 크기가 고정된 <code>uint32_t</code> 같은 타입만 쓴다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>하려는 일</th><th>확인할 특성</th><th>더 해야 할 일</th></tr></thead>
+        <tbody>
+          <tr><td>버퍼에 바이트로 복사하거나 되돌린다</td><td><code>is_trivially_copyable</code></td><td>같은 프로세스 안이면 이것으로 충분하다</td></tr>
+          <tr><td>네트워크로 보내거나 파일에 저장한다</td><td><code>is_trivially_copyable</code> + 크기 고정</td><td>엔디안을 정하고, 패딩을 없애거나 0으로 채운다. 대개 필드 단위 직렬화가 낫다</td></tr>
+          <tr><td>C API나 다른 언어와 구조체를 주고받는다</td><td><code>is_standard_layout</code></td><td>양쪽의 정렬과 크기를 <code>static_assert</code>로 맞춘다</td></tr>
+          <tr><td>바이트로 해시하거나 비교한다</td><td><code>has_unique_object_representations</code></td><td>패딩이 있으면 필드별로 비교한다</td></tr>
+          <tr><td>풀에서 소멸자 없이 재사용한다</td><td><code>is_trivially_destructible</code></td><td>아니면 소멸자를 부른 뒤 재사용한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>패킷 구조체는 단순하게 두고 검사를 붙인다.</strong> 고정 크기 정수와 실수, 고정 길이 배열만 담고, 문자열과 컨테이너는 길이와 바이트로 따로 직렬화한다. 구조체마다 trivially copyable과 <code>sizeof</code>를 <code>static_assert</code>로 고정하면 클라이언트와 서버 중 한쪽만 바뀌는 사고를 빌드에서 막는다(<a href="../server/framing.html">메시지 경계와 프레이밍</a>).
+      </li>
+      <li>
+        <strong>공유 메모리와 메모리 맵 파일에 담는 구조체는 더 엄격하다.</strong> 여러 프로세스가 같은 바이트를 각자 다른 주소로 매핑하므로 포인터는 쓸 수 없고 시작에서의 오프셋을 쓴다. trivially copyable이면서 standard layout이어야 하고, 판이 바뀌어도 읽을 수 있게 맨 앞에 버전과 크기를 적는다(<a href="../system-programming/memory-mapped-file.html">메모리 맵 파일</a>).
+      </li>
+      <li>
+        <strong>엔티티 컴포넌트는 trivially copyable로 두면 다루기 쉽다.</strong> 배열을 통째로 복사해 스냅숏을 만들고, 지운 칸을 소멸자 없이 재사용하고, 메모리 배치를 바꾸는 일이 <code>memcpy</code> 한 번으로 끝난다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>).
+      </li>
+      <li>
+        <strong>C#도 같은 질문을 다른 이름으로 한다.</strong> <code>unmanaged</code> 제약을 만족하는 구조체(참조 타입 필드가 없는 struct)가 trivially copyable에 가깝고, <code>MemoryMarshal.AsBytes</code>, <code>MemoryMarshal.Read&lt;T&gt;</code>로 바이트와 오간다. 배치는 <code>[StructLayout(LayoutKind.Sequential, Pack = 1)]</code>로 정하고, 크기는 <code>Unsafe.SizeOf&lt;T&gt;()</code>로 확인한다. C#에는 <code>static_assert</code>가 없어 크기 검사는 단위 테스트로 대신한다(<a data-ref="csharp/struct-design">구조체 설계</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>trivially copyable은 "보내도 된다"가 아니다.</strong> 같은 프로세스 안에서 바이트로 복사해도 된다는 뜻일 뿐이다. 엔디안, 패딩, 포인터, 플랫폼 차이는 따로 처리한다.</li>
+      <li><strong>소멸자를 비워 두어도 사소하지 않다.</strong> <code>~T() {}</code>처럼 본문이 비어 있어도 사용자가 적은 소멸자는 trivial이 아니다. 필요 없으면 적지 않거나 <code>= default</code>로 둔다.</li>
+      <li><strong><code>offsetof</code>는 standard layout에만 쓴다.</strong> 그 밖의 타입에서는 조건부로만 지원되고, 가상 기반이 있으면 오프셋이 객체마다 다를 수 있다.</li>
+      <li><strong>trivially copyable이 아닌 객체를 <code>memcpy</code>하면 미정의 동작이다.</strong> 문자열이나 컨테이너를 든 객체를 복사하면 두 객체가 같은 힙 버퍼를 가리키다 두 번 해제한다(<a href="undefined-behavior.html">미정의 동작</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

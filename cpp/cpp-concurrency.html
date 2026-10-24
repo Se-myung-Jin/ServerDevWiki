@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>C++ 동시성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/cpp-concurrency">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="raii.html">RAII</a> · <a href="../operating-system/sync-primitives.html">동기화 객체</a> · <a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      C++ 표준 라이브러리의 동시성 도구는 두 원칙 위에 있다. 첫째, <strong>락은 직접 잠그고 풀지 않고 가드 객체로 잡는다</strong>. 가드가 스코프를 벗어나면 예외가 나도 소멸자가 풀어 준다. <a href="raii.html">RAII</a>를 락에 적용한 것이다. 둘째, <strong>만든 스레드에는 결말을 정해 준다</strong>. 기다리든(<code>join</code>) 떼어 내든(<code>detach</code>) 정하지 않은 채 스레드 객체가 소멸하면 프로그램이 <span class="blank">std::terminate로 끝난다</span>.
+    </p>
+    <p>
+      락 없이 같은 변수를 두 스레드가 읽고 쓰는 데이터 경쟁은 <a href="undefined-behavior.html">미정의 동작</a>이다. "가끔 틀린 값이 읽힌다"가 아니라 프로그램 전체를 믿을 수 없게 된다. 공유하는 값은 락으로 감싸거나 <code>std::atomic</code>으로 만든다. <code>volatile</code>은 C++에서 동기화 수단이 아니다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>스레드에는 결말을 정해 준다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 260" role="img" aria-label="std::thread는 join이나 detach로 결말을 정해야 하고, 정하지 않고 소멸하면 std::terminate가 불린다">
+        <defs><marker id="cc-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="96" width="160" height="56" rx="6"/>
+        <text class="f-text" x="100" y="120" text-anchor="middle">std::thread t(f);</text>
+        <text class="f-sub" x="100" y="140" text-anchor="middle">joinable() == true</text>
+        <line class="f-line" x1="182" y1="116" x2="246" y2="58" marker-end="url(#cc-a)"/>
+        <line class="f-line" x1="182" y1="124" x2="246" y2="124" marker-end="url(#cc-a)"/>
+        <line class="f-line" x1="182" y1="132" x2="246" y2="190" marker-end="url(#cc-a)"/>
+        <rect class="f-box" x="250" y="30" width="200" height="56" rx="6"/>
+        <text class="f-text" x="350" y="54" text-anchor="middle">t.join()</text>
+        <text class="f-sub" x="350" y="74" text-anchor="middle">끝날 때까지 여기서 기다린다</text>
+        <rect class="f-box" x="250" y="96" width="200" height="56" rx="6"/>
+        <text class="f-text" x="350" y="120" text-anchor="middle">t.detach()</text>
+        <text class="f-sub" x="350" y="140" text-anchor="middle">관계를 끊고 알아서 돌게 둔다</text>
+        <rect class="f-pad" x="250" y="162" width="200" height="56" rx="6"/>
+        <text class="f-text" x="350" y="186" text-anchor="middle">아무것도 하지 않고</text>
+        <text class="f-sub" x="350" y="206" text-anchor="middle">t가 스코프를 벗어난다</text>
+        <line class="f-line" x1="452" y1="58" x2="516" y2="82" marker-end="url(#cc-a)"/>
+        <line class="f-line" x1="452" y1="124" x2="516" y2="100" marker-end="url(#cc-a)"/>
+        <line class="f-line" x1="452" y1="190" x2="516" y2="190" marker-end="url(#cc-a)"/>
+        <rect class="f-hit" x="520" y="64" width="180" height="56" rx="6"/>
+        <text class="f-strong" x="610" y="88" text-anchor="middle">소멸해도 된다</text>
+        <text class="f-sub" x="610" y="108" text-anchor="middle">joinable() == false</text>
+        <rect class="f-miss" x="520" y="162" width="180" height="56" rx="6"/>
+        <text class="f-on" x="610" y="186" text-anchor="middle">std::terminate()</text>
+        <text class="f-on" x="610" y="206" text-anchor="middle">프로그램이 끝난다</text>
+        <text class="f-sub" x="360" y="246" text-anchor="middle">std::jthread(C++20)는 소멸자가 request_stop()을 보내고 join()을 대신 부른다</text>
+      </svg>
+      <figcaption>스레드 객체는 결말을 정해 주기 전까지 joinable 상태다. 그 상태로 소멸자가 불리면 조용히 넘어가지 않고 프로그램을 끝낸다. 실수로 스레드를 잃어버리는 일을 막으려는 설계다.</figcaption>
+    </figure>
+    <p>
+      <code>detach</code>는 쉬워 보이지만 수명을 보장할 방법이 없다. 떼어 낸 스레드가 지역 변수를 참조로 캡처했다면, 만든 함수가 끝나는 순간 <a data-ref="cpp/const-and-references">끊긴 참조</a>를 쓴다. <code>main</code>이 끝나 정적 객체가 파괴되는 동안에도 계속 돌 수 있다. 서버에서는 거의 쓰지 않는다.
+    </p>
+    <p>
+      스레드 함수 밖으로 예외가 새어 나가도 <code>std::terminate</code>다. 다른 스레드가 그 예외를 대신 받아 주지 않는다. 스레드 진입 함수는 최상단에서 예외를 잡아 기록하거나, 아래의 <code>future</code>로 결과와 예외를 함께 넘긴다.
+    </p>
+    <p>
+      C++20의 <code>std::jthread</code>는 결말을 소멸자에 맡긴다. 소멸자가 멈춤 요청을 보낸 뒤 <code>join</code>한다. 멈춤 요청은 강제가 아니라 신호다. 스레드 쪽이 <code>stop_token</code>을 확인해야 효과가 있다.
+    </p>
+<pre><code class="language-cpp">std::jthread worker([](std::stop_token st) {
+    while (!st.stop_requested())
+        PollOnce();          // 오래 막히는 호출이면 멈춤 요청을 보지 못한다
+});
+// worker가 스코프를 벗어나면 request_stop() 뒤 join()이 불린다</code></pre>
+    <p>
+      <code>PollOnce</code>가 조건 변수에서 무한정 잠들면 멈춤 요청이 와도 깨지 않아 소멸자가 끝나지 않는다. 그런 대기는 <code>stop_token</code>을 받는 <code>std::condition_variable_any::wait</code>로 바꿔, 멈춤 요청이 대기를 깨우게 한다.
+    </p>
+
+    <h3>락은 가드 객체로 잡는다</h3>
+<pre><code class="language-cpp">std::mutex m;
+
+void Bad()  { m.lock(); Work(); m.unlock(); }   // Work가 던지면 잠긴 채 남는다
+void Good() { std::lock_guard lock(m); Work(); } // 어떻게 나가든 소멸자가 푼다
+
+// 두 계정의 잔고를 함께 바꾼다. 잡는 순서를 신경 쓰지 않아도 교착을 피한다
+std::scoped_lock both(from.mutex, to.mutex);</code></pre>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>가드</th><th>무엇이 다른가</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td><code>std::lock_guard</code></td><td>생성자에서 잡고 소멸자에서 푼다. 그 밖에는 아무것도 못 한다</td><td>짧은 임계 구역. 가장 흔한 선택</td></tr>
+          <tr><td><code>std::unique_lock</code></td><td>중간에 풀고 다시 잡기, 나중에 잡기, 시간 제한, 소유권 이동이 된다. 대신 잡혀 있는지 기억하는 만큼 조금 무겁다</td><td>조건 변수와 함께, 락을 함수 밖으로 넘길 때</td></tr>
+          <tr><td><code>std::scoped_lock</code>(C++17)</td><td>여러 뮤텍스를 교착 회피 알고리즘으로 한꺼번에 잡는다. 하나만 넘기면 <code>lock_guard</code>와 같다</td><td>두 객체를 함께 바꿀 때(<a href="../operating-system/deadlock.html">데드락</a>)</td></tr>
+          <tr><td><code>std::shared_lock</code> + <code>std::shared_mutex</code>(C++17)</td><td>읽는 쪽 여럿이 함께 잡고, 쓰는 쪽은 혼자 잡는다</td><td>읽기가 압도적인 표. 경합이 적으면 일반 뮤텍스가 더 빠를 수 있으니 재고 고른다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>std::mutex</code>는 재진입되지 않는다. 같은 스레드가 이미 잡은 뮤텍스를 다시 잡으면 미정의 동작이고, 실제로는 대개 자기 자신을 기다리며 멈춘다. <code>std::recursive_mutex</code>가 있지만, 필요해졌다면 락 범위 설계부터 다시 본다. 뮤텍스와 세마포어의 원리는 <a href="../operating-system/sync-primitives.html">동기화 객체</a>에서 다룬다.
+    </p>
+
+    <h3>조건 변수는 술어와 함께 기다린다</h3>
+    <p>
+      <code>std::condition_variable</code>은 <code>std::unique_lock&lt;std::mutex&gt;</code>와 함께 쓴다. 기다리는 동안 락을 풀고, 깨어나면 다시 잡은 상태로 돌아온다. 깨어났다고 조건이 참이라는 보장은 없으므로 <code>cv.wait(lock, [&amp;]{ return !queue.empty(); })</code>처럼 술어를 넘겨 다시 확인하게 한다. 왜 그래야 하는지는 <a href="../operating-system/sync-primitives.html">동기화 객체</a>에 있다.
+    </p>
+    <p>
+      C++에서 자주 틀리는 것은 조건을 바꾸는 쪽이다. 조건 변수에는 기억이 없어서, 상대가 기다리기 시작하기 직전에 보낸 신호는 사라진다. 조건이 <code>std::atomic&lt;bool&gt;</code>이어도 뮤텍스를 잡지 않고 바꾸면, 상대가 조건을 확인한 직후와 잠들기 직전 사이에 바뀌어 신호를 놓친다. 조건은 같은 뮤텍스를 잡고 바꾸고, <code>notify</code>는 락을 푼 뒤에 불러도 된다.
+    </p>
+
+    <h3>원자 타입과 메모리 순서</h3>
+    <p>
+      <code>std::atomic&lt;T&gt;</code>은 읽기, 쓰기, 증감, 비교 교환을 쪼개지지 않게 하고, 다른 스레드가 보는 순서를 정한다. 연산마다 메모리 순서를 줄 수 있고 기본은 가장 강한 <code>memory_order_seq_cst</code>다. 통계 카운터처럼 순서가 상관없으면 <code>relaxed</code>, 데이터를 준비한 뒤 플래그로 넘기는 경우는 쓰는 쪽 <code>release</code>와 읽는 쪽 <code>acquire</code>를 짝지어 쓴다. 각 순서가 무엇을 보장하는지는 <a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>, 원자 연산으로 만든 자료구조는 <a href="../data-structure/concurrent-structures.html">동시성 자료구조</a>에서 다룬다.
+    </p>
+    <p>
+      <code>std::atomic</code>이 늘 락 없이 도는 것은 아니다. 큰 구조체를 담으면 구현이 안에서 락을 쓴다. <code>is_always_lock_free</code>로 확인한다. C++20부터는 <code>std::atomic&lt;std::shared_ptr&lt;T&gt;&gt;</code>와, 값이 바뀔 때까지 잠드는 <code>wait</code>·<code>notify_one</code>도 있다.
+    </p>
+    <p>
+      <code>volatile</code>은 원자성도 순서도 주지 않는다. "컴파일러가 이 읽기를 지우지 말라"는 뜻일 뿐이고, 하드웨어 레지스터를 읽을 때 쓰는 것이다. C#과 Java의 <code>volatile</code>은 획득·해제 순서를 보장하므로 이름만 같고 뜻이 다르다.
+    </p>
+
+    <h3>한 번만 초기화하기와 스레드 로컬</h3>
+    <p>
+      함수 안의 <code>static</code> 지역 변수는 C++11부터 초기화가 스레드 안전하다. 여러 스레드가 동시에 처음 들어와도 하나만 초기화하고 나머지는 끝날 때까지 기다린다. 싱글턴을 직접 락으로 감쌀 필요가 없다. 함수 밖에서 한 번만 실행할 일은 <code>std::call_once</code>와 <code>std::once_flag</code>로 한다.
+    </p>
+    <p>
+      <code>thread_local</code> 변수는 스레드마다 따로 생긴다. 스레드가 시작할 때(또는 처음 쓸 때) 만들어지고 스레드가 끝날 때 소멸한다. 스레드별 버퍼나 난수 생성기를 락 없이 두기에 좋다. 단, 스레드 풀에서는 스레드가 계속 재사용되므로 앞 작업이 남긴 값이 다음 작업에 보인다.
+    </p>
+
+    <h3>결과를 돌려받는 future</h3>
+    <p>
+      <code>std::promise</code>에 값을 넣으면 짝인 <code>std::future</code>에서 <code>get()</code>으로 기다렸다 받는다. 작업 안에서 던진 예외도 같은 통로로 넘어와 <code>get()</code>에서 다시 던져진다. 공유 변수와 조건 변수를 직접 짜는 것보다 실수가 적다. 기다리는 동안 스레드를 잡아 두지 않고 결과가 오면 이어서 실행하려면 코루틴을 쓴다(<a href="coroutines.html">C++20 코루틴</a>).
+    </p>
+    <p>
+      <code>std::async</code>에는 함정이 둘 있다. 기본 실행 정책은 구현이 "새 스레드에서 바로"와 "<code>get()</code>을 부를 때 그 자리에서" 중 고를 수 있다. 반드시 다른 스레드에서 돌려야 하면 <code>std::launch::async</code>를 명시한다. 그리고 <code>std::async</code>가 돌려준 <code>future</code>는 소멸자에서 작업이 끝나기를 기다린다. 돌려받은 값을 버리면 그 줄에서 바로 기다리므로, 비동기로 던졌다고 생각한 일이 동기로 돈다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>쓰는 것</th></tr></thead>
+        <tbody>
+          <tr><td>짧은 임계 구역 하나</td><td><code>std::lock_guard</code></td></tr>
+          <tr><td>두 객체를 함께 바꾼다</td><td><code>std::scoped_lock</code>으로 한꺼번에</td></tr>
+          <tr><td>조건이 될 때까지 기다린다</td><td><code>std::unique_lock</code> + <code>std::condition_variable</code>, 술어와 함께</td></tr>
+          <tr><td>카운터, 플래그, 포인터 하나</td><td><code>std::atomic</code>. 순서를 낮추는 것은 이유가 분명할 때만</td></tr>
+          <tr><td>한 번만 초기화</td><td>함수 안 <code>static</code> 지역 변수, 또는 <code>std::call_once</code></td></tr>
+          <tr><td>오래 도는 작업 스레드</td><td><code>std::jthread</code> + <code>stop_token</code></td></tr>
+          <tr><td>작업 하나의 결과를 받는다</td><td><code>std::future</code>. 작업을 많이 돌린다면 스레드 풀에 넣고 future로 받는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>락은 스레드 사이의 입구에만 둔다.</strong> 게임 상태를 로직 스레드 하나가 고치는 구조라면, 락이 필요한 곳은 I/O 스레드가 작업을 넣는 큐와 결과를 돌려받는 큐뿐이다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>). 상태 곳곳에 <code>std::mutex</code>를 두기 시작하면 데드락과 경합이 따라온다.
+      </li>
+      <li>
+        <strong>작업 스레드의 수명은 <code>jthread</code>로 묶는다.</strong> DB 스레드, 로그 스레드를 서버 객체의 멤버 <code>jthread</code>로 두면 서버 객체가 소멸할 때 멈춤 요청과 합류가 저절로 일어난다. 종료 신호를 받았을 때의 순서는 <a href="../system-programming/signals.html">시그널과 프로세스 종료</a>에서 다룬다.
+      </li>
+      <li>
+        <strong><code>std::async</code>로 일을 흩뿌리지 않는다.</strong> 구현에 따라 호출마다 스레드를 새로 만들고, 버린 future는 그 자리에서 기다린다. 서버의 백그라운드 작업은 크기를 정한 스레드 풀에 넣는다(<a href="../operating-system/thread-pool.html">스레드 풀과 실행 모델</a>).
+      </li>
+      <li>
+        <strong>데이터 경쟁은 TSan으로 찾는다.</strong> 경쟁은 부하가 걸릴 때만 드러나고 재현이 안 된다. 봇 부하 테스트를 TSan 빌드로 한 번씩 돌리면 실제로 겹친 접근을 스택과 함께 알려 준다(<a href="undefined-behavior.html">미정의 동작</a>).
+      </li>
+      <li>
+        <strong>C#에서 넘어오면 다른 점이 몇 가지 있다.</strong> C#의 <code>lock</code>은 <code>Monitor</code>라서 같은 스레드가 다시 잡아도 되지만, <code>std::mutex</code>는 다시 잡으면 멈춘다. C#의 <code>lock</code> 블록이 <code>try/finally</code>로 풀리는 것이 C++에서는 <code>lock_guard</code>다. <code>CancellationToken</code>에 해당하는 것이 <code>stop_token</code>이고, 버려도 막히지 않는 <code>Task</code>와 달리 <code>std::async</code>의 future는 버리면 막힌다. <code>volatile</code>은 C#에서는 순서를 보장하지만 C++에서는 보장하지 않는다(<a data-ref="csharp/lock-csharp">C#의 lock</a>, <a data-ref="csharp/volatile-interlocked">volatile과 Interlocked</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>락을 직접 <code>lock()</code>·<code>unlock()</code>하지 않는다.</strong> 그 사이에서 예외가 나거나 중간에 <code>return</code>하면 잠긴 채 남는다.</li>
+      <li><strong>락을 잡은 채 모르는 코드를 부르지 않는다.</strong> 콜백, <a data-ref="cpp/virtual-functions">가상 함수</a>, 로그 함수가 다른 락을 잡으면 잡는 순서가 꼬여 교착이 생긴다. 필요한 값을 복사한 뒤 락을 풀고 부른다.</li>
+      <li><strong><code>shared_ptr</code>을 쓴다고 스레드 안전해지지 않는다.</strong> 참조 횟수의 증감만 원자적이다. 가리키는 객체와, 같은 <code>shared_ptr</code> 변수 자체를 여러 스레드가 바꾸는 것은 따로 보호해야 한다(<a href="smart-pointers.html">스마트 포인터와 소유권</a>).</li>
+      <li><strong>떼어 낸 스레드는 프로그램 종료와 경쟁한다.</strong> <code>main</code>이 끝나 전역 객체가 파괴되는 중에도 돌면서 그 객체를 쓴다. 종료가 가끔만 크래시한다면 이것을 본다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

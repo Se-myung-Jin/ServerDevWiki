@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAII · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/raii">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../system-programming/call-stack.html">호출 스택</a> · <a href="initialization.html">초기화</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      RAII(Resource Acquisition Is Initialization)는 자원의 수명을 객체의 수명에 묶는 방법이다. <strong>생성자에서 자원을 얻고, 소멸자에서 놓는다.</strong> 이름은 "자원 획득은 초기화"지만, 핵심은 뒤쪽인 해제에 있다.
+    </p>
+    <p>
+      C++은 스코프를 벗어나는 객체의 소멸자를 언어가 반드시 부른다. 정상 반환이든, 중간 <code>return</code>이든, 예외든 상관없다. 그래서 정리 코드를 경로마다 적을 필요가 없고 <span class="blank">빠뜨릴 수도 없다</span>. 메모리만이 아니라 파일, 락, 소켓, 트랜잭션처럼 끝을 맺어야 하는 모든 것에 쓴다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>정리하는 코드가 소멸자 한 곳으로 모인다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 300" role="img" aria-label="직접 열고 닫으면 빠져나가는 경로마다 닫는 코드가 필요하고 예외 경로는 닫지 못한다. RAII는 어느 경로든 소멸자 한 곳에서 정리한다">
+        <defs><marker id="ra-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="180" y="24" text-anchor="middle">직접 열고 닫는다</text>
+        <text class="f-strong" x="540" y="24" text-anchor="middle">RAII</text>
+        <line class="f-grid" x1="360" y1="12" x2="360" y2="290"/>
+
+        <rect class="f-box" x="120" y="40" width="120" height="30" rx="4"/>
+        <text class="f-text" x="180" y="60" text-anchor="middle">open()</text>
+        <line class="f-line" x1="180" y1="70" x2="180" y2="94" marker-end="url(#ra-a)"/>
+        <rect class="f-cell2" x="120" y="96" width="120" height="30" rx="4"/>
+        <text class="f-text" x="180" y="116" text-anchor="middle">작업</text>
+        <line class="f-line" x1="160" y1="126" x2="70" y2="170" marker-end="url(#ra-a)"/>
+        <line class="f-line" x1="180" y1="126" x2="180" y2="170" marker-end="url(#ra-a)"/>
+        <line class="f-line" x1="200" y1="126" x2="290" y2="170" marker-end="url(#ra-a)"/>
+        <text class="f-sub" x="70" y="186" text-anchor="middle">조건 return</text>
+        <text class="f-sub" x="180" y="186" text-anchor="middle">끝까지</text>
+        <text class="f-sub" x="290" y="186" text-anchor="middle">예외</text>
+        <rect class="f-hit" x="25" y="198" width="90" height="28" rx="4"/>
+        <text class="f-text" x="70" y="217" text-anchor="middle">close()</text>
+        <rect class="f-hit" x="135" y="198" width="90" height="28" rx="4"/>
+        <text class="f-text" x="180" y="217" text-anchor="middle">close()</text>
+        <rect class="f-pad" x="245" y="198" width="90" height="28" rx="4"/>
+        <text class="f-x" x="290" y="219" text-anchor="middle">✕</text>
+        <text class="f-sub" x="180" y="252" text-anchor="middle">경로마다 close()를 적어야 하고</text>
+        <text class="f-sub" x="180" y="270" text-anchor="middle">예외 경로는 그 줄까지 가지 못한다</text>
+
+        <rect class="f-box" x="480" y="40" width="120" height="30" rx="4"/>
+        <text class="f-text" x="540" y="60" text-anchor="middle">File f{path};</text>
+        <line class="f-line" x1="540" y1="70" x2="540" y2="94" marker-end="url(#ra-a)"/>
+        <rect class="f-cell2" x="480" y="96" width="120" height="30" rx="4"/>
+        <text class="f-text" x="540" y="116" text-anchor="middle">작업</text>
+        <line class="f-line" x1="520" y1="126" x2="430" y2="170" marker-end="url(#ra-a)"/>
+        <line class="f-line" x1="540" y1="126" x2="540" y2="170" marker-end="url(#ra-a)"/>
+        <line class="f-line" x1="560" y1="126" x2="650" y2="170" marker-end="url(#ra-a)"/>
+        <text class="f-sub" x="430" y="186" text-anchor="middle">조건 return</text>
+        <text class="f-sub" x="540" y="186" text-anchor="middle">끝까지</text>
+        <text class="f-sub" x="650" y="186" text-anchor="middle">예외</text>
+        <line class="f-line" x1="430" y1="192" x2="520" y2="210" marker-end="url(#ra-a)"/>
+        <line class="f-line" x1="540" y1="192" x2="540" y2="206" marker-end="url(#ra-a)"/>
+        <line class="f-line" x1="650" y1="192" x2="560" y2="210" marker-end="url(#ra-a)"/>
+        <rect class="f-miss" x="470" y="208" width="140" height="30" rx="4"/>
+        <text class="f-on" x="540" y="228" text-anchor="middle">~File()이 닫는다</text>
+        <text class="f-sub" x="540" y="262" text-anchor="middle">어느 경로로 나가든 한 곳에서 정리된다</text>
+      </svg>
+      <figcaption>같은 흐름을 나란히 놓았다. 왼쪽은 빠져나가는 길이 늘 때마다 닫는 코드도 늘고, 예외는 그 코드를 건너뛴다. 오른쪽은 스코프를 벗어나는 모든 길이 소멸자 하나로 모인다.</figcaption>
+    </figure>
+    <p>
+      예외가 나면 C++은 잡히는 곳까지 스택을 되감으며 그 사이에 만들어진 지역 객체의 소멸자를 부른다(<a href="../system-programming/call-stack.html">호출 스택</a>). 자원을 객체가 들고 있으면 이 되감기가 곧 정리가 된다. 자원을 포인터나 핸들 값으로만 들고 있으면 되감기는 그 값을 지울 뿐 닫아 주지 않는다. 예외 안전성이 RAII 위에서만 성립하는 이유다(<a href="exceptions.html">예외와 예외 안전성</a>).
+    </p>
+
+    <h3>감싸는 클래스는 이렇게 생겼다</h3>
+<pre><code class="language-cpp">class File {
+public:
+    explicit File(const char* path) : fp_(std::fopen(path, "rb")) {
+        if (!fp_) throw std::runtime_error("open failed");   // 얻지 못하면 객체가 생기지 않는다
+    }
+    ~File() { if (fp_) std::fclose(fp_); }                    // 놓는 곳은 여기 한 곳
+
+    File(const File&) = delete;                               // 복사하면 두 객체가 한 파일을 닫는다
+    File&amp; operator=(const File&amp;) = delete;
+    File(File&amp;&amp; o) noexcept : fp_(std::exchange(o.fp_, nullptr)) {}  // 옮기면 원본은 빈 손
+    File&amp; operator=(File&amp;&amp; o) noexcept {
+        if (this != &amp;o) { if (fp_) std::fclose(fp_); fp_ = std::exchange(o.fp_, nullptr); }
+        return *this;
+    }
+
+    std::FILE* get() const { return fp_; }
+private:
+    std::FILE* fp_;
+};</code></pre>
+    <p>
+      세 가지가 함께 정해진다. 생성자가 실패하면 예외를 던져 <strong>반쯤 만들어진 객체가 생기지 않게</strong> 하고, 소멸자가 유일한 해제 지점이 되며, 복사를 막아 두 객체가 같은 자원을 두 번 놓지 않게 한다. 넘겨줄 수는 있도록 이동은 열어 두고, 옮긴 뒤 원본은 아무것도 들지 않게 한다(<a href="move-semantics.html">이동 시맨틱</a>). 실제로는 이렇게 직접 짜기보다 삭제자를 붙인 <code>std::unique_ptr</code>로 감싸는 경우가 많다(<a href="smart-pointers.html">스마트 포인터와 소유권</a>).
+    </p>
+
+    <h3>소멸은 생성의 역순이다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇</th><th>만들어지는 순서</th><th>정리되는 순서</th></tr></thead>
+        <tbody>
+          <tr><td>한 스코프의 지역 객체</td><td>선언한 순서</td><td>그 반대. 나중에 만든 것이 먼저 사라진다</td></tr>
+          <tr><td>클래스의 멤버</td><td>선언한 순서(초기화 목록에 적은 순서가 아니다, <a href="initialization.html">초기화</a>)</td><td>소멸자 본문이 끝난 뒤 선언의 반대 순서</td></tr>
+          <tr><td>기반과 파생</td><td>기반 먼저, 그다음 파생</td><td>파생 먼저, 그다음 기반</td></tr>
+          <tr><td>생성자가 중간에 실패한 객체</td><td>멤버 몇 개까지만 만들어졌다</td><td>그 객체의 소멸자는 불리지 않는다. 이미 만들어진 멤버만 역순으로 정리된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      마지막 줄이 RAII를 멤버 단위로 써야 하는 이유다. 생성자 본문에서 날 포인터 둘을 차례로 <code>new</code> 하다가 두 번째에서 예외가 나면, 소멸자가 불리지 않으므로 첫 번째가 샌다. 멤버를 각각 <code>unique_ptr</code>로 두면 만들어진 멤버는 스스로 정리된다. 자원 하나에 객체 하나를 두면 이런 계산이 필요 없다.
+    </p>
+
+    <h3>RAII로 감싸는 것들</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>자원</th><th>표준 도구</th><th>소멸자가 하는 일</th></tr></thead>
+        <tbody>
+          <tr><td>힙 메모리</td><td><code>std::unique_ptr</code>, <code>std::vector</code>, <code>std::string</code></td><td>해제</td></tr>
+          <tr><td>락</td><td><code>std::lock_guard</code>, <code>std::scoped_lock</code>, <code>std::unique_lock</code></td><td>잠금 해제(<a href="../operating-system/sync-primitives.html">동기화 객체</a>)</td></tr>
+          <tr><td>파일</td><td><code>std::fstream</code></td><td>닫기</td></tr>
+          <tr><td>스레드</td><td><code>std::jthread</code>(C++20)</td><td>멈춤 요청 후 합류(<a data-ref="cpp/cpp-concurrency">C++ 동시성</a>)</td></tr>
+          <tr><td>OS 핸들, 소켓</td><td>삭제자를 붙인 <code>unique_ptr</code>이나 직접 만든 클래스</td><td><code>CloseHandle</code>, <code>close</code>(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>)</td></tr>
+          <tr><td>"이 블록이 끝나면 할 일"</td><td>스코프 가드(직접 만들거나 라이브러리)</td><td>등록해 둔 함수 실행</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>C#의 using과 무엇이 다른가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>C++ RAII</th><th>C# <code>using</code> / <code>IDisposable</code></th></tr></thead>
+        <tbody>
+          <tr><td>누가 정리를 부르나</td><td>언어. 스코프를 벗어나면 자동</td><td>쓰는 쪽이 <code>using</code>을 적어야 한다. 잊으면 불리지 않는다</td></tr>
+          <tr><td>멤버로 들고 있으면</td><td>바깥 객체가 소멸할 때 멤버 소멸자가 저절로 불린다</td><td>바깥 클래스도 <code>IDisposable</code>이 되어 <code>Dispose</code>를 이어 불러야 한다</td></tr>
+          <tr><td>메모리</td><td>같은 소멸자가 함께 놓는다</td><td><a data-ref="csharp/gc-basics">GC</a>가 따로 회수한다. <code>using</code>은 메모리가 아닌 자원만 다룬다</td></tr>
+          <tr><td>잊었을 때의 보험</td><td>필요 없다</td><td>파이널라이저가 있지만 언제 돌지 모른다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      실무에서 가장 크게 다른 곳은 둘째 줄이다. C#에서 소켓을 멤버로 든 세션 클래스는 그 자신도 <code>IDisposable</code>이어야 하고, 세션을 든 관리자도 마찬가지다. 사람이 이 사슬을 이어 줘야 한다. C++에서는 멤버 소멸자가 자동으로 불려 사슬이 저절로 이어진다. 결정적 해제와 파이널라이저의 관계는 <a data-ref="csharp/disposable">IDisposable과 결정적 해제</a>에서 다룬다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>락은 가드로만 잡는다.</strong> <code>mutex.lock()</code>을 직접 부르면 임계 구역 안의 <code>return</code> 하나, 예외 하나에 락이 풀리지 않고 서버 전체가 멈춘다. 여러 락을 함께 잡을 때는 <code>std::scoped_lock</code>이 순서를 맞춰 데드락을 피한다(<a href="../operating-system/deadlock.html">데드락</a>).
+      </li>
+      <li>
+        <strong>"끝나면 되돌리기"를 객체로 만든다.</strong> DB 트랜잭션 가드는 <code>Commit()</code>이 불리지 않은 채 소멸하면 롤백한다. 아이템 지급 중 어느 단계에서 실패해도 반쯤 지급된 상태가 남지 않는다. 틱 시간 측정도 스코프 시작에 객체를 만들고 소멸자에서 걸린 시간을 기록하면 빠지는 경로가 없다.
+      </li>
+      <li>
+        <strong>세션과 소켓의 수명을 하나로 묶는다.</strong> 세션 객체가 소켓을 RAII로 들면 세션이 사라질 때 소켓도 닫힌다. 비동기 I/O가 걸려 있는 동안 세션이 사라지지 않게 하는 문제는 <a href="smart-pointers.html">스마트 포인터와 소유권</a>의 <code>shared_from_this</code>에서 다룬다.
+      </li>
+      <li>
+        <strong>C# 서버에서는 같은 일을 사람이 지킨다.</strong> <code>using</code>을 빠뜨린 <code>SqlConnection</code>이나 소켓은 GC가 파이널라이저를 돌릴 때까지 열려 있다. 연결 풀이 바닥나는 장애가 대개 이렇게 생긴다. C# 코드 리뷰에서 <code>IDisposable</code>을 받는 줄마다 <code>using</code>을 확인하는 것은 C++의 RAII를 손으로 대신하는 일이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>이름 없는 가드는 그 줄에서 바로 사라진다.</strong> <code>std::lock_guard&lt;std::mutex&gt;{m};</code>는 임시 객체라 문장이 끝나는 순간 락을 푼다. 보호하려던 다음 줄들은 락 없이 돈다. 가드에는 반드시 이름을 붙인다(<code>std::lock_guard g{m};</code>).</li>
+      <li><strong>소멸자에서 예외를 던지지 않는다.</strong> 소멸자는 따로 적지 않아도 <code>noexcept</code>로 취급되므로, 예외가 소멸자 밖으로 나가면 그 자리에서 <code>std::terminate</code>로 프로그램이 끝난다. 정리 실패는 기록만 하고 삼킨다. 실패를 호출자가 알아야 한다면 <code>Close()</code> 같은 함수를 따로 두고, 소멸자는 그것이 불리지 않았을 때의 안전망으로만 쓴다.</li>
+      <li><strong>RAII는 메모리 관리 기법이 아니다.</strong> 수명이 있는 모든 자원에 쓰는 방법이고 메모리는 그중 하나다. 락과 핸들에 쓰지 않으면 절반만 쓰는 셈이다.</li>
+      <li><strong>전역·정적 객체의 소멸 순서는 파일을 넘으면 정해지지 않는다.</strong> 종료할 때 한 전역 객체의 소멸자가 이미 사라진 다른 파일의 전역 객체(로거 등)를 쓰면 종료 중에 죽는다. 서버 수명 동안 살아야 하는 것은 <code>main</code>에서 순서를 정해 만들고 지운다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

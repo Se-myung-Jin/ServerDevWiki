@@ -136,7 +136,7 @@
       <figcaption><code>buckets</code>는 버킷마다 사슬의 첫 원소 번호만 담는다. 실제 원소는 <code>entries</code> 구조체 배열에 연속으로 있고, 같은 버킷의 원소끼리는 <code>next</code> 번호로 이어진다. 노드를 따로 할당하지 않는다.</figcaption>
     </figure>
     <p>
-      교과서의 체이닝은 버킷마다 연결 리스트 노드를 할당하지만, .NET의 <code>Dictionary&lt;TKey,TValue&gt;</code>는 원소를 <code>entries</code> 배열 하나에 담고 <code>next</code> 인덱스로 사슬을 잇는다.
+      교과서의 체이닝은 버킷마다 연결 리스트 노드를 할당하지만, .NET의 <code>Dictionary&lt;TKey,TValue&gt;</code>는 원소를 <code>entries</code> 배열 하나에 담고 <code>next</code> 인덱스로 사슬을 잇는다. C++의 <code>unordered_map</code>은 교과서대로 노드를 하나씩 할당한다(<a href="../cpp/stl-containers.html">STL 컨테이너 고르기</a>).
       노드 할당이 없어 <a data-ref="csharp/gc-basics">GC</a> 부담이 적고 캐시도 더 잘 듣는다. 지운 칸은 빈칸 목록으로 이어 두었다가 다음 추가에 다시 쓴다.
     </p>
     <p>

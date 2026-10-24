@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>템플릿과 컴파일 시점 계산 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="cpp/templates-constexpr">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="virtual-functions.html">가상 함수와 다형성</a> · <a href="../system-programming/compile-link.html">컴파일과 링킹</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      템플릿은 코드를 찍어 내는 틀이다. 정의만으로는 아무 기계어도 생기지 않고, <code>Max&lt;int&gt;</code>처럼 실제 타입으로 쓰이는 순간 <span class="blank">그 타입 전용 코드</span>가 만들어진다(인스턴스화). 타입이 컴파일 때 정해지므로 가상 함수와 달리 인라인과 최적화가 그대로 걸린다.
+    </p>
+    <p>
+      대가는 빌드다. 쓰는 쪽에서 코드를 만들어야 하니 정의가 헤더에 있어야 하고, 같은 실체를 파일마다 다시 만든다. 실행 파일도 커진다. 한편 <code>constexpr</code>은 계산 자체를 컴파일 때로 옮긴다. 조회표나 크기 계산처럼 입력이 고정된 일은 실행 중에 비용이 0이 된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>쓰인 타입마다 실체가 만들어진다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 232" role="img" aria-label="템플릿 정의 하나에서 a.o에는 Max int와 Max float가, b.o에는 Max int와 Max Vec3가 만들어지고, 링커가 겹친 Max int 하나를 버린다">
+        <defs><marker id="tc-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="82" width="170" height="56" rx="6"/>
+        <text class="f-text" x="105" y="105" text-anchor="middle">template&lt;class T&gt;</text>
+        <text class="f-text" x="105" y="125" text-anchor="middle">T Max(T a, T b)</text>
+        <text class="f-sub" x="105" y="160" text-anchor="middle">정의만으로는 코드가 없다</text>
+
+        <rect class="f-cell2" x="250" y="30" width="200" height="72" rx="6"/>
+        <text class="f-sub" x="260" y="48">a.cpp → a.o</text>
+        <rect class="f-hit" x="260" y="58" width="86" height="32"/><text class="f-text" x="303" y="79" text-anchor="middle">Max&lt;int&gt;</text>
+        <rect class="f-hit" x="354" y="58" width="86" height="32"/><text class="f-text" x="397" y="79" text-anchor="middle">Max&lt;float&gt;</text>
+
+        <rect class="f-cell2" x="250" y="130" width="200" height="72" rx="6"/>
+        <text class="f-sub" x="260" y="148">b.cpp → b.o</text>
+        <rect class="f-pad" x="260" y="158" width="86" height="32"/><text class="f-sub" x="303" y="179" text-anchor="middle">Max&lt;int&gt;</text>
+        <rect class="f-hit" x="354" y="158" width="86" height="32"/><text class="f-text" x="397" y="179" text-anchor="middle">Max&lt;Vec3&gt;</text>
+        <text class="f-sub" x="350" y="222" text-anchor="middle">a.o와 같은 실체를 다시 만들었다</text>
+
+        <line class="f-line" x1="190" y1="100" x2="247" y2="70" marker-end="url(#tc-a)"/>
+        <line class="f-line" x1="190" y1="122" x2="247" y2="160" marker-end="url(#tc-a)"/>
+        <line class="f-line" x1="450" y1="66" x2="517" y2="98" marker-end="url(#tc-a)"/>
+        <line class="f-line" x1="450" y1="166" x2="517" y2="134" marker-end="url(#tc-a)"/>
+
+        <rect class="f-box" x="520" y="64" width="180" height="104" rx="6"/>
+        <text class="f-strong" x="610" y="88" text-anchor="middle">링커</text>
+        <text class="f-text" x="610" y="112" text-anchor="middle">겹친 Max&lt;int&gt;는 하나만</text>
+        <text class="f-sub" x="610" y="134" text-anchor="middle">Max&lt;float&gt; · Max&lt;Vec3&gt;는</text>
+        <text class="f-sub" x="610" y="154" text-anchor="middle">하나뿐이라 그대로 둔다</text>
+      </svg>
+      <figcaption>소스 파일마다 따로 컴파일되므로, 두 파일이 모두 Max&lt;int&gt;를 쓰면 두 번 만들어진다. 컴파일러는 이런 실체를 "겹쳐도 되는 것"으로 표시해 두고, 링커가 하나만 남긴다. 만드는 일과 버리는 일 모두 빌드 시간이다.</figcaption>
+    </figure>
+    <p>
+      컴파일러는 <code>Max(3, 4)</code>를 만나면 <code>T</code>를 <code>int</code>로 바꿔 넣은 함수를 만든다. 이 일은 쓰는 쪽 소스 파일 안에서 일어나므로 정의 전체가 보여야 한다. 템플릿 정의를 헤더에 두는 이유다. <code>.cpp</code>에 숨겨 두면 그 파일 밖에서는 실체를 만들 수 없어 링크 오류가 난다.
+    </p>
+    <p>
+      실체 수는 쓰인 타입 수에 비례한다. 템플릿 하나를 열 가지 타입으로 쓰면 비슷한 기계어가 열 벌 생긴다. 실행 파일이 커지고, 뜨거운 코드가 명령 캐시에 덜 들어간다. 이것이 빌드 시간에 어떻게 쌓이는지, <code>extern template</code>으로 실체를 한 파일에만 만들게 하는 방법은 <a data-ref="cpp/build-time">빌드 시간</a>에서 다룬다.
+    </p>
+
+    <h3>특정 타입에는 다른 정의를 둔다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>무엇인가</th><th>쓸 수 있는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>완전 특수화</td><td>타입 하나에만 다른 정의. <code>template&lt;&gt; struct Hash&lt;PlayerId&gt;</code></td><td>클래스 템플릿, 함수 템플릿</td></tr>
+          <tr><td>부분 특수화</td><td>조건에 맞는 타입 묶음에 다른 정의. 모든 포인터 타입 <code>Wrapper&lt;T*&gt;</code></td><td>클래스 템플릿만</td></tr>
+          <tr><td><a data-ref="cpp/overload-override">오버로딩</a></td><td>함수 템플릿을 하나 더 둔다</td><td>함수 템플릿의 부분 특수화 대신</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      표준 라이브러리의 타입 특성(<code>&lt;type_traits&gt;</code>)이 이 장치로 만들어져 있다. <code>std::is_trivially_copyable_v&lt;T&gt;</code>는 타입마다 특수화된 상수라, 컴파일 때 "이 타입을 바이트 복사해도 되나"를 물어볼 수 있다(<a href="object-layout.html">객체 배치와 타입 특성</a>).
+    </p>
+
+    <h3>조건 거르기: SFINAE에서 concept로</h3>
+    <p>
+      템플릿에 아무 타입이나 넣으면 본문 깊은 곳에서 "이 타입에는 <code>&lt;</code>가 없다"는 오류가 수백 줄로 나온다. C++20 이전에는 조건에 맞지 않는 후보를 조용히 빼는 규칙(SFINAE, 치환 실패는 오류가 아니다)을 이용해 걸렀다. 동작은 하지만 읽기 어렵다.
+    </p>
+<pre><code class="language-cpp">// C++17까지: 반환 타입 자리에 조건을 숨긴다
+template&lt;class T&gt;
+std::enable_if_t&lt;std::is_integral_v&lt;T&gt;, T&gt; Clamp(T v, T lo, T hi);
+
+// C++20: 요구 조건에 이름을 붙여 앞에 적는다
+template&lt;class T&gt;
+concept Integral = std::is_integral_v&lt;T&gt;;
+
+template&lt;Integral T&gt;
+T Clamp(T v, T lo, T hi);   // Clamp(1.5, 0.0, 1.0) → "Integral을 만족하지 않는다"</code></pre>
+    <p>
+      concept는 템플릿이 타입에 요구하는 것을 선언에 드러낸다. 조건에 맞지 않으면 어느 조건이 깨졌는지 짧게 알려 주고, 같은 이름의 템플릿 여럿 가운데 조건이 더 구체적인 쪽을 고르는 데도 쓰인다.
+    </p>
+
+    <h3>if constexpr은 고르지 않은 갈래를 버린다</h3>
+<pre><code class="language-cpp">template&lt;class T&gt;
+void Write(Buffer&amp; buf, const T&amp; v) {
+    if constexpr (std::is_trivially_copyable_v&lt;T&gt;) {
+        buf.Append(&amp;v, sizeof(T));      // 위치, 체력 같은 단순 구조체: 바이트 그대로
+    } else {
+        v.Serialize(buf);              // 문자열, 컨테이너를 가진 타입: 직접 직렬화
+    }
+}</code></pre>
+    <p>
+      조건이 컴파일 때 정해지므로 고르지 않은 갈래는 아예 실체를 만들지 않는다. <code>int</code>로 쓰면 <code>v.Serialize</code> 줄은 컴파일되지 않아서, <code>int</code>에 그런 멤버가 없어도 오류가 아니다. 타입마다 오버로딩을 나누거나 태그 타입을 넘기던 코드를 함수 하나 안의 조건문으로 바꿀 수 있다. 일반 <code>if</code>였다면 두 갈래가 모두 컴파일되어 오류가 난다.
+    </p>
+
+    <h3>CRTP는 가상 함수 없이 다형성을 낸다</h3>
+<pre><code class="language-cpp">template&lt;class Derived&gt;
+struct System {
+    void Tick() { static_cast&lt;Derived*&gt;(this)-&gt;Update(); }   // 컴파일 때 정해지는 호출
+};
+struct MoveSystem : System&lt;MoveSystem&gt; { void Update(); };</code></pre>
+    <p>
+      기반 클래스가 파생 클래스를 템플릿 인자로 받아, 자기 <code>this</code>를 파생 타입으로 바꿔 부른다. 호출할 함수가 컴파일 때 정해지므로 vtable이 없고 인라인이 된다. 대신 <code>System&lt;MoveSystem&gt;</code>과 <code>System&lt;AiSystem&gt;</code>은 서로 다른 타입이라 한 배열에 담을 수 없다. 실행 중에 타입을 바꿔 끼워야 하면 여전히 <a href="virtual-functions.html">가상 함수</a>가 필요하다.
+    </p>
+
+    <h3>constexpr은 계산을 컴파일 때로 옮긴다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>키워드</th><th>뜻</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td><code>const</code></td><td>초기화한 뒤 바꾸지 않는다. 값은 실행 중에 정해져도 된다</td><td>읽기 전용 매개변수와 변수(<a data-ref="cpp/const-and-references">const와 참조</a>)</td></tr>
+          <tr><td><code>constexpr</code> 변수</td><td>값이 컴파일 때 정해져야 한다</td><td>배열 크기, 템플릿 인자, 조회표</td></tr>
+          <tr><td><code>constexpr</code> 함수</td><td>상수가 필요한 자리에서 부르면 컴파일 때 계산되고, 아니면 보통 함수로 돈다</td><td>두 용도로 함께 쓰는 계산 함수</td></tr>
+          <tr><td><code>consteval</code> (C++20)</td><td>반드시 컴파일 때 계산된다. 실행 중에 부르면 오류</td><td>절대 실행 중에 돌면 안 되는 계산(문자열 해시 ID 등)</td></tr>
+          <tr><td><code>constinit</code> (C++20)</td><td>전역·정적 변수가 프로그램 시작 전에 상수로 초기화됨을 보장한다. 값은 나중에 바꿀 수 있다</td><td>전역 객체끼리 초기화 순서가 꼬이는 문제를 막을 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre><code class="language-cpp">constexpr std::array&lt;uint32_t, 256&gt; MakeCrcTable() {
+    std::array&lt;uint32_t, 256&gt; t{};
+    for (uint32_t i = 0; i &lt; 256; ++i) {
+        uint32_t c = i;
+        for (int k = 0; k &lt; 8; ++k) c = (c &amp; 1) ? 0xEDB88320u ^ (c &gt;&gt; 1) : c &gt;&gt; 1;
+        t[i] = c;
+    }
+    return t;
+}
+constexpr auto kCrcTable = MakeCrcTable();   // constexpr 변수라 컴파일 때 계산된다</code></pre>
+    <p>
+      <code>constexpr</code> 함수는 "컴파일 때 계산할 수 있다"는 허락이지 명령이 아니다. 결과를 일반 변수에 받으면 컴파일러는 실행 중에 계산해도 된다. 반드시 컴파일 때 끝내려면 위처럼 <code>constexpr</code> 변수로 받거나 <code>consteval</code>로 선언한다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 쪽</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>타입이 컴파일 때 정해지고 성능이 중요하다</td><td>템플릿</td><td>인라인과 최적화가 걸린다</td></tr>
+          <tr><td>타입이 실행 중에 정해진다</td><td>가상 함수</td><td>템플릿은 실행 중에 타입을 바꿀 수 없다</td></tr>
+          <tr><td>라이브러리 경계 너머로 내보낸다</td><td>가상 함수(인터페이스)</td><td>템플릿은 정의를 헤더로 내보내야 한다</td></tr>
+          <tr><td>실행 파일 크기나 빌드 시간이 문제다</td><td>타입과 상관없는 부분을 비템플릿 함수로 뺀다</td><td>타입마다 생기는 코드를 줄인다</td></tr>
+          <tr><td>서로 다른 타입을 한 컨테이너에 담아 같은 방식으로 부른다</td><td><code>std::function</code> 같은 <a data-ref="cpp/lambdas">타입 지우기</a>, 또는 가상 함수</td><td>내부는 간접 호출이라 비용은 가상 함수와 비슷하다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>직렬화와 패킷 등록을 템플릿으로 묶는다.</strong> 위의 <code>Write</code>처럼 타입 특성으로 바이트 복사와 직접 직렬화를 가르고, 패킷 타입마다 <code>static constexpr uint16_t kId</code>를 두어 처리기 표를 컴파일 때 만든다. 같은 ID가 둘이면 <code>static_assert</code>로 빌드를 실패시킬 수 있다.
+      </li>
+      <li>
+        <strong>고정된 표는 constexpr로 만든다.</strong> 레벨별 필요 경험치, CRC 표, 문자열 이름을 해시한 ID처럼 입력이 바뀌지 않는 값은 서버가 뜰 때 계산할 이유가 없다. 기획 데이터처럼 배포 없이 바뀌어야 하는 값은 반대로 파일로 뺀다.
+      </li>
+      <li>
+        <strong>템플릿 코드가 커지면 공통 부분을 뺀다.</strong> 컨테이너나 처리기 템플릿 안에서 타입과 상관없는 로직(로그, 검증, 버퍼 관리)까지 모두 템플릿 안에 두면, 타입 수만큼 같은 코드가 복제된다. 그 부분을 일반 함수로 빼 두면 빌드와 실행 파일이 함께 준다.
+      </li>
+      <li>
+        <strong>C# 제네릭은 만드는 시점과 방식이 다르다.</strong> C#은 제네릭을 중간 언어 하나로 컴파일하고, 실제 코드는 실행 중에 <a data-ref="csharp/jit-aot">JIT</a>가 만든다. 값 타입(<code>List&lt;int&gt;</code>, <code>List&lt;Vector3&gt;</code>)마다는 전용 코드를 만들어 C++ 템플릿처럼 빠르고, 참조 타입은 모두 코드 한 벌을 나눠 쓴다. 제약은 <code>where T : struct</code>나 .NET 7의 <code>INumber&lt;T&gt;</code>(인터페이스의 정적 추상 멤버)로 적는다. C++의 <code>constexpr</code> 같은 컴파일 시점 계산은 없어서, C# <code>const</code>는 숫자·문자열 같은 기본 값만 담고, 표를 미리 만드는 일은 소스 제너레이터가 맡는다(<a data-ref="csharp/generics">제네릭</a>, <a href="../system-programming/inline-codegen.html">인라인과 코드 생성</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>constexpr을 붙였다고 컴파일 때 계산되는 것은 아니다.</strong> 상수가 필요한 자리에서 쓰일 때만 그렇다. 확실히 하려면 <code>constexpr</code> 변수로 받거나 <code>consteval</code>을 쓴다.</li>
+      <li><strong>템플릿 정의를 .cpp에 두면 링크가 깨진다.</strong> 다른 파일이 실체를 만들지 못해 "정의되지 않은 참조" 오류가 난다. 정의를 헤더에 두거나, 쓰일 타입을 한 파일에서 명시적으로 인스턴스화한다.</li>
+      <li><strong>타입에 기대는 이름에는 typename을 붙인다.</strong> 템플릿 안에서 <code>T::iterator</code>가 타입인지 값인지 컴파일러가 정의를 보기 전에는 모른다. 타입이면 <code>typename T::iterator</code>로 알려 준다.</li>
+      <li><strong>템플릿으로 다 해결하려 하지 않는다.</strong> 컴파일 시점 계산이 깊어지면 오류 메시지와 빌드 시간이 사람이 감당하기 어려워진다. 실행 중에 한 번 계산해도 되는 일은 그냥 실행 중에 한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
