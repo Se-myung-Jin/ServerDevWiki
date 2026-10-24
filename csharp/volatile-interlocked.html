@@ -79,6 +79,7 @@
           <tr><td><code>Exchange</code></td><td>새 값을 넣고 이전 값을 돌려준다</td><td>버퍼 바꿔 끼우기, "처음 한 번만" 표시</td></tr>
           <tr><td><code>CompareExchange</code></td><td>지금 값이 예상한 값일 때만 바꾸고, 실제로 있던 값을 돌려준다</td><td>CAS 루프, 상태 전환, 락 없는 자료구조</td></tr>
           <tr><td><code>And</code>, <code>Or</code> (.NET 5)</td><td>비트 연산을 원자적으로</td><td>플래그 비트 묶음</td></tr>
+          <tr><td>작은 정수·열거형의 <code>Exchange</code>, <code>CompareExchange</code> (.NET 9)</td><td><code>byte</code>, <code>short</code> 같은 작은 정수와, 제네릭 오버로드로 열거형까지 원자적으로 바꾼다</td><td>상태 열거형을 정수로 바꾸지 않고 CAS로 전환</td></tr>
           <tr><td><code>Read(ref long)</code></td><td>64비트 값을 쪼개지 않고 읽는다</td><td>32비트 프로세스에서 long 읽기</td></tr>
         </tbody>
       </table>

@@ -163,7 +163,7 @@ public async Task SaveAsync(Data d, CancellationToken ct)
         <strong>lock 안에서 부르는 것을 줄인다.</strong> 로그 출력, DB 호출, 이벤트 발행, 가상 메서드처럼 안에서 무엇을 할지 모르는 호출은 다른 락을 잡을 수 있다. 필요한 값을 복사해 락을 풀고 나서 부른다(<a href="../operating-system/deadlock.html">데드락</a>).
       </li>
       <li>
-        <strong>경합은 카운터로 본다.</strong> <code>dotnet-counters</code>의 Monitor 락 경합 횟수가 틱마다 수천씩 오르면 어딘가에서 같은 락을 두고 다투고 있다. 어느 락인지는 추적으로 좁힌다(<a href="diagnostics.html">.NET 진단 도구</a>).
+        <strong>경합은 카운터로 본다.</strong> <code>dotnet-counters</code>의 Monitor 락 경합 횟수(.NET 9 Meter 지표 이름으로는 <code>dotnet.monitor.lock_contentions</code>)가 틱마다 수천씩 오르면 어딘가에서 같은 락을 두고 다투고 있다. 어느 락인지는 추적으로 좁힌다(<a href="diagnostics.html">.NET 진단 도구</a>).
       </li>
       <li>
         <strong>교착은 덤프에서 확인한다.</strong> 서버가 멈추면 덤프를 뜨고 SOS의 <code>syncblk</code>로 어느 스레드가 어느 락을 쥐었는지, <code>clrstack -all</code>로 누가 무엇을 기다리는지 본다(<a href="../system-programming/crash-dump.html">크래시 덤프와 심볼</a>). thin lock 상태의 락은 syncblk에 나오지 않으니 스택과 함께 본다.

@@ -93,7 +93,8 @@ arr[0].Buff();         // 배열 원소는 사본이 아니라 그 자리다. �
           <tr><td><code>readonly struct</code> (C# 7.2)</td><td>모든 필드가 readonly. 방어적 복사가 없다</td><td>대부분의 struct의 기본</td></tr>
           <tr><td><code>readonly record struct</code> (C# 10)</td><td>위에 더해 <a data-ref="csharp/equality">값 동등성</a>, <code>IEquatable&lt;T&gt;</code>, <code>ToString</code>, <code>with</code> 식을 컴파일러가 만든다</td><td>ID, 좌표, 키처럼 비교가 잦은 값</td></tr>
           <tr><td><code>record struct</code> (C# 10)</td><td>값 동등성은 같고 필드는 바뀔 수 있다</td><td>임시로 모으는 결과 묶음. 키로는 쓰지 않는다</td></tr>
-          <tr><td><code>ref struct</code> (C# 7.2)</td><td>스택에만 산다. 박싱·필드 보관·async 불가</td><td><code>Span&lt;T&gt;</code>처럼 메모리를 빌려 보는 타입(<a data-ref="csharp/ref-span">ref와 Span</a>)</td></tr>
+          <tr><td><code>ref struct</code> (C# 7.2)</td><td>스택에만 산다. 박싱·클래스 필드 보관 불가. await를 넘어 살 수 없다(C# 13부터 async 메서드 안의 지역 변수와 인터페이스 구현은 허용)</td><td><code>Span&lt;T&gt;</code>처럼 메모리를 빌려 보는 타입(<a data-ref="csharp/ref-span">ref와 Span</a>)</td></tr>
+          <tr><td><code>[InlineArray(N)]</code> struct (C# 12)</td><td>같은 타입 원소 N개를 struct 안에 연속으로 품는다. Span으로 바로 볼 수 있다</td><td>패킷 안의 고정 길이 배열, 작은 버퍼를 할당 없이 들고 다닐 때</td></tr>
         </tbody>
       </table>
     </div>

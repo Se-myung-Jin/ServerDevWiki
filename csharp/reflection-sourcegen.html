@@ -90,7 +90,7 @@ static partial class PacketRegistry
     }
 }</code></pre>
     <p>
-      생성기는 <strong>기존 코드를 고칠 수 없고 더할 수만 있다.</strong> 그래서 생성된 코드가 끼어들 자리로 <code>partial</code> 클래스와 partial 메서드를 쓴다. 사람이 <code>partial</code>로 선언만 해 두면 생성기가 나머지 절반을 채운다. 생성된 파일은 IDE에서 열어 볼 수 있고, 디버거로 들어갈 수도 있다. C# 12에는 특정 호출 지점을 생성 코드로 바꿔치는 인터셉터가 실험 기능으로 들어왔지만, 아직 프레임워크 내부용에 가깝다.
+      생성기는 <strong>기존 코드를 고칠 수 없고 더할 수만 있다.</strong> 그래서 생성된 코드가 끼어들 자리로 <code>partial</code> 클래스와 partial 메서드를 쓴다. 사람이 <code>partial</code>로 선언만 해 두면 생성기가 나머지 절반을 채운다. 생성된 파일은 IDE에서 열어 볼 수 있고, 디버거로 들어갈 수도 있다. C# 12에서 실험 기능으로 들어온 인터셉터는 특정 호출 지점을 생성 코드로 바꿔치는 장치다. ASP.NET Core의 AOT용 요청 처리 생성기와 설정 바인딩 생성기가 이것을 쓴다. 일반 코드에서 직접 만들 일은 아직 드물다.
     </p>
 
     <h3>표준 라이브러리도 이쪽으로 옮겨 왔다</h3>
@@ -142,7 +142,7 @@ static partial class PacketRegistry
     <h2>주의 사항</h2>
     <ul>
       <li><strong>리플렉션 결과를 다시 찾지 않는다.</strong> 루프 안에서 <code>GetMethod</code>, <code>GetProperty</code>를 부르면 찾는 비용이 매번 붙는다. 시작 때 한 번 찾아 필드에 둔다.</li>
-      <li><strong>private 멤버를 리플렉션으로 건드리지 않는다.</strong> 라이브러리 버전이 바뀌면 이름이 바뀌거나 사라져 실행 중에 실패한다. 컴파일러가 잡아 주지 못한다.</li>
+      <li><strong>private 멤버를 리플렉션으로 건드리지 않는다.</strong> 라이브러리 버전이 바뀌면 이름이 바뀌거나 사라져 실행 중에 실패한다. 컴파일러가 잡아 주지 못한다. 꼭 접근해야 하면 .NET 8의 <code>[UnsafeAccessor]</code>를 쓴다. extern 메서드에 붙이면 런타임이 그 private 필드·메서드로 바로 가는 코드를 만들어, 리플렉션보다 빠르고 AOT에서도 동작한다. 이름이 바뀌면 실패하는 것은 같다.</li>
       <li><strong>트리밍 경고를 무시하지 않는다.</strong> 리플렉션으로 찾는 타입에는 <code>[DynamicallyAccessedMembers]</code>를 붙여 남겨 둘 것을 알려 준다. 경고가 남은 채 AOT로 내보내면 그 기능을 처음 쓰는 순간 깨진다.</li>
       <li><strong>생성기가 느리면 편집기가 느려진다.</strong> 생성기는 IDE에서도 돈다. 증분 방식으로 바뀐 부분만 다시 계산하게 만들지 않으면 타이핑할 때마다 멈춘다.</li>
     </ul>

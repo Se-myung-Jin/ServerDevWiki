@@ -69,7 +69,7 @@ await host.RunAsync();   // 시작하고, 종료 신호가 올 때까지 기다�
         <text class="f-sub" x="198" y="186">멈추는 전체 과정에 시한(ShutdownTimeout)이 있다</text>
         <text class="f-sub" x="574" y="204">Singleton도 여기서 정리된다</text>
       </svg>
-      <figcaption>호스트는 호스팅 서비스를 등록한 순서대로 시작하고 거꾸로 멈춘다. 받는 쪽(Listener)을 먼저 등록하면 틱 루프가 먼저 멈춘 뒤 연결이 닫힌다. 컨테이너가 만든 IDisposable은 마지막에 컨테이너가 함께 정리한다.</figcaption>
+      <figcaption>호스트는 기본으로 호스팅 서비스를 등록한 순서대로 하나씩 시작하고 거꾸로 멈춘다. .NET 8부터 <code>HostOptions.ServicesStartConcurrently</code>·<code>ServicesStopConcurrently</code>로 동시에 시작·정지하게 할 수 있지만, 그러면 이 순서에 기대는 설계가 깨진다. 시작 전후와 정지 전후에 끼어들 자리가 필요하면 .NET 8의 <code>IHostedLifecycleService</code>(StartingAsync, StartedAsync, StoppingAsync, StoppedAsync)를 구현한다. 받는 쪽(Listener)을 먼저 등록하면 틱 루프가 먼저 멈춘 뒤 연결이 닫힌다. 컨테이너가 만든 IDisposable은 마지막에 컨테이너가 함께 정리한다.</figcaption>
     </figure>
 
     <h3>BackgroundService는 오래 도는 일을 맡는다</h3>

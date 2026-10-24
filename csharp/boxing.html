@@ -64,7 +64,7 @@
       <table>
         <thead><tr><th>자리</th><th>왜 박싱되나</th><th>피하는 법</th></tr></thead>
         <tbody>
-          <tr><td><code>object</code> 매개변수, <code>params object[]</code></td><td>참조가 필요하다</td><td>제네릭 오버로드를 둔다</td></tr>
+          <tr><td><code>object</code> 매개변수, <code>params object[]</code></td><td>참조가 필요하다. C# 13의 <code>params ReadOnlySpan&lt;object?&gt;</code> 오버로드는 배열 할당만 없애고 박싱은 그대로다</td><td>제네릭 오버로드를 둔다</td></tr>
           <tr><td>struct를 인터페이스 타입 변수에 담기</td><td>인터페이스 참조도 참조다</td><td>제네릭 제약 <code>where T : IFoo</code>로 받는다</td></tr>
           <tr><td>비제네릭 컬렉션(<code>ArrayList</code>, <code>Hashtable</code>)</td><td>원소 타입이 <code>object</code>다</td><td><code>List&lt;T&gt;</code>, <code>Dictionary&lt;K,V&gt;</code></td></tr>
           <tr><td><code>string.Format</code>, 옛 문자열 보간</td><td><code>object</code> 인자로 넘긴다</td><td>C# 10·.NET 6부터 보간은 <code>DefaultInterpolatedStringHandler</code>가 제네릭으로 받아 박싱하지 않는다</td></tr>

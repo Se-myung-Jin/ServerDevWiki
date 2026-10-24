@@ -66,9 +66,10 @@
           <tr><td>없음</td><td>object 멤버, <code>== null</code> 비교(값 형식이면 늘 거짓)</td><td>인터페이스로 다루려면 캐스트가 필요해 값 형식은 박싱된다</td></tr>
           <tr><td><code>where T : class</code></td><td>참조 형식만 받는다. <code>as</code>, null 대입</td><td>참조 형식 공유 코드로만 돈다</td></tr>
           <tr><td><code>where T : struct</code></td><td>nullable이 아닌 값 형식만 받는다. <code>T?</code>가 <code>Nullable&lt;T&gt;</code>가 된다</td><td>언제나 전용 코드</td></tr>
+          <tr><td><code>where T : allows ref struct</code> (C# 13)</td><td>제약을 푸는 반대 제약. <code>Span&lt;T&gt;</code> 같은 ref struct도 T로 받는다</td><td>T를 박싱하거나 필드에 담을 수 없게 컴파일러가 막는다(<a href="ref-span.html">ref와 Span</a>)</td></tr>
           <tr><td><code>where T : unmanaged</code> (C# 7.3)</td><td>참조를 품지 않은 값 형식. 포인터, <code>sizeof(T)</code>, 바이트로 다시 보기</td><td>버퍼와 직렬화에 쓴다(<a href="../cpp/object-layout.html">객체 배치와 타입 특성</a>의 trivially copyable과 같은 질문)</td></tr>
           <tr><td><code>where T : IComparable&lt;T&gt;</code></td><td>그 인터페이스 멤버를 부른다</td><td>값 형식에서는 박싱 없이 직접 호출된다(constrained call)</td></tr>
-          <tr><td><code>where T : new()</code></td><td><code>new T()</code></td><td>내부적으로 <code>Activator.CreateInstance</code> 계열이라 생성자를 직접 부르는 것보다 느리다</td></tr>
+          <tr><td><code>where T : new()</code></td><td><code>new T()</code></td><td><code>Activator.CreateInstance&lt;T&gt;()</code>를 거친다. 최근 런타임에서 많이 빨라졌지만 생성자를 직접 부르는 것만큼은 아니다</td></tr>
           <tr><td><code>where T : INumber&lt;T&gt;</code> (.NET 7)</td><td><code>T.Zero</code>, <code>a + b</code> 같은 정적 멤버와 연산자</td><td>값 형식 전용 코드라 일반 산술과 같은 속도</td></tr>
         </tbody>
       </table>
