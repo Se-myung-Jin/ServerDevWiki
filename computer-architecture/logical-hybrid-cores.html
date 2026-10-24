@@ -85,7 +85,7 @@
 
     <h3>affinity를 고정하지 않은 수치는 비교에 쓸 수 없다</h3>
     <p>
-      측정에서는 변동이 곧 오염이다. 어느 코어에서 실행할지를 고정하고(Linux <code>taskset</code>, Windows <code>start /affinity</code>, BenchmarkDotNet의 affinity 설정), 고정이 실패하면 조용히 넘어가지 않고 드러나게 한다.
+      측정에서는 변동이 곧 오염이다. 어느 코어에서 실행할지를 고정하고(Linux <code>taskset</code>, Windows <code>start /affinity</code>, <a data-ref="csharp/diagnostics">BenchmarkDotNet</a>의 affinity 설정), 고정이 실패하면 조용히 넘어가지 않고 드러나게 한다.
     </p>
     <p>
       대신 고정한 환경은 실제 운영 환경과 달라진다. 측정용 설정이지 배포용 설정이 아니다.

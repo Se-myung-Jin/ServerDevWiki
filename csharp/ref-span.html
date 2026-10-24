@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ref와 Span · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/ref-span">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="value-reference-types.html">값 형식과 참조 형식</a> · <a href="struct-design.html">struct와 class 고르기</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <code>ref</code>는 값을 복사하지 않고 그 값이 있는 <strong>자리</strong>를 넘긴다. C++ 포인터와 비슷하지만 산술이 안 되고, null이 되지 않으며, 가리키는 객체를 GC가 옮기면 함께 따라간다. 런타임은 이것을 관리 포인터(managed pointer)라고 부른다. 대가로 둘 수 있는 곳이 좁다. 지역 변수, 매개변수, 반환값까지다.
+    </p>
+    <p>
+      <code>Span&lt;T&gt;</code>는 "어디서부터 몇 개"를 담은 <code>ref</code> 하나와 길이로 된 구조체다. 배열의 일부, 스택 버퍼, 네이티브 메모리를 같은 타입으로 복사 없이 가리킨다. 그 안의 참조가 스택을 가리킬 수도 있어서 Span 자신도 힙에 놓일 수 없다. 이런 타입을 <span class="blank">ref struct</span>라 하고, 필드·<a data-ref="csharp/boxing">박싱</a>·<code>await</code> 너머·람다 캡처가 막힌다. 그 제약이 Span을 쓸 수 있는 자리를 정한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>Span은 어디를 가리키든 같은 모양이다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 270" role="img" aria-label="스택에 있는 Span 세 개가 각각 힙 배열의 일부, 스택 버퍼, 네이티브 메모리를 가리킨다">
+        <defs><marker id="rs-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="120" y="24" text-anchor="middle">스택 프레임</text>
+        <text class="f-strong" x="520" y="24" text-anchor="middle">가리키는 메모리</text>
+
+        <rect class="f-box" x="20" y="36" width="200" height="220" rx="8"/>
+        <rect class="f-hit" x="36" y="52" width="168" height="40" rx="5"/>
+        <text class="f-text" x="48" y="70">Span a</text>
+        <text class="f-sub" x="48" y="86">ref 시작 · 길이 3</text>
+        <rect class="f-hit" x="36" y="112" width="168" height="40" rx="5"/>
+        <text class="f-text" x="48" y="130">Span b</text>
+        <text class="f-sub" x="48" y="146">ref 시작 · 길이 4</text>
+        <rect class="f-hit" x="36" y="172" width="168" height="40" rx="5"/>
+        <text class="f-text" x="48" y="190">Span c</text>
+        <text class="f-sub" x="48" y="206">ref 시작 · 길이 2</text>
+        <text class="f-sub" x="120" y="242" text-anchor="middle">Span 자신은 늘 여기에 있다</text>
+
+        <text class="f-sub" x="652" y="63">힙 배열</text>
+        <rect class="f-cell" x="400" y="44" width="40" height="28"/>
+        <rect class="f-hit" x="440" y="44" width="40" height="28"/>
+        <rect class="f-hit" x="480" y="44" width="40" height="28"/>
+        <rect class="f-hit" x="520" y="44" width="40" height="28"/>
+        <rect class="f-cell" x="560" y="44" width="40" height="28"/>
+        <rect class="f-cell" x="600" y="44" width="40" height="28"/>
+        <text class="f-sub" x="520" y="90" text-anchor="middle">배열 중간 세 칸만 본다. 복사가 없다</text>
+
+        <text class="f-sub" x="572" y="133">stackalloc</text>
+        <rect class="f-hit" x="400" y="114" width="40" height="28"/>
+        <rect class="f-hit" x="440" y="114" width="40" height="28"/>
+        <rect class="f-hit" x="480" y="114" width="40" height="28"/>
+        <rect class="f-hit" x="520" y="114" width="40" height="28"/>
+        <text class="f-sub" x="520" y="160" text-anchor="middle">같은 프레임의 버퍼. 메서드가 끝나면 사라진다</text>
+
+        <text class="f-sub" x="532" y="201">네이티브</text>
+        <rect class="f-hit" x="400" y="182" width="40" height="28"/>
+        <rect class="f-hit" x="440" y="182" width="40" height="28"/>
+        <rect class="f-cell" x="480" y="182" width="40" height="28"/>
+        <text class="f-sub" x="520" y="228" text-anchor="middle">NativeMemory, 메모리 맵 파일의 뷰</text>
+
+        <line class="f-line" x1="204" y1="72" x2="438" y2="58" marker-end="url(#rs-a)"/>
+        <line class="f-line" x1="204" y1="132" x2="398" y2="128" marker-end="url(#rs-a)"/>
+        <line class="f-line" x1="204" y1="192" x2="398" y2="196" marker-end="url(#rs-a)"/>
+      </svg>
+      <figcaption>세 Span은 타입이 같고 크기도 같다(참조 하나와 길이 하나). 무엇을 가리키는지와 상관없이 같은 코드로 읽고 쓴다. 가운데처럼 스택 버퍼를 가리킬 수 있어서, Span이 그 프레임보다 오래 살 수 있는 자리에는 둘 수 없다.</figcaption>
+    </figure>
+    <p>
+      <code>Span&lt;T&gt;</code>를 받는 함수 하나는 배열, 배열의 일부, <code>stackalloc</code> 버퍼, 네이티브 메모리를 모두 받는다. 문자열은 <code>ReadOnlySpan&lt;char&gt;</code>로 본다. 잘라 보기(<code>Slice</code>)는 시작 위치와 길이만 바꾼 새 Span을 만들 뿐이라 할당도 복사도 없다. 그래서 파싱처럼 버퍼를 잘게 나눠 보는 일에서 할당이 통째로 사라진다. <code>Substring</code>은 새 문자열을 할당하지만 <code>AsSpan(start, length)</code>는 할당하지 않는다(<a href="strings.html">문자열</a>).
+    </p>
+    <p>
+      <code>ref</code>가 C++ 포인터와 다른 점은 GC와의 관계다. GC가 객체를 압축하며 옮기면 그 객체 안을 가리키던 <code>ref</code>도 새 주소로 고쳐진다. 그래서 고정(pin)할 필요가 없다. 대신 런타임이 모든 <code>ref</code>의 위치를 알아야 하므로, 힙 객체의 필드나 배열 원소처럼 추적하기 어려운 자리에는 둘 수 없다. 이 규칙이 그대로 Span의 제약이 된다.
+    </p>
+
+    <h3>ref struct는 힙에 놓일 수 없다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>막힌 것</th><th>왜</th><th>C# 13(.NET 9)에서</th></tr></thead>
+        <tbody>
+          <tr><td>클래스나 일반 struct의 필드</td><td>그 객체가 힙에 놓일 수 있다</td><td>그대로 막힌다. ref struct의 필드로는 둘 수 있다</td></tr>
+          <tr><td>박싱, <code>object</code>나 인터페이스로 변환</td><td>박싱은 힙으로 옮기는 일이다</td><td>인터페이스를 구현할 수는 있게 됐지만 인터페이스 타입으로 변환하는 것은 여전히 막힌다</td></tr>
+          <tr><td>배열의 원소</td><td>배열은 힙에 있다</td><td>그대로 막힌다</td></tr>
+          <tr><td>람다·지역 함수의 캡처</td><td>캡처하면 클로저 객체(힙)로 옮겨진다</td><td>그대로 막힌다</td></tr>
+          <tr><td><code>async</code> 메서드와 반복자 안의 지역 변수</td><td>지역 변수가 상태 기계 객체로 옮겨진다</td><td>쓸 수 있게 됐다. 다만 <code>await</code>나 <code>yield</code>를 넘어 살아 있으면 컴파일 오류다</td></tr>
+          <tr><td>제네릭 타입 인자</td><td><code>T</code>가 박싱되거나 필드가 될 수 있다</td><td><code>where T : allows ref struct</code>를 단 제네릭에는 넣을 수 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      표의 항목은 모두 "힙에 놓이면 안 된다"는 한 규칙에서 나온다. C# 13의 완화도 이 규칙을 지키는 범위 안이다. <code>async</code> 메서드 안에서 Span을 만들어 쓰는 것은 되지만, 그 Span이 <code>await</code>를 지나 살아남으면 상태 기계 필드로 옮겨져야 하므로 여전히 오류다. <code>await</code> 앞에서 쓰고 끝내는 구조로 짠다. 상태 기계가 무엇을 필드로 옮기는지는 <a href="compiler-transforms.html">컴파일러가 바꿔 주는 것</a>에서 다룬다.
+    </p>
+
+    <h3>오래 들고 있어야 하면 Memory&lt;T&gt;</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th><code>Span&lt;T&gt;</code></th><th><code>Memory&lt;T&gt;</code></th></tr></thead>
+        <tbody>
+          <tr><td>종류</td><td>ref struct</td><td>일반 struct</td></tr>
+          <tr><td>필드로 두기, <code>await</code> 넘기기</td><td>안 된다</td><td>된다</td></tr>
+          <tr><td>가리킬 수 있는 것</td><td>배열, 문자열, 스택 버퍼, 네이티브 메모리</td><td>배열, 문자열, <code>MemoryManager</code>로 감싼 메모리. 스택 버퍼는 안 된다</td></tr>
+          <tr><td>읽고 쓰기</td><td>바로 인덱싱한다</td><td><code>.Span</code>으로 Span을 꺼내 쓴다</td></tr>
+          <tr><td>쓰는 자리</td><td>동기 파싱, 계산, 지역 처리</td><td>비동기 I/O 버퍼, 큐에 넣어 넘기는 데이터</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      비동기 소켓 API가 <code>Memory&lt;byte&gt;</code>를 받는 이유가 이것이다. 수신을 걸어 두고 <code>await</code>하는 동안 버퍼를 들고 있어야 하기 때문이다. 받은 뒤의 파싱은 <code>.Span</code>으로 꺼내 동기로 처리한다. 파이프라인의 <code>ReadOnlySequence&lt;byte&gt;</code>도 같은 역할 분담이다(<a href="../server/framing.html">메시지 경계와 프레이밍</a>).
+    </p>
+
+    <h3>할당 없이 버퍼를 얻는 두 길</h3>
+<pre><code class="language-csharp">// 작고 크기 상한이 분명하면 스택에서
+Span&lt;byte&gt; header = stackalloc byte[8];
+
+// 크거나 크기가 들쭉날쭉하면 풀에서 빌린다
+byte[] rented = ArrayPool&lt;byte&gt;.Shared.Rent(size);   // size 이상의 배열이 온다
+try
+{
+    Span&lt;byte&gt; buf = rented.AsSpan(0, size);        // 요청한 길이만큼만 본다
+    Fill(buf);
+}
+finally
+{
+    ArrayPool&lt;byte&gt;.Shared.Return(rented);         // 돌려준 뒤에는 절대 쓰지 않는다
+}
+
+// 패킷 헤더 읽기: 엔디안을 명시하고, 길이 검사를 먼저 한다
+static bool TryReadHeader(ReadOnlySpan&lt;byte&gt; data, out ushort type, out int length)
+{
+    type = 0; length = 0;
+    if (data.Length &lt; 6) return false;
+    type   = BinaryPrimitives.ReadUInt16LittleEndian(data);
+    length = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(2));
+    return true;
+}</code></pre>
+    <p>
+      <code>stackalloc</code>은 Span에 받으면 <code>unsafe</code> 없이 쓸 수 있다. 다만 스택은 스레드마다 기본 1MB 안팎이라 수 KB를 넘는 크기나 바깥 입력으로 정해지는 크기에는 쓰지 않는다. 넘치면 예외로 잡을 수 없는 스택 오버플로로 프로세스가 끝난다(<a href="../system-programming/call-stack.html">호출 스택</a>). 그보다 크면 <code>ArrayPool</code>에서 빌린다. <code>Rent</code>는 요청보다 큰 배열을 줄 수 있으니 길이를 따로 들고 다니고, 돌려준 배열을 계속 쓰면 다른 코드가 빌려 간 데이터를 덮어쓴다.
+    </p>
+
+    <h3>컴파일러가 수명을 검사한다</h3>
+    <p>
+      ref와 Span이 안전한 것은 컴파일러가 "이 참조가 가리키는 대상이 어디까지 살아 있나"를 따지기 때문이다. 지역 변수를 가리키는 <code>ref</code>를 반환하거나, <code>stackalloc</code> 버퍼로 만든 Span을 바깥으로 내보내면 컴파일 오류다. C# 11은 ref struct가 <code>ref</code> 필드를 가질 수 있게 하고, 매개변수에 <code>scoped</code>를 붙여 "이 참조는 함수 밖으로 새지 않는다"고 약속하는 방법을 더했다. 약속을 적어 두면 호출하는 쪽은 스택 버퍼도 넘길 수 있다.
+    </p>
+<pre><code class="language-csharp">ref int Bad()
+{
+    int x = 1;
+    return ref x;             // 오류: 지역 변수의 자리를 메서드 밖으로 내보낸다
+}
+
+ref int FirstAlive(Span&lt;int&gt; hp)
+{
+    for (int i = 0; i &lt; hp.Length; i++)
+        if (hp[i] &gt; 0) return ref hp[i];   // 된다: 호출자가 준 메모리 안의 자리다
+    throw new InvalidOperationException();
+}
+
+FirstAlive(hpArray) -= 10;   // 반환된 자리에 바로 쓴다. 원소를 복사하지 않는다</code></pre>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>쓰는 것</th></tr></thead>
+        <tbody>
+          <tr><td>함수 안에서 버퍼 일부를 읽고 끝난다</td><td><code>ReadOnlySpan&lt;T&gt;</code> 매개변수</td></tr>
+          <tr><td>그 버퍼를 고친다</td><td><code>Span&lt;T&gt;</code> 매개변수</td></tr>
+          <tr><td>버퍼를 <code>await</code> 너머로, 큐로, 필드로 넘긴다</td><td><code>Memory&lt;T&gt;</code> / <code>ReadOnlyMemory&lt;T&gt;</code></td></tr>
+          <tr><td>작은 임시 버퍼(수백 바이트 이하, 크기 상한이 고정)</td><td><code>stackalloc</code></td></tr>
+          <tr><td>큰 임시 버퍼, 크기가 입력에 따라 바뀐다</td><td><code>ArrayPool&lt;T&gt;.Shared</code></td></tr>
+          <tr><td>큰 구조체 배열의 원소를 제자리에서 고친다</td><td><code>ref</code> 지역 변수, <code>CollectionsMarshal.AsSpan(list)</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      API를 받는 쪽으로 만들 때는 배열보다 <code>ReadOnlySpan&lt;T&gt;</code>를 받는다. 배열, 문자열, 일부 구간을 모두 받을 수 있어 호출하는 쪽이 사본을 만들 필요가 없다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>패킷 파싱은 Span으로, 저장은 사본으로.</strong> 수신 버퍼를 <code>ReadOnlySpan&lt;byte&gt;</code>로 받아 필드를 읽으면 파싱 중 할당이 없다. 하지만 그 Span은 다음 수신이 같은 버퍼를 덮어쓰면 의미가 없어진다. 로직 스레드 큐로 넘길 데이터는 값으로 꺼내거나 풀에서 빌린 버퍼에 복사해서 넘긴다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).
+      </li>
+      <li>
+        <strong>엔디안과 정렬은 BinaryPrimitives가 맡는다.</strong> <code>MemoryMarshal.Read&lt;T&gt;</code>나 <code>MemoryMarshal.Cast</code>로 바이트를 구조체로 바로 보면 빠르지만, 바이트 순서와 구조체 배치가 송신 쪽과 같다는 가정을 깐다. 필드 단위로 <code>BinaryPrimitives.Read…LittleEndian</code>을 쓰면 그 가정이 코드에 드러난다(<a href="../computer-architecture/endianness.html">엔디안과 바이트 오더</a>). C++에서 같은 일을 할 때의 함정은 <a href="../cpp/casting.html">캐스팅</a>에 있다.
+      </li>
+      <li>
+        <strong>구조체 배열은 ref로 고친다.</strong> <code>monsters[i].Hp -= 10</code>은 배열이라 제자리에서 고쳐지지만, <code>List&lt;Monster&gt;</code>의 인덱서는 사본을 돌려줘 같은 코드가 컴파일 오류다. <code>CollectionsMarshal.AsSpan(list)</code>로 내부 배열을 Span으로 받아 <code>ref var m = ref span[i];</code>로 고친다. 그동안 리스트에 원소를 넣거나 빼면 내부 배열이 바뀌어 그 Span은 옛 배열을 가리킨다.
+      </li>
+      <li>
+        <strong>임시 버퍼는 틱마다 할당하지 않는다.</strong> 직렬화, 압축, 주변 대상 목록처럼 틱마다 쓰는 버퍼를 <code>new byte[]</code>로 만들면 그만큼 GC가 돈다. 작은 것은 <code>stackalloc</code>, 큰 것은 <code>ArrayPool</code>이나 멤버로 둔 재사용 버퍼를 쓴다(<a href="gc-basics.html">GC 동작과 세대</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>Span이 가리키는 메모리까지 스택에 있는 것은 아니다.</strong> 스택에 있는 것은 Span 자신(참조와 길이)이다. 대상은 힙 배열일 수도, 네이티브 메모리일 수도 있다.</li>
+      <li><strong>ArrayPool에서 빌린 배열의 길이를 믿지 않는다.</strong> <code>Rent(100)</code>이 128짜리를 줄 수 있다. <code>rented.Length</code>로 순회하면 앞 사용자가 남긴 쓰레기까지 읽는다. 민감한 데이터를 담았다면 <code>Return(array, clearArray: true)</code>로 지운다.</li>
+      <li><strong>stackalloc 크기를 입력으로 정하지 않는다.</strong> 패킷의 길이 필드로 <code>stackalloc</code> 크기를 정하면, 큰 값 하나로 스택 오버플로가 나 프로세스가 끝난다. 상한을 두고 넘으면 풀로 간다.</li>
+      <li><strong>ref는 C++ 포인터가 아니다.</strong> 산술도, 필드 저장도, null도 없다. 그 좁음이 GC와 함께 안전을 만든다. 포인터 산술이 필요하면 <code>unsafe</code>로 가야 하고, 그 순간 C++과 같은 종류의 실수가 돌아온다(<a href="../cpp/undefined-behavior.html">미정의 동작</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

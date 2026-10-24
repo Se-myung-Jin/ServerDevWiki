@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>리플렉션과 소스 생성기 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/reflection-sourcegen">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="jit-aot.html">JIT와 AOT</a> · <a href="compiler-transforms.html">컴파일러가 바꿔 주는 것</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      리플렉션은 실행 중에 어셈블리의 메타데이터를 읽어 타입, 필드, 메서드를 찾고 부르는 장치다. 직렬화기가 모르는 클래스의 필드를 훑고, 서버가 시작할 때 <code>[PacketHandler]</code>가 붙은 메서드를 모두 찾아 등록하는 일이 이것으로 된다. 대가는 셋이다. 부를 때마다 검사와 <a data-ref="csharp/boxing">박싱</a>이 붙어 느리고, 시작할 때 타입을 훑는 시간이 들고, <span class="blank">AOT와 트리밍이 무엇이 쓰일지 미리 알 수 없게</span> 된다.
+    </p>
+    <p>
+      소스 생성기는 같은 일을 빌드 때로 옮긴다. 컴파일 도중에 내 코드를 읽어 직렬화 코드나 등록 표를 C# 소스로 만들어 덧붙인다. 실행 중에는 평범한 코드가 돌 뿐이라 빠르고, AOT에서도 깨지지 않는다. .NET의 직렬화, 로깅, 정규식, 네이티브 호출이 차례로 이 방식으로 옮겨 갔다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>같은 일을 언제 하느냐가 다르다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 236" role="img" aria-label="리플렉션은 실행 중에 메타데이터를 읽어 찾고 부르고, 소스 생성기는 빌드 중에 코드를 만들어 실행 때는 직접 호출만 한다">
+        <defs><marker id="rs-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="250" y="22" text-anchor="middle">빌드</text>
+        <text class="f-sub" x="580" y="22" text-anchor="middle">실행</text>
+        <line class="f-grid" x1="430" y1="12" x2="430" y2="224"/>
+        <text class="f-strong" x="20" y="62">리플렉션</text>
+        <rect class="f-box" x="150" y="42" width="200" height="34" rx="6"/>
+        <text class="f-text" x="250" y="64" text-anchor="middle">컴파일: IL + 메타데이터</text>
+        <rect class="f-hit" x="470" y="34" width="250" height="50" rx="6"/>
+        <text class="f-text" x="595" y="55" text-anchor="middle">메타데이터 읽기 → 찾기 → Invoke</text>
+        <text class="f-sub" x="595" y="73" text-anchor="middle">시작 때 훑고, 부를 때마다 검사·박싱</text>
+        <line class="f-line" x1="350" y1="59" x2="464" y2="59" marker-end="url(#rs-a)"/>
+        <text class="f-strong" x="20" y="152">소스 생성기</text>
+        <rect class="f-hit" x="150" y="122" width="250" height="54" rx="6"/>
+        <text class="f-text" x="275" y="144" text-anchor="middle">생성기가 내 코드를 읽고</text>
+        <text class="f-text" x="275" y="164" text-anchor="middle">.g.cs 파일을 덧붙여 함께 컴파일</text>
+        <rect class="f-box" x="470" y="130" width="250" height="38" rx="6"/>
+        <text class="f-text" x="595" y="154" text-anchor="middle">평범한 직접 호출만 돈다</text>
+        <line class="f-line" x1="400" y1="149" x2="464" y2="149" marker-end="url(#rs-a)"/>
+        <text class="f-sub" x="275" y="200" text-anchor="middle">빌드가 조금 길어진다</text>
+        <text class="f-sub" x="595" y="200" text-anchor="middle">찾는 비용 0, AOT·트리밍과 맞는다</text>
+      </svg>
+      <figcaption>리플렉션은 "무엇이 있는지"를 실행 중에 알아내고, 소스 생성기는 빌드 때 알아낸 것을 코드로 굳혀 둔다. 생성된 코드는 사람이 쓴 코드와 똑같이 JIT·AOT가 최적화한다.</figcaption>
+    </figure>
+
+    <h3>리플렉션이 느린 자리</h3>
+    <p>
+      컴파일된 어셈블리에는 IL과 함께 타입·멤버·특성을 적은 메타데이터 표가 들어 있다. <code>typeof(Player).GetMethod("Heal")</code>은 이 표를 이름으로 찾아 <code>MethodInfo</code> 객체를 만든다. 찾는 일 자체가 문자열 비교와 할당이고, 런타임이 결과를 캐시하긴 하지만 첫 조회는 비싸다. 시작할 때 어셈블리 전체를 훑어 특성이 붙은 타입을 모으면 타입 수만큼 이 비용이 든다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>무엇을 하나</th><th>비용</th></tr></thead>
+        <tbody>
+          <tr><td><code>MethodInfo.Invoke(obj, object[] args)</code></td><td>인자 개수·타입을 검사하고 부른다</td><td>호출마다 인자 배열 할당, <a data-ref="csharp/value-reference-types">값 형식</a> 인자와 반환값 박싱, 예외를 <code>TargetInvocationException</code>으로 감싼다. 직접 호출보다 수십 배 느리다</td></tr>
+          <tr><td><code>MethodInvoker</code>, <code>ConstructorInvoker</code> (.NET 8)</td><td>한 번 만들어 두고 반복해서 부른다</td><td>인자 배열 없이 부르는 오버로드가 있어 <code>Invoke</code>보다 훨씬 싸다. 그래도 직접 호출은 아니다</td></tr>
+          <tr><td><code>Activator.CreateInstance(type)</code></td><td>타입으로 객체를 만든다</td><td>생성자를 찾아 부른다. 최근 런타임은 반복 호출을 캐시해 빨라졌지만 <code>new T()</code>보다 느리다</td></tr>
+          <tr><td><code>Delegate.CreateDelegate</code>로 대리자 만들기</td><td><code>MethodInfo</code>를 강한 타입의 대리자로 바꿔 둔다</td><td>만든 뒤에는 대리자 호출 하나다(<a href="delegates-events.html">대리자와 이벤트</a>). 시그니처를 컴파일 때 알아야 한다</td></tr>
+          <tr><td><a data-ref="csharp/linq-deferred">식 트리</a> <code>Compile()</code>, <code>Reflection.Emit</code></td><td>실행 중에 IL을 만들어 JIT에 넘긴다</td><td>한 번 만들면 직접 호출만큼 빠르다. 만드는 비용이 크고, AOT에서는 안 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      예전의 빠른 직렬화기와 DI 컨테이너는 마지막 줄의 방법을 썼다. 처음 한 번은 리플렉션으로 구조를 읽고, 그 구조에 맞는 IL을 실행 중에 만들어 그 뒤로는 직접 호출만큼 빠르게 돌았다. 문제는 실행 중 코드 생성이 Native AOT와 IL2CPP에서 막힌다는 점이다. 리플렉션으로 타입 이름을 문자열로 찾는 코드는 트리밍이 그 타입을 쓰지 않는다고 보고 지워 버린다. 이 충돌의 자세한 모양은 <a href="jit-aot.html">JIT와 AOT</a>에서 다뤘다.
+    </p>
+
+    <h3>소스 생성기는 코드를 덧붙인다</h3>
+    <p>
+      소스 생성기는 컴파일러(Roslyn)에 끼워 넣는 라이브러리다. 컴파일 중에 구문 트리와 의미 정보를 받아, 특성이 붙은 클래스 같은 대상을 찾고, 새 C# 파일을 만들어 컴파일에 더한다. 지금은 바뀐 부분만 다시 계산하는 <code>IIncrementalGenerator</code>로 만든다. 편집기에서 한 글자 칠 때마다 생성기가 돌기 때문이다.
+    </p>
+<pre><code class="language-csharp">// 사람이 쓰는 쪽: 선언만 한다
+[PacketHandler(PacketId.Move)]
+partial class MoveHandler { public void Handle(Session s, in MovePacket p) { /* ... */ } }
+
+// 생성기가 덧붙이는 쪽(PacketRegistry.g.cs): switch 하나로 바로 부른다
+static partial class PacketRegistry
+{
+    public static void Dispatch(Session s, ushort id, ReadOnlySpan&lt;byte&gt; body)
+    {
+        switch (id)
+        {
+            case PacketId.Move: s.MoveHandler.Handle(s, MovePacket.Read(body)); break;
+            // ... 처리기마다 한 줄
+        }
+    }
+}</code></pre>
+    <p>
+      생성기는 <strong>기존 코드를 고칠 수 없고 더할 수만 있다.</strong> 그래서 생성된 코드가 끼어들 자리로 <code>partial</code> 클래스와 partial 메서드를 쓴다. 사람이 <code>partial</code>로 선언만 해 두면 생성기가 나머지 절반을 채운다. 생성된 파일은 IDE에서 열어 볼 수 있고, 디버거로 들어갈 수도 있다. C# 12에는 특정 호출 지점을 생성 코드로 바꿔치는 인터셉터가 실험 기능으로 들어왔지만, 아직 프레임워크 내부용에 가깝다.
+    </p>
+
+    <h3>표준 라이브러리도 이쪽으로 옮겨 왔다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>기능</th><th>예전 방식</th><th>소스 생성 방식</th></tr></thead>
+        <tbody>
+          <tr><td>JSON 직렬화</td><td><code>System.Text.Json</code>이 실행 중 리플렉션으로 속성을 훑는다</td><td><code>[JsonSerializable(typeof(Profile))] partial class AppJsonContext : JsonSerializerContext</code>. 읽고 쓰는 코드가 빌드 때 생긴다(.NET 6)</td></tr>
+          <tr><td>로그</td><td><code>logger.LogInformation("{Id} moved", id)</code>가 형식 문자열을 해석하고 인자를 박싱한다</td><td><code>[LoggerMessage]</code>를 붙인 partial 메서드. 수준 검사와 형식 처리가 미리 만들어진다(.NET 6)</td></tr>
+          <tr><td>정규식</td><td><code>RegexOptions.Compiled</code>가 실행 중 IL을 만든다</td><td><code>[GeneratedRegex("...")]</code> partial 메서드. 일치 검사 코드가 C#으로 생긴다(.NET 7)</td></tr>
+          <tr><td>네이티브 함수 호출</td><td><code>[DllImport]</code>가 실행 중 마샬링 코드를 만든다</td><td><code>[LibraryImport]</code>. 변환 코드가 빌드 때 생긴다(.NET 7, <a href="unsafe-interop.html">unsafe와 네이티브 상호 운용</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      MessagePack-CSharp와 protobuf의 C# 코드 생성도 같은 흐름이다. 어떤 형식을 고를지는 <a href="../server/protocol-choice.html">게임에서 프로토콜 고르기</a>에서 다뤘다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>쓸 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>운영 도구, 관리 명령, 테스트 코드</td><td>리플렉션 그대로</td><td>드물게 돌고 읽기 쉬움이 더 크다</td></tr>
+          <tr><td>패킷 처리, 직렬화, 로그처럼 계속 도는 경로</td><td>소스 생성 방식의 라이브러리</td><td>호출마다의 비용과 할당이 사라진다</td></tr>
+          <tr><td>클라이언트(Unity IL2CPP)와 공유하는 코드</td><td>소스 생성, 아니면 직접 쓴 코드</td><td>실행 중 코드 생성과 문자열로 찾는 타입이 AOT에서 깨진다</td></tr>
+          <tr><td>리플렉션을 써야만 하는 자리가 뜨겁다</td><td>시작 때 한 번 찾아 <code>MethodInvoker</code>나 강한 타입 대리자로 바꿔 캐시한다</td><td>찾는 비용과 <code>Invoke</code>의 박싱을 반복하지 않는다</td></tr>
+          <tr><td>직접 생성기를 만들지 고민된다</td><td>먼저 기존 라이브러리의 생성기를 찾는다</td><td>생성기는 디버깅과 유지 보수가 어렵다. 반복되는 손 코드가 수십 곳 이상일 때 만든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>패킷 처리기 등록을 빌드 때 끝낸다.</strong> 시작할 때 모든 타입을 훑어 <code>[PacketHandler]</code>를 찾고 <code>MethodInfo.Invoke</code>로 부르면, 시작이 느리고 패킷마다 인자 배열과 박싱이 생긴다. 생성기가 패킷 번호별 <code>switch</code>나 처리기 배열을 만들게 하면 등록 누락과 번호 중복도 빌드 오류로 잡을 수 있다(<a href="../server/framing.html">메시지 경계와 프레이밍</a>).
+      </li>
+      <li>
+        <strong>직렬화 코드를 클라이언트와 함께 생성한다.</strong> 서버와 Unity 클라이언트가 같은 패킷 정의에서 직렬화 코드를 생성하면 필드 순서가 어긋나는 사고가 없고, IL2CPP의 제약도 피한다(<a data-ref="unity/unity-vs-dotnet">Unity와 .NET</a>).
+      </li>
+      <li>
+        <strong>로그는 LoggerMessage로 정의한다.</strong> 틱마다 도는 경로의 로그 호출이 수준이 꺼져 있어도 인자를 박싱하고 배열을 만드는 일이 사라진다(<a href="strings.html">문자열</a>).
+      </li>
+      <li>
+        <strong>DI와 설정 바인딩도 리플렉션을 쓴다.</strong> 서비스 생성과 설정 객체 채우기는 기본이 리플렉션이라, AOT로 게시할 때 경고가 나온다. .NET 8부터 설정 바인딩에도 소스 생성 옵션이 있다(<a href="generic-host-di.html">Generic Host와 의존성 주입</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>리플렉션 결과를 다시 찾지 않는다.</strong> 루프 안에서 <code>GetMethod</code>, <code>GetProperty</code>를 부르면 찾는 비용이 매번 붙는다. 시작 때 한 번 찾아 필드에 둔다.</li>
+      <li><strong>private 멤버를 리플렉션으로 건드리지 않는다.</strong> 라이브러리 버전이 바뀌면 이름이 바뀌거나 사라져 실행 중에 실패한다. 컴파일러가 잡아 주지 못한다.</li>
+      <li><strong>트리밍 경고를 무시하지 않는다.</strong> 리플렉션으로 찾는 타입에는 <code>[DynamicallyAccessedMembers]</code>를 붙여 남겨 둘 것을 알려 준다. 경고가 남은 채 AOT로 내보내면 그 기능을 처음 쓰는 순간 깨진다.</li>
+      <li><strong>생성기가 느리면 편집기가 느려진다.</strong> 생성기는 IDE에서도 돈다. 증분 방식으로 바뀐 부분만 다시 계산하게 만들지 않으면 타이핑할 때마다 멈춘다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

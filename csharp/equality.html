@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>동등성과 해시 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/equality">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../data-structure/hashing.html">해시 테이블</a> · <a href="struct-design.html">struct와 class 고르기</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      "같다"는 판단은 셋으로 갈린다. 같은 객체인가(참조 동등성), 내용이 같은가(값 동등성), 그리고 이 타입이 정한 기준으로 같은가(사용자 정의)다. C#에서 이 판단을 내리는 통로도 여럿이다. <code>==</code>는 컴파일할 때 정적 타입으로 어떤 연산자를 부를지 정하고, <code>Equals</code>는 실행할 때 실제 타입의 재정의를 부른다. 그래서 담은 변수의 타입만 바꿔도 결과가 달라질 수 있다.
+    </p>
+    <p>
+      해시를 쓰는 컬렉션은 <code>GetHashCode</code>로 후보를 고르고 <code>Equals</code>로 확인한다. 둘의 기준이 어긋나거나, 키로 넣은 뒤 해시가 바뀌면 예외 없이 <span class="blank">조용히 못 찾는다</span>. 동등성 문제는 대개 이런 모양으로 드러난다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>통로마다 정해지는 시점이 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>통로</th><th>언제 정해지나</th><th>기본 동작</th></tr></thead>
+        <tbody>
+          <tr><td><code>==</code></td><td>컴파일할 때, 두 피연산자의 정적 타입으로</td><td>class는 참조 비교. 내장 숫자형·<code>enum</code>·<code>string</code>·<code>record</code>·튜플은 값 비교. 직접 만든 struct는 연산자를 정의하기 전에는 쓸 수 없다</td></tr>
+          <tr><td><code>Equals(object)</code></td><td>실행할 때, 실제 타입의 재정의로(가상 호출)</td><td>class는 참조 비교, struct는 <code>ValueType.Equals</code>(필드 비교)</td></tr>
+          <tr><td><code>IEquatable&lt;T&gt;.Equals(T)</code></td><td>컴파일할 때, 박싱 없이</td><td>직접 구현한다. 제네릭 컬렉션의 기본 비교자가 이것을 먼저 찾는다</td></tr>
+          <tr><td><code>ReferenceEquals</code></td><td>항상 참조 비교</td><td>재정의할 수 없다. "정말 같은 객체인가"를 물을 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre><code class="language-csharp">string a = new string('x', 3), b = new string('x', 3);
+Console.WriteLine(a == b);              // True: string의 == 연산자, 내용 비교
+
+object oa = a, ob = b;
+Console.WriteLine(oa == ob);            // False: object의 ==, 참조 비교
+Console.WriteLine(oa.Equals(ob));       // True: 실행 중 string.Equals가 불린다</code></pre>
+    <p>
+      연산자는 오버로드이지 재정의가 아니다. 그래서 <code>object</code>로 담은 순간 <code>string</code>의 <code>==</code>는 후보에서 사라진다. 제네릭 메서드 안의 <code>T</code>도 같아서, 제약 없는 <code>T</code>끼리 <code>==</code>는 컴파일조차 되지 않고 <code>where T : class</code>를 붙이면 참조 비교가 된다. 제네릭 코드에서 값을 비교할 때는 <code>EqualityComparer&lt;T&gt;.Default.Equals(a, b)</code>를 쓴다.
+    </p>
+
+    <h3>해시 컬렉션은 해시로 고르고 Equals로 확인한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 260" role="img" aria-label="키를 넣을 때의 해시로 버킷이 정해지는데, 넣은 뒤 키의 필드를 바꾸면 해시가 달라져 다른 버킷을 찾게 되고, 원래 버킷에 있는 항목을 찾지 못한다">
+        <defs><marker id="eq-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="110" y="24" text-anchor="middle">넣을 때</text>
+        <rect class="f-box" x="40" y="40" width="140" height="34" rx="4"/>
+        <text class="f-text" x="110" y="62" text-anchor="middle">key { X = 1 }</text>
+        <text class="f-sub" x="110" y="94" text-anchor="middle">해시 → 버킷 2</text>
+        <line class="f-line" x1="180" y1="57" x2="380" y2="96" marker-end="url(#eq-a)"/>
+        <text class="f-strong" x="110" y="150" text-anchor="middle">찾을 때</text>
+        <rect class="f-hit" x="40" y="166" width="140" height="34" rx="4"/>
+        <text class="f-text" x="110" y="188" text-anchor="middle">key { X = 7 }</text>
+        <text class="f-sub" x="110" y="220" text-anchor="middle">넣은 뒤 X를 바꿨다 → 버킷 5</text>
+        <line class="f-line" x1="180" y1="183" x2="380" y2="186" marker-end="url(#eq-a)"/>
+        <text class="f-sub" x="440" y="30" text-anchor="middle">버킷</text>
+        <rect class="f-cell" x="390" y="40" width="100" height="26"/><text class="f-sub" x="440" y="58" text-anchor="middle">1</text>
+        <rect class="f-hit" x="390" y="84" width="100" height="26"/><text class="f-text" x="440" y="102" text-anchor="middle">2: 항목 있음</text>
+        <rect class="f-cell" x="390" y="128" width="100" height="26"/><text class="f-sub" x="440" y="146" text-anchor="middle">3, 4</text>
+        <rect class="f-cell" x="390" y="172" width="100" height="26"/><text class="f-sub" x="440" y="190" text-anchor="middle">5: 비어 있다</text>
+        <text class="f-text" x="600" y="100" text-anchor="middle">항목은 여기 있는데</text>
+        <text class="f-text" x="600" y="190" text-anchor="middle">여기서 찾는다</text>
+        <text class="f-strong" x="600" y="222" text-anchor="middle">ContainsKey == false</text>
+      </svg>
+      <figcaption>버킷은 넣을 때의 해시로 정해진다. 그 뒤 해시에 쓰이는 필드를 바꾸면 같은 객체로 찾아도 다른 버킷을 본다. 예외도 경고도 없이 "없다"가 나온다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>GetHashCode의 약속</th><th>어기면</th></tr></thead>
+        <tbody>
+          <tr><td><code>Equals</code>가 같다고 하면 해시도 같다</td><td>같은 키로 찾아도 다른 버킷을 본다. 넣은 것을 못 찾고 같은 키가 둘 들어간다</td></tr>
+          <tr><td>컬렉션에 들어 있는 동안 해시가 바뀌지 않는다</td><td>그림처럼 넣은 자리를 다시 찾지 못한다</td></tr>
+          <tr><td>다르면 해시가 달라도, 같아도 된다</td><td>충돌은 정상이다. 다만 많으면 한 버킷에 몰려 느려진다</td></tr>
+          <tr><td>계산이 빠르고 고르게 흩어진다</td><td>필드를 단순 XOR하면 (1, 2)와 (2, 1)이 같아진다. <code>HashCode.Combine</code>(.NET Core 2.1)을 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      컬렉션 내부가 해시로 버킷을 고르는 구조는 <a href="../data-structure/hashing.html">해시 테이블</a>에서 다뤘다. 여기서 볼 것은 키 타입의 책임이다. 키로 쓰는 타입은 해시에 쓰이는 필드가 바뀌지 않아야 한다. 가장 쉬운 방법은 키를 불변으로 만드는 것이다.
+    </p>
+    <p>
+      .NET의 <code>string.GetHashCode()</code>는 프로세스마다 다른 무작위 시드를 쓴다(.NET Core부터). 해시 충돌 공격을 막으려는 것이다. 그래서 문자열 해시값을 파일이나 DB에 저장하거나 서버끼리 비교하면 재시작 뒤에 맞지 않는다. 저장할 해시는 정해진 알고리즘(xxHash, FNV 등)으로 직접 계산한다.
+    </p>
+
+    <h3>struct의 기본 Equals는 느리다</h3>
+    <p>
+      struct가 <code>Equals</code>를 재정의하지 않으면 <code>ValueType.Equals</code>가 불린다. 부르려면 먼저 박싱이 필요하고(<a href="boxing.html">박싱</a>), 비교는 두 갈래다. 필드에 참조가 없고 빈틈 없이 채워진 struct는 바이트를 통째로 비교하는 빠른 길로 가지만, 그 밖에는 <a data-ref="csharp/reflection-sourcegen">리플렉션</a>으로 필드를 하나씩 꺼내 비교한다. 기본 <code>GetHashCode</code>도 필드 일부만 보고 계산하는 경우가 있어 분포가 나쁠 수 있다. 키로 쓰는 struct는 직접 구현하거나 <code>record struct</code>로 정의한다.
+    </p>
+
+    <h3>record는 값 동등성을 만들어 준다</h3>
+    <p>
+      <code>record</code>(C# 9)와 <code>record struct</code>(C# 10)는 모든 필드를 비교하는 <code>Equals</code>, 그에 맞는 <code>GetHashCode</code>, <code>IEquatable&lt;T&gt;</code>, <code>==</code>와 <code>!=</code>를 컴파일러가 만든다. 네 통로가 늘 같은 답을 낸다. class 기반 <code>record</code>는 <code>EqualityContract</code>라는 숨은 프로퍼티로 실제 타입까지 비교해, 기반 record와 파생 record가 필드가 같아도 같다고 하지 않는다.
+    </p>
+    <p>
+      주의할 점은 "모든 필드"다. record가 <code>List&lt;T&gt;</code> 같은 <a data-ref="csharp/value-reference-types">참조 형식</a> 필드를 들고 있으면 그 필드는 참조로 비교된다. 내용이 같은 두 리스트를 든 record는 같지 않다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>하려는 일</th><th>쓰는 것</th></tr></thead>
+        <tbody>
+          <tr><td>정말 같은 객체인지 확인한다</td><td><code>ReferenceEquals</code>, 또는 <code>is</code>로 null 확인</td></tr>
+          <tr><td>값처럼 다루는 데이터, 키</td><td><code>record</code>·<code>readonly record struct</code>. 직접 구현할 일이 없다</td></tr>
+          <tr><td>직접 만든 struct를 자주 비교한다</td><td><code>IEquatable&lt;T&gt;</code>, <code>Equals(object)</code>, <code>GetHashCode</code>, <code>==</code>·<code>!=</code>를 같은 기준으로 함께 구현</td></tr>
+          <tr><td>타입은 그대로 두고 비교 기준만 바꾼다</td><td><code>IEqualityComparer&lt;T&gt;</code>를 컬렉션 생성자에 넘긴다</td></tr>
+          <tr><td>문자열 키</td><td><code>StringComparer.Ordinal</code> 또는 <code>OrdinalIgnoreCase</code>를 명시한다(<a data-ref="csharp/strings">문자열</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>엔티티 ID 키는 <code>readonly record struct</code>로.</strong> 박싱 없는 비교와 좋은 해시가 함께 생긴다. 틱마다 수만 번 하는 엔티티 조회에서 차이가 난다.
+      </li>
+      <li>
+        <strong>키를 가변 객체로 두지 않는다.</strong> 플레이어 객체를 <code>HashSet&lt;Player&gt;</code>에 넣었는데 <code>Player</code>가 이름이나 레벨로 <code>Equals</code>를 재정의했다면, 레벨이 오르는 순간 집합에서 찾지 못한다. 정체성이 있는 객체는 동등성을 재정의하지 않고 참조 비교로 두거나, 바뀌지 않는 ID로 비교한다.
+      </li>
+      <li>
+        <strong>계정 이름 같은 문자열 키는 비교 기준을 정해 둔다.</strong> 대소문자를 무시할지, 어떤 정규화를 할지를 딕셔너리 생성 시점에 비교자로 고정한다. 곳곳에서 <code>ToLower()</code>를 부르면 할당이 생기고 문화권 규칙이 섞인다.
+      </li>
+      <li>
+        <strong>문자열 해시를 영구 키로 쓰지 않는다.</strong> 위에서 말한 무작위 시드 때문에 재시작마다 값이 바뀐다. 샤딩 키, 캐시 키 계산에 <code>GetHashCode</code>를 쓰면 서버마다, 재시작마다 다른 곳으로 간다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>넷을 함께 맞춘다.</strong> <code>Equals(T)</code>, <code>Equals(object)</code>, <code>GetHashCode</code>, <code>==</code>·<code>!=</code> 중 하나만 바꾸면 통로마다 다른 답을 낸다. 컬렉션은 <code>Equals</code>와 해시를, 눈으로 보는 코드는 <code>==</code>를 쓴다.</li>
+      <li><strong>해시가 같다고 같은 것이 아니다.</strong> 해시는 후보를 좁힐 뿐이다. 해시만 비교해 같다고 판단하는 코드는 충돌 하나에 틀린다.</li>
+      <li><strong>부동소수점 비교는 동등성에 맞지 않는다.</strong> <code>NaN</code>은 자기 자신과도 <code>==</code>가 거짓이지만 <code>Equals</code>는 참이다. 좌표를 키로 쓰려면 격자 칸 번호 같은 정수로 바꿔 쓴다(<a href="../computer-architecture/number-representation.html">수의 표현</a>).</li>
+      <li><strong>상속과 값 동등성은 잘 맞지 않는다.</strong> 기반 클래스에서 재정의한 <code>Equals</code>는 파생 타입의 추가 필드를 모른다. 대칭성(a가 b와 같으면 b도 a와 같다)이 깨지기 쉽다. 값 동등성이 필요한 타입은 <code>sealed</code>로 두거나 record를 쓴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

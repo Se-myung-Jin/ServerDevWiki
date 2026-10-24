@@ -73,7 +73,7 @@
         <thead><tr><th>어디</th><th>무엇을 보나</th><th>쌓여 있으면</th></tr></thead>
         <tbody>
           <tr><td>커널 수신 버퍼</td><td>Linux <code>ss -tn</code>의 Recv-Q(응용이 아직 읽어 가지 않은 바이트)</td><td>망은 멀쩡하고 응용이 받아 가지 못한다. 그 뒤 칸에서 막혔다</td></tr>
-          <tr><td><a data-ref="operating-system/thread-pool">스레드 풀</a> 큐</td><td><code>dotnet-counters</code>의 스레드 풀 큐 길이, 스레드 수</td><td>일을 받아 줄 스레드가 없다. 동기 대기로 스레드를 묶어 둔 코드가 흔한 원인이다</td></tr>
+          <tr><td><a data-ref="operating-system/thread-pool">스레드 풀</a> 큐</td><td><a href="../csharp/diagnostics.html"><code>dotnet-counters</code></a>의 스레드 풀 큐 길이, 스레드 수</td><td>일을 받아 줄 스레드가 없다. 동기 대기로 스레드를 묶어 둔 코드가 흔한 원인이다</td></tr>
           <tr><td>게임 로직</td><td>틱 시간, 틱 예산을 넘긴 횟수, 락 경합 횟수</td><td>처리 자체가 길어졌다. <code>dotnet-trace</code>로 표본을 떠서 어디서 시간을 쓰는지 본다</td></tr>
           <tr><td>DB · 외부 호출</td><td>연결 풀 대기 시간, 질의 시간</td><td>밖에서 기다리고 있다. 느린 질의나 풀 크기를 본다</td></tr>
           <tr><td>응용 송신 큐</td><td>세션마다 보내지 못하고 쌓인 메시지 수</td><td>특정 클라이언트가 못 받아 간다(<a href="../server/backpressure.html">백프레셔</a>)</td></tr>

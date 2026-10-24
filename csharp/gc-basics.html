@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GC 동작과 세대 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/gc-basics">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../system-programming/memory-allocator.html">메모리 할당자</a> · <a data-ref="csharp/value-reference-types">값 형식과 참조 형식</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      .NET의 GC는 <strong>추적 GC</strong>다. 스택, 정적 필드 같은 뿌리에서 출발해 참조를 따라가며 닿는 객체에 표시하고, 표시가 없는 자리를 회수한다. 죽은 객체는 찾아가지도 않는다. 그래서 GC 한 번의 비용은 <span class="blank">살아 있는 객체의 양</span>에 비례하고, 버려진 객체가 아무리 많아도 거의 들지 않는다.
+    </p>
+    <p>
+      여기에 "대부분의 객체는 금방 죽는다"는 관찰을 얹어 힙을 세대로 나눴다. 새 객체는 0세대에 두고 자주, 싸게 거둔다. 살아남은 것만 1세대, 2세대로 올려 드물게 거둔다. 금방 버릴 객체를 많이 만드는 것은 괜찮고, <strong>오래 살아남는 객체를 많이 만드는 것</strong>이 비싸다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>뿌리에서 닿는 것만 산다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 300" role="img" aria-label="뿌리에서 참조를 따라 닿은 객체만 표시되고, 압축 뒤에는 살아남은 객체가 앞으로 모여 다음 할당 위치가 그 뒤로 정해진다">
+        <defs><marker id="gcb-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="26">수거 전</text>
+        <rect class="f-box" x="20" y="44" width="110" height="34" rx="6"/><text class="f-text" x="75" y="66" text-anchor="middle">뿌리</text>
+        <text class="f-sub" x="75" y="96" text-anchor="middle">스택 · 정적 필드</text>
+        <text class="f-sub" x="75" y="112" text-anchor="middle">GC 핸들 · 레지스터</text>
+        <rect class="f-hit" x="190" y="44" width="70" height="34"/><text class="f-text" x="225" y="66" text-anchor="middle">A</text>
+        <rect class="f-cell" x="260" y="44" width="70" height="34"/><text class="f-sub" x="295" y="66" text-anchor="middle">B</text>
+        <rect class="f-hit" x="330" y="44" width="70" height="34"/><text class="f-text" x="365" y="66" text-anchor="middle">C</text>
+        <rect class="f-cell" x="400" y="44" width="70" height="34"/><text class="f-sub" x="435" y="66" text-anchor="middle">D</text>
+        <rect class="f-cell" x="470" y="44" width="70" height="34"/><text class="f-sub" x="505" y="66" text-anchor="middle">E</text>
+        <rect class="f-hit" x="540" y="44" width="70" height="34"/><text class="f-text" x="575" y="66" text-anchor="middle">F</text>
+        <line class="f-line" x1="130" y1="61" x2="188" y2="61" marker-end="url(#gcb-a)"/>
+        <path class="f-line" d="M225,44 C250,18 340,18 362,42" marker-end="url(#gcb-a)"/>
+        <path class="f-line" d="M365,44 C420,14 540,14 572,42" marker-end="url(#gcb-a)"/>
+        <text class="f-sub" x="640" y="58">칠한 칸: 닿았다</text>
+        <text class="f-sub" x="640" y="76">빈 칸: 아무도 안 본다</text>
+
+        <text class="f-strong" x="20" y="170">수거 · 압축 후</text>
+        <rect class="f-hit" x="190" y="186" width="70" height="34"/><text class="f-text" x="225" y="208" text-anchor="middle">A</text>
+        <rect class="f-hit" x="260" y="186" width="70" height="34"/><text class="f-text" x="295" y="208" text-anchor="middle">C</text>
+        <rect class="f-hit" x="330" y="186" width="70" height="34"/><text class="f-text" x="365" y="208" text-anchor="middle">F</text>
+        <rect class="f-pad" x="400" y="186" width="210" height="34"/><text class="f-sub" x="505" y="208" text-anchor="middle">빈 공간</text>
+        <line class="f-line" x1="400" y1="256" x2="400" y2="226" marker-end="url(#gcb-a)"/>
+        <text class="f-sub" x="400" y="274" text-anchor="middle">다음 할당은 여기부터. 포인터를 미는 것으로 끝난다</text>
+      </svg>
+      <figcaption>표시 단계는 뿌리에서 닿은 A, C, F만 방문한다. B, D, E는 방문하지 않는다. 압축하면 살아남은 객체가 앞으로 모이고 빈 공간이 한 덩어리가 된다. 죽은 객체가 백 개든 만 개든 표시 비용은 같다.</figcaption>
+    </figure>
+    <p>
+      뿌리는 지금 실행 중인 코드가 직접 쥐고 있는 참조다. 스레드 스택의 지역 변수와 매개변수, CPU 레지스터, 정적 필드, <code>GCHandle</code>로 잡아 둔 객체, <a data-ref="csharp/disposable">파이널라이저</a> 대기열이 여기에 든다. 이 뿌리에서 참조를 따라가 닿지 않는 객체는 프로그램이 다시 쓸 방법이 없으므로 회수해도 된다. 참조 수를 세는 방식이 아니므로 서로를 가리키는 고리도 뿌리에서 끊기면 함께 회수된다(<a href="../cpp/smart-pointers.html">스마트 포인터와 소유권</a>의 순환 참조와 대비된다).
+    </p>
+    <p>
+      표시가 끝나면 살아남은 객체를 앞으로 모으는 <strong>압축</strong>을 하거나, 죽은 자리를 빈칸 목록으로 남긴다. 압축은 객체 주소를 바꾸므로 그 객체를 가리키던 모든 참조를 새 주소로 고쳐 쓴다. 응용 스레드가 그동안 참조를 만지면 안 되므로 이 단계에서는 스레드를 세운다.
+    </p>
+
+    <h3>할당은 포인터를 미는 일이다</h3>
+    <p>
+      압축 덕분에 0세대의 빈 공간은 한 덩어리다. 런타임은 스레드마다 그 공간의 한 구간(할당 컨텍스트)을 떼어 주고, <code>new</code>는 그 구간의 현재 위치를 객체 크기만큼 앞으로 미는 것으로 끝난다. 빈칸 목록을 뒤지는 일반 할당자(<a href="../system-programming/memory-allocator.html">메모리 할당자</a>)보다 싸고, 스레드끼리 락을 다투지도 않는다. 할당이 비싸지는 것은 0세대가 다 차서 GC가 돌 때다.
+    </p>
+
+    <h3>세대를 나눠 어린 것만 자주 거둔다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>세대</th><th>무엇이 있나</th><th>언제 거두나</th><th>비용</th></tr></thead>
+        <tbody>
+          <tr><td>0세대</td><td>막 만든 객체</td><td>0세대 예산이 찰 때마다. 가장 잦다</td><td>작다. 영역이 작고 대부분 죽어 있다</td></tr>
+          <tr><td>1세대</td><td>0세대 수거에서 한 번 살아남은 것</td><td>가끔. 0세대와 함께 거둔다</td><td>작다. 0세대와 오래 사는 객체 사이의 완충</td></tr>
+          <tr><td>2세대</td><td>여러 번 살아남은 것. 캐시, 세션, 정적 데이터</td><td>드물게. 아래 세대를 모두 함께 거둔다(전체 GC)</td><td>크다. 살아 있는 객체를 전부 표시한다</td></tr>
+          <tr><td>LOH</td><td>85,000바이트 이상인 객체</td><td>2세대와 함께</td><td>2세대 수거에 포함된다. 기본으로 압축하지 않는다</td></tr>
+          <tr><td>POH (.NET 5)</td><td><code>GC.AllocateArray(..., pinned: true)</code>로 만든 고정 배열</td><td>2세대와 함께</td><td>옮기지 않는다. 고정 객체가 다른 세대를 막지 않게 따로 둔다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      0세대 수거가 싼 이유는 두 가지다. 영역이 작아 캐시에 들어가고, 살아남는 객체가 적어 표시하고 옮길 것이 적다. 그래서 요청 하나를 처리하며 만든 임시 객체들이 그 요청 안에서 죽으면 비용이 거의 없다. 반대로 오래 살 객체가 0세대에서 태어나면 두 번 옮겨져 2세대에 도착하고, 이후 전체 GC 때마다 표시된다.
+    </p>
+    <p>
+      .NET 7부터 힙은 세그먼트 대신 작은 영역(region)들로 관리된다. 세대마다 영역을 붙였다 떼었다 할 수 있어 빈 메모리를 OS에 돌려주기 쉬워졌다. 세대의 뜻과 비용 구조는 그대로다.
+    </p>
+
+    <h3>늙은 객체가 어린 객체를 가리키면</h3>
+    <p>
+      0세대만 거둘 때 2세대는 표시하지 않는다. 그런데 2세대의 세션 객체가 방금 만든 0세대 객체를 필드로 가리키고 있다면, 그 0세대 객체는 살아 있다. 이것을 2세대 전체를 훑지 않고 알아내야 한다.
+    </p>
+    <p>
+      .NET은 힙을 작은 구간(카드)으로 나눈 표, <strong>카드 테이블</strong>을 둔다. 참조 필드에 값을 넣을 때마다 <a data-ref="csharp/jit-aot">JIT</a>가 함께 넣어 둔 짧은 코드(<strong>쓰기 장벽</strong>)가 "이 구간에 더 어린 세대를 가리키는 참조가 생겼을 수 있다"고 표시한다. 0세대를 거둘 때는 뿌리와 함께 표시된 카드만 훑는다. 그래서 참조 필드 대입은 정수 필드 대입보다 조금 비싸고, 참조가 없는 구조체 배열에는 이 비용이 없다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>).
+    </p>
+
+    <h3>큰 객체와 고정 객체</h3>
+    <p>
+      85,000바이트 이상인 객체는 LOH(Large Object Heap)로 간다. 큰 덩어리를 옮기는 비용이 커서 기본으로 압축하지 않는다. 그래서 크기가 제각각인 큰 배열을 만들고 버리기를 반복하면 사이사이 빈칸이 생겨 단편화된다(<a href="../operating-system/fragmentation.html">단편화</a>). 한 번 압축하도록 <code>GCSettings.LargeObjectHeapCompactionMode</code>를 <code>CompactOnce</code>로 걸 수 있지만, 큰 객체를 옮기는 비용은 그대로 낸다. 기준값은 <code>GCLOHThreshold</code> 설정으로 올릴 수 있다.
+    </p>
+    <p>
+      GC가 옮기면 안 되는 객체도 있다. 비동기 I/O에 넘긴 버퍼처럼 네이티브 코드가 주소를 들고 있는 동안은 고정(pinning)해야 한다. 고정된 객체가 0세대 한가운데 있으면 그 주변을 압축하지 못해 빈칸이 남는다. .NET 5의 POH가 이 문제를 따로 떼어 냈다(<a href="../server/completion-port.html">완료 알림 기반 서버</a>).
+    </p>
+
+    <h2>할당을 어떻게 다룰까</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>객체의 수명</th><th>다루는 법</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>요청 하나, 틱 하나 안에서 끝난다</td><td>그냥 만든다. 너무 잦으면 값 형식이나 <code>Span</code>으로 할당을 없앤다</td><td>0세대에서 죽으면 비용이 거의 없다(<a data-ref="csharp/ref-span">ref와 Span</a>)</td></tr>
+          <tr><td>서버가 도는 내내 산다(기획 데이터, 맵)</td><td>시작할 때 만들어 둔다</td><td>2세대에 한 번 자리 잡으면 옮겨지지 않는다. 다만 전체 GC 때마다 표시된다</td></tr>
+          <tr><td>중간 수명(세션, 진행 중인 전투)</td><td>개수와 참조 그래프를 작게 유지한다</td><td>1·2세대로 올라가 전체 GC를 부르는 주범이다</td></tr>
+          <tr><td>큰 배열(85,000바이트 이상)</td><td><code>ArrayPool&lt;T&gt;.Shared</code>로 빌려 쓴다</td><td>LOH 할당은 2세대 수거를 앞당기고 단편화를 만든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      할당 수를 무조건 줄이는 것보다 수명을 짧게 하는 쪽이 효과가 크다. 금방 버릴 작은 객체를 풀에 넣어 오래 살리면 오히려 2세대로 올라가 전체 GC 비용만 키운다(<a data-ref="csharp/memory-leaks">GC 언어의 메모리 누수</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱마다 생기는 임시 객체는 0세대 안에서 끝나게 한다.</strong> 주변 대상 목록, 패킷 객체, LINQ 결과 같은 것이 틱 하나 안에서 버려지면 0세대 GC는 짧게 끝난다. 이것들이 세션이나 큐에 붙잡혀 다음 틱까지 넘어가면 1세대로 올라가고, 쌓이면 2세대 GC를 부른다.
+      </li>
+      <li>
+        <strong>살아 있는 객체 그래프의 크기가 전체 GC의 시간이다.</strong> 수만 명의 세션, 인벤토리, 캐시가 모두 2세대에 있으면 전체 GC 한 번이 그 전부를 표시한다. 참조로 얽힌 작은 객체 수만 개보다, 참조 없는 구조체 배열 하나가 표시할 것이 훨씬 적다.
+      </li>
+      <li>
+        <strong>수신 버퍼는 큰 배열 하나를 잘라 쓰거나 풀에서 빌린다.</strong> 연결마다 버퍼를 새로 만들면 고정과 LOH 단편화가 함께 온다. 미리 잡은 큰 버퍼나 POH, <code>ArrayPool</code>을 쓴다.
+      </li>
+      <li>
+        <strong>GC 횟수와 세대를 지표로 남긴다.</strong> 0·1·2세대 수거 횟수, 힙 크기, GC에 쓴 시간 비율을 <code>dotnet-counters</code>로 본다. 2세대 수거 횟수가 계속 오르면 오래 사는 객체가 늘고 있다는 신호다(<a data-ref="csharp/diagnostics">.NET 진단 도구</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>GC를 직접 부르지 않는다.</strong> <code>GC.Collect()</code>는 살아 있는 객체를 쓸데없이 다음 세대로 올리고, 런타임이 맞춰 둔 세대 예산을 흐트러뜨린다. 측정 코드나 대량 로딩 직후처럼 이유가 분명할 때만 쓴다.</li>
+      <li><strong>할당이 적다고 GC가 싼 것은 아니다.</strong> 할당은 적어도 살아 있는 객체가 많으면 전체 GC 한 번이 길다. 반대로 할당이 많아도 전부 금방 죽으면 비용이 작다.</li>
+      <li><strong>"스택에 있으니 GC와 상관없다"는 반만 맞다.</strong> 지역 변수가 든 참조는 뿌리라서 그 객체를 살려 둔다. 오래 도는 메서드의 지역 변수가 큰 객체를 쥐고 있으면 그동안 회수되지 않는다.</li>
+      <li><strong>LOH 기준은 배열 원소 수가 아니라 바이트 수다.</strong> <code>double[]</code> 1만 개는 80,000바이트라 일반 힙이지만, 1만 1천 개면 LOH로 간다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

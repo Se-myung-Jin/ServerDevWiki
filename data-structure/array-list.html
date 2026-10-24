@@ -148,7 +148,7 @@ static void RemoveAtSwapBack&lt;T&gt;(List&lt;T&gt; list, int i)
         <strong>순회 중에 목록을 고치지 않는다.</strong> <code>foreach</code>로 <code>List&lt;T&gt;</code>를 도는 중에 추가·삭제하면 <code>InvalidOperationException</code>이 난다. 뒤에서부터 인덱스로 돌며 지우거나, 지울 것을 모아 두었다가 루프가 끝난 뒤 <code>RemoveAll</code>로 한 번에 지운다. 앞에서부터 <code>RemoveAt</code>을 반복하면 O(n²)이 된다.
       </li>
       <li>
-        <strong>지연에 민감한 경로는 용량을 미리 잡는다.</strong> 끝 삽입이 상환 O(1)이어도 재할당이 걸리는 그 한 번은 O(n)이고, 큰 배열이면 LOH 할당까지 붙는다. 접속자 수처럼 상한을 아는 목록은 시작할 때 용량을 잡아 둔다.
+        <strong>지연에 민감한 경로는 용량을 미리 잡는다.</strong> 끝 삽입이 상환 O(1)이어도 재할당이 걸리는 그 한 번은 O(n)이고, 큰 배열이면 <a data-ref="csharp/gc-basics">LOH</a> 할당까지 붙는다. 접속자 수처럼 상한을 아는 목록은 시작할 때 용량을 잡아 둔다.
       </li>
       <li>
         <strong>복사 없이 빠르게 훑으려면 <code>CollectionsMarshal.AsSpan(list)</code>.</strong> 내부 배열을 <code>Span&lt;T&gt;</code>로 직접 본다. 값 타입 원소를 제자리에서 고칠 수 있고 경계 검사도 줄지만, 그동안 목록에 원소를 넣거나 빼면 안 된다.

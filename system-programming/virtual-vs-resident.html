@@ -107,7 +107,7 @@
       반대로 RES는 GC가 압축과 해제를 하면 줄어들 수 있지만, GC는 다음 할당에 쓰려고 일부를 바로 돌려주지 않고 들고 있다.
     </p>
     <p>
-      서버 GC(<code>&lt;ServerGarbageCollector&gt;true</code>, ASP.NET Core의 기본)는 코어마다 힙을 하나씩 두어서, 코어가 많은 머신일수록 RES가 크다. 작은 컨테이너에서 메모리가 빠듯하면
+      <a data-ref="csharp/gc-modes">서버 GC</a>(<code>&lt;ServerGarbageCollector&gt;true</code>, ASP.NET Core의 기본)는 코어마다 힙을 하나씩 두어서, 코어가 많은 머신일수록 RES가 크다. 작은 컨테이너에서 메모리가 빠듯하면
       <code>GCHeapCount</code>로 힙 수를 줄이거나, .NET 6부터 있는 <code>GCConserveMemory</code>로 GC가 더 자주 압축하게 할 수 있다.
     </p>
 

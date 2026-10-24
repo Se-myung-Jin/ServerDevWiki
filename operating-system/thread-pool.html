@@ -134,7 +134,7 @@
       <li>
         <strong>.NET 스레드 풀 고갈은 "느린 증가"로 드러난다.</strong>
         .NET 스레드 풀은 최소 스레드 수(기본은 논리 코어 수)까지는 즉시 스레드를 내주지만, 그 이상은 천천히 늘린다. 그래서 동기 대기가 섞인 서버는 부하가 몰리는 순간 수 초 동안 응답이 멈췄다가 서서히 풀린다.
-        <code>ThreadPool.SetMinThreads</code>로 최소값을 올리는 것은 증상 완화이고, 근본 해결은 <code>.Result</code>·<code>.Wait()</code>를 없애는 것이다. <code>dotnet-counters</code>의 스레드 풀 큐 길이로 확인한다.
+        <code>ThreadPool.SetMinThreads</code>로 최소값을 올리는 것은 증상 완화이고, 근본 해결은 <code>.Result</code>·<code>.Wait()</code>를 없애는 것이다. 왜 그런 대기가 생기는지는 <a href="../csharp/sync-context.html">동기화 컨텍스트</a>에서 다룬다. <code>dotnet-counters</code>의 스레드 풀 큐 길이로 확인한다.
       </li>
       <li>
         <strong>게임 로직 루프는 풀에 맡기지 않는다.</strong> 매 틱 도는 루프를 <code>Task.Run</code>으로 풀 스레드에 올리면 다른 작업과 스레드를 다투고, 틱 지연이 풀 상태에 따라 흔들린다. <a data-ref="server/threading-model">로직 스레드</a>는 전용 스레드(<code>new Thread</code> 또는 <code>TaskCreationOptions.LongRunning</code>)로 두고, DB·외부 호출처럼 기다리는 일만 비동기로 풀에 넘긴다.

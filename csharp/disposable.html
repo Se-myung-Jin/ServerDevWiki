@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IDisposable과 결정적 해제 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/disposable">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="gc-basics.html">GC 동작과 세대</a> · <a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      GC는 메모리만 안다. 소켓, 파일 핸들, DB 연결, 네이티브 메모리처럼 메모리가 아닌 자원은 언제 놓아야 하는지 모르고, GC가 언제 돌지도 정해져 있지 않다. 그래서 다 쓴 쪽이 직접 "끝났다"고 알리는 약속이 필요하다. 그것이 <span class="blank">IDisposable</span>의 <code>Dispose()</code>이고, <code>using</code>이 그 호출을 어떤 경로로 나가든 보장한다.
+    </p>
+    <p>
+      파이널라이저는 <code>Dispose</code>를 잊었을 때의 마지막 보험이다. 정상 경로가 아니다. 파이널라이저가 있는 객체는 회수가 최소 한 번의 GC만큼 늦어지고, 언제 돌지 모르며, 프로세스가 끝날 때는 아예 돌지 않는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>using은 finally 안의 Dispose다</h3>
+<pre><code class="language-csharp">// using 문: 블록이 끝나면 Dispose
+using (var conn = await OpenConnectionAsync())
+{
+    await conn.ExecuteAsync(sql);
+}
+
+// using 선언(C# 8): 이 변수가 속한 스코프가 끝나면 Dispose
+using var file = File.OpenRead(path);
+
+// 컴파일러가 만드는 모양은 대략 이렇다
+var conn2 = await OpenConnectionAsync();
+try { await conn2.ExecuteAsync(sql); }
+finally { conn2?.Dispose(); }</code></pre>
+    <p>
+      예외가 나든, 중간에 <code>return</code>하든 <code>finally</code>가 돌므로 정리가 빠지지 않는다. 정리 자체가 비동기여야 하는 타입(버퍼를 비우고 닫는 스트림, 연결 풀로 돌려보내는 연결)은 <code>IAsyncDisposable</code>을 구현하고, 쓰는 쪽은 <code>await using</code>으로 받는다(<a data-ref="csharp/compiler-transforms">컴파일러가 바꿔 주는 것</a>).
+    </p>
+    <p>
+      C++의 소멸자와 다른 점은 쓰는 쪽이 <code>using</code>을 적어야 한다는 것이다. 빠뜨려도 컴파일러는 막지 않는다(분석기 경고 CA2000이 일부를 잡는다). 멤버로 든 IDisposable도 바깥 클래스가 직접 이어서 <code>Dispose</code>해야 한다(<a href="../cpp/raii.html">RAII</a>).
+    </p>
+
+    <h3>파이널라이저가 있으면 회수가 한 번 늦다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="파이널라이저가 없는 객체는 한 번의 GC로 회수되고, 있는 객체는 대기열로 옮겨져 다시 살아난 뒤 파이널라이저 스레드가 실행하고 다음 GC에서야 회수된다">
+        <defs><marker id="dsp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="34">파이널라이저 없음</text>
+        <rect class="f-box" x="180" y="18" width="130" height="30" rx="6"/><text class="f-text" x="245" y="38" text-anchor="middle">아무도 안 본다</text>
+        <line class="f-line" x1="310" y1="33" x2="358" y2="33" marker-end="url(#dsp-a)"/>
+        <text class="f-sub" x="334" y="22" text-anchor="middle">GC 1</text>
+        <rect class="f-hit" x="360" y="18" width="110" height="30" rx="6"/><text class="f-text" x="415" y="38" text-anchor="middle">회수</text>
+
+        <text class="f-strong" x="20" y="114">파이널라이저 있음</text>
+        <rect class="f-box" x="180" y="98" width="130" height="30" rx="6"/><text class="f-text" x="245" y="118" text-anchor="middle">아무도 안 본다</text>
+        <line class="f-line" x1="310" y1="113" x2="358" y2="113" marker-end="url(#dsp-a)"/>
+        <text class="f-sub" x="334" y="102" text-anchor="middle">GC 1</text>
+        <rect class="f-bar" x="360" y="98" width="130" height="30" rx="6"/><text class="f-text" x="425" y="118" text-anchor="middle">대기열 = 뿌리</text>
+        <line class="f-line" x1="490" y1="113" x2="518" y2="113" marker-end="url(#dsp-a)"/>
+        <rect class="f-bar" x="520" y="98" width="110" height="30" rx="6"/><text class="f-text" x="575" y="118" text-anchor="middle">~T() 실행</text>
+        <line class="f-line" x1="630" y1="113" x2="668" y2="113" marker-end="url(#dsp-a)"/>
+        <text class="f-sub" x="649" y="102" text-anchor="middle">GC 2</text>
+        <rect class="f-hit" x="670" y="98" width="70" height="30" rx="6"/><text class="f-text" x="705" y="118" text-anchor="middle">회수</text>
+        <text class="f-sub" x="360" y="150">대기열에 든 동안 다시 살아 있는 것으로 취급되어 세대가 올라갈 수 있다</text>
+        <text class="f-sub" x="360" y="168">파이널라이저 스레드는 하나뿐이다. 하나가 막히면 뒤가 모두 밀린다</text>
+        <text class="f-sub" x="20" y="198">Dispose 안에서 GC.SuppressFinalize(this)를 부르면 아래 줄이 위 줄처럼 된다</text>
+      </svg>
+      <figcaption>파이널라이저가 있는 객체는 만들 때 런타임의 목록에 등록된다. 아무도 보지 않게 되면 바로 회수하지 않고 대기열로 옮기는데, 그 대기열이 뿌리라서 객체와 그 객체가 가리키는 모든 것이 한 번 더 살아남는다.</figcaption>
+    </figure>
+    <p>
+      비용은 세 군데서 생긴다. 만들 때 등록하는 비용, 한 GC만큼 늦은 회수와 그 사이의 세대 승격, 그리고 하나뿐인 파이널라이저 스레드다. 파이널라이저 안에서 락을 기다리거나 네트워크 호출을 하면 그동안 다른 모든 객체의 정리가 멈추고, 대기열이 쌓여 메모리가 오른다. 파이널라이저 안에서 다른 관리 객체를 만지는 것도 위험하다. 정리 순서가 정해져 있지 않아 그 객체의 파이널라이저가 이미 돌았을 수 있다.
+    </p>
+
+    <h3>표준 패턴과 SafeHandle</h3>
+<pre><code class="language-csharp">public sealed class Session : IDisposable
+{
+    private readonly Socket _socket;          // 관리 IDisposable을 감싼다
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed) return;               // 여러 번 불려도 안전하게
+        _disposed = true;
+        _socket.Dispose();                   // 감싼 것을 이어서 정리한다
+        // 비관리 자원을 직접 들지 않으므로 파이널라이저가 필요 없다
+    }
+
+    public void Send(ReadOnlySpan&lt;byte&gt; data)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);   // .NET 7
+        _socket.Send(data);
+    }
+}</code></pre>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>들고 있는 것</th><th>구현할 것</th></tr></thead>
+        <tbody>
+          <tr><td>다른 IDisposable(소켓, 스트림, 연결)</td><td><code>Dispose</code>에서 그것들을 이어서 정리한다. 파이널라이저는 두지 않는다</td></tr>
+          <tr><td>OS 핸들</td><td><code>SafeHandle</code> 파생 타입(SafeFileHandle 등)에 담는다. 파이널라이저는 SafeHandle이 가진다</td></tr>
+          <tr><td>네이티브 메모리를 직접(<code>NativeMemory.Alloc</code>, <code>Marshal.AllocHGlobal</code>)</td><td>가능하면 SafeHandle로 감싸고, 아니면 <code>Dispose(bool)</code> 패턴 + 파이널라이저 + <code>GC.SuppressFinalize</code></td></tr>
+          <tr><td>비동기로 비워야 하는 버퍼</td><td><code>IAsyncDisposable</code>. 동기 <code>Dispose</code>도 함께 두면 둘 다 안전해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>SafeHandle</code>은 핸들 하나를 감싸는 작은 객체다. 파이널라이저를 자기가 가지고 있어 바깥 클래스는 파이널라이저가 필요 없고, 핸들을 쓰는 중에 다른 스레드가 닫아 같은 번호가 재사용되는 문제를 참조 수로 막는다. 직접 <code>IntPtr</code>로 핸들을 들고 파이널라이저를 짜는 일은 거의 없어야 한다.
+    </p>
+    <p>
+      <code>Dispose(bool disposing)</code> 패턴은 상속을 열어 둔 클래스가 비관리 자원을 직접 들 때를 위한 것이다. <code>Dispose()</code>에서 부르면 <code>true</code>로 관리 자원까지, 파이널라이저에서 부르면 <code>false</code>로 비관리 자원만 정리한다. 클래스를 <code>sealed</code>로 두고 SafeHandle을 쓰면 이 패턴 전체가 필요 없다.
+    </p>
+
+    <h3>누가 Dispose하나</h3>
+    <ul>
+      <li><strong>만든 쪽이 놓는다.</strong> <code>new</code>나 <code>Open</code>으로 얻은 쪽이 끝까지 책임진다.</li>
+      <li><strong>넘겨받기만 했다면 놓지 않는다.</strong> 매개변수로 받은 스트림을 함수 안에서 Dispose하면 부른 쪽이 계속 쓰다 <code>ObjectDisposedException</code>을 맞는다. <code>StreamReader(stream, leaveOpen: true)</code>처럼 소유를 넘기는지 고르는 인자가 있는 API는 그것으로 정한다.</li>
+      <li><strong>소유를 넘기면 이름과 문서로 드러낸다.</strong> 팩토리가 돌려준 IDisposable은 받은 쪽이 놓는다. 생성자에서 받은 것을 클래스가 소유한다면 클래스도 IDisposable이 된다.</li>
+    </ul>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>세션 정리는 Dispose 한 곳으로 모은다.</strong> 연결 끊김, 하트비트 시간 초과, 강제 추방, 서버 종료가 모두 같은 <code>Dispose</code>를 부르게 한다. 그 안에서 소켓 닫기, 송신 큐 비우기, 풀에서 빌린 버퍼 반납, 이벤트 구독 해제를 한다. 경로가 여럿이면 하나에서 빠지고 그 경로로 끊긴 세션만 자원을 잡는다(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>).
+      </li>
+      <li>
+        <strong>DB 연결은 쓰고 바로 돌려준다.</strong> <code>await using var conn = ...</code>으로 받은 연결은 Dispose가 닫는 것이 아니라 풀로 돌려준다. 빠뜨리면 파이널라이저가 돌 때까지 풀이 그 연결을 잃고, 풀이 바닥나면 모든 요청이 연결을 기다린다.
+      </li>
+      <li>
+        <strong>HttpClient는 예외다.</strong> 요청마다 만들고 Dispose하면 연결도 매번 닫혀 임시 포트가 TIME_WAIT으로 묶인다. 하나를 공유하거나 <code>IHttpClientFactory</code>를 쓴다(<a href="../network/tcp-connection.html">TCP 연결 관리</a>).
+      </li>
+      <li>
+        <strong>종료 때 꼭 해야 할 정리는 직접 부른다.</strong> .NET Core 이후의 런타임은 프로세스가 끝날 때 파이널라이저를 돌리지 않는다. 남은 로그 비우기, 상태 저장, 연결 종료는 호스트의 종료 경로에서 Dispose나 DisposeAsync로 직접 한다(<a href="../system-programming/signals.html">시그널과 프로세스 종료</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>파이널라이저를 습관으로 두지 않는다.</strong> 비관리 자원을 직접 들지 않으면 필요 없고, 두기만 해도 모든 인스턴스가 비싸진다. 빈 파이널라이저도 마찬가지다.</li>
+      <li><strong>Dispose는 여러 번 불려도 안전해야 한다.</strong> 정리 경로가 겹치는 일은 흔하다. 두 번째 호출이 예외를 던지면 정리 중에 서버가 죽는다.</li>
+      <li><strong>Dispose에서 예외를 던지지 않는다.</strong> <code>finally</code>에서 불리므로, 본문의 예외가 있었다면 그것을 덮어써 원래 원인을 잃는다.</li>
+      <li><strong>using 선언의 범위를 확인한다.</strong> <code>using var</code>는 블록이 아니라 그 변수가 속한 스코프 끝에서 정리된다. 메서드 맨 위에 적으면 메서드가 끝날 때까지 자원을 쥔다.</li>
+      <li><strong>파이널라이저에서 객체를 되살리지 않는다.</strong> <code>this</code>를 정적 필드에 저장하면 객체가 다시 살아나지만 파이널라이저는 다시 돌지 않는다(<code>GC.ReRegisterForFinalize</code>를 부르지 않는 한). 정리된 반쪽짜리 객체가 남는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -95,7 +95,7 @@
     <h2>게임 서버에서는</h2>
     <ul>
       <li>
-        <strong>SIGTERM을 정상 종료 경로에 잇는다.</strong> .NET Generic Host는 <code>SIGTERM</code>을 받아 <code>IHostApplicationLifetime.ApplicationStopping</code>을 알리고 각 서비스의 <code>StopAsync</code>를 부른다. 기다리는 상한은 <code>HostOptions.ShutdownTimeout</code>이다. Host 없이 짠 서버는 <code>PosixSignalRegistration.Create(PosixSignal.SIGTERM, ...)</code>로 받고, 처리기에서 <code>context.Cancel = true</code>를 주면 기본 종료가 일어나지 않아 내 순서대로 정리할 수 있다. 무엇을 어떤 순서로 정리하는지는 <a data-ref="operations/draining">드레이닝</a>에서 다룬다.
+        <strong>SIGTERM을 정상 종료 경로에 잇는다.</strong> .NET <a data-ref="csharp/generic-host-di">Generic Host</a>는 <code>SIGTERM</code>을 받아 <code>IHostApplicationLifetime.ApplicationStopping</code>을 알리고 각 서비스의 <code>StopAsync</code>를 부른다. 기다리는 상한은 <code>HostOptions.ShutdownTimeout</code>이다. Host 없이 짠 서버는 <code>PosixSignalRegistration.Create(PosixSignal.SIGTERM, ...)</code>로 받고, 처리기에서 <code>context.Cancel = true</code>를 주면 기본 종료가 일어나지 않아 내 순서대로 정리할 수 있다. 무엇을 어떤 순서로 정리하는지는 <a data-ref="operations/draining">드레이닝</a>에서 다룬다.
       </li>
       <li>
         <strong>유예 시간을 넘기지 않게 정리 순서를 잡는다.</strong> Kubernetes는 <code>SIGTERM</code>을 보내고 <code>terminationGracePeriodSeconds</code>(기본 30초)가 지나면 <code>SIGKILL</code>을 보낸다. 잃으면 안 되는 저장부터 하고, 오래 걸리는 정리는 뒤로 둔다. 정리가 본래 길다면 유예 시간과 <code>ShutdownTimeout</code>을 함께 늘린다.

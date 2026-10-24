@@ -76,10 +76,10 @@
       </table>
     </div>
     <p>
-      실제 표준 라이브러리는 이 중 하나를 그대로 쓰지 않는 경우가 많다. .NET의 <code>string.IndexOf</code>·<code>Contains</code>(서수 비교)와 <code>Span</code> 검색은 <a data-ref="computer-architecture/simd">SIMD</a> 벡터 명령으로 여러 글자를 한 번에 비교하도록 최적화돼 있어, 직접 KMP를 짜는 것보다 대개 빠르다.
+      실제 표준 라이브러리는 이 중 하나를 그대로 쓰지 않는 경우가 많다. .NET의 <code>string.IndexOf</code>·<code>Contains</code>(<a data-ref="csharp/strings">서수 비교</a>)와 <code>Span</code> 검색은 <a data-ref="computer-architecture/simd">SIMD</a> 벡터 명령으로 여러 글자를 한 번에 비교하도록 최적화돼 있어, 직접 KMP를 짜는 것보다 대개 빠르다.
     </p>
     <p>
-      함정이 하나 있다. <code>string.IndexOf(string)</code>은 비교 방식을 주지 않으면 <strong>현재 문화권 기준</strong>으로 비교해서 이 최적화를 받지 못하고 느리며, 서버 문화권 설정에 따라 결과가 달라질 수도 있다. <code>Contains(string)</code>은 기본이 서수 비교라 둘의 동작이 다르다. 서버 코드에서는 <code>IndexOf(s, StringComparison.Ordinal)</code>처럼 비교 방식을 항상 적는다.
+      함정이 하나 있다. <code>string.IndexOf(string)</code>은 비교 방식을 주지 않으면 <strong>현재 문화권 기준</strong>으로 비교해서 이 최적화를 받지 못하고 느리며, 서버 문화권 설정에 따라 결과가 달라질 수도 있다. <code>Contains(string)</code>은 기본이 서수 비교라 둘의 동작이 다르다. 서버 코드에서는 <code>IndexOf(s, StringComparison.Ordinal)</code>처럼 비교 방식을 항상 적는다. 비교 방식별 차이와 기본이 문화권 비교인 API 목록은 <a href="../csharp/strings.html">문자열</a>에 정리했다.
     </p>
 
     <h3>P, NP, NP 완전</h3>

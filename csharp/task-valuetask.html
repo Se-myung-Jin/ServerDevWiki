@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Task와 ValueTask · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/task-valuetask">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="async-basics.html">async와 await의 실체</a> · <a href="boxing.html">박싱</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <code>Task&lt;T&gt;</code>는 클래스라서 결과를 돌려줄 때마다 객체 하나가 힙에 생긴다. 메서드가 기다리지 않고 바로 끝나도 그렇다. <code>ValueTask&lt;T&gt;</code>는 구조체라서 바로 끝난 결과를 할당 없이 그대로 담아 돌려준다.
+    </p>
+    <p>
+      그래서 이득을 보는 자리는 좁다. <strong>대부분의 호출이 동기로 끝나는</strong> 메서드여야 할당이 준다. 실제로 기다리게 되면 어딘가에 객체가 필요한 것은 같다. 대신 <code>ValueTask</code>에는 <span class="blank">정확히 한 번만 await한다</span>는 제약이 붙는다. 기본은 <code>Task</code>이고, <code>ValueTask</code>는 할당이 문제라는 것을 확인한 뜨거운 경로에 쓴다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>ValueTask는 셋 중 하나를 담는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 218" role="img" aria-label="ValueTask 구조체는 바로 끝난 결과 값, Task 객체, 또는 재사용되는 IValueTaskSource와 토큰 중 하나를 담는다">
+        <defs><marker id="vt-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-hit" x="30" y="78" width="180" height="56" rx="8"/>
+        <text class="f-strong" x="120" y="102" text-anchor="middle">ValueTask&lt;T&gt;</text>
+        <text class="f-sub" x="120" y="122" text-anchor="middle">구조체 · 값으로 돌려준다</text>
+        <rect class="f-box" x="330" y="20" width="200" height="44" rx="6"/>
+        <text class="f-text" x="430" y="40" text-anchor="middle">결과 값 T</text>
+        <text class="f-sub" x="430" y="56" text-anchor="middle">동기로 끝났다. 할당 없음</text>
+        <rect class="f-box" x="330" y="84" width="200" height="44" rx="6"/>
+        <text class="f-text" x="430" y="104" text-anchor="middle">Task&lt;T&gt; 객체</text>
+        <text class="f-sub" x="430" y="120" text-anchor="middle">비동기로 갔다. 할당 있음</text>
+        <rect class="f-box" x="330" y="148" width="200" height="44" rx="6"/>
+        <text class="f-text" x="430" y="168" text-anchor="middle">IValueTaskSource + 토큰</text>
+        <text class="f-sub" x="430" y="184" text-anchor="middle">재사용하는 객체. 할당 없음</text>
+        <line class="f-line" x1="210" y1="96" x2="326" y2="44" marker-end="url(#vt-a)"/>
+        <line class="f-line" x1="210" y1="106" x2="326" y2="106" marker-end="url(#vt-a)"/>
+        <line class="f-line" x1="210" y1="116" x2="326" y2="168" marker-end="url(#vt-a)"/>
+        <text class="f-sub" x="560" y="164">한 번 끝나면 다른 요청에</text>
+        <text class="f-sub" x="560" y="180">다시 쓰인다. 두 번 기다리면</text>
+        <text class="f-sub" x="560" y="196">남의 결과를 볼 수 있다</text>
+      </svg>
+      <figcaption>ValueTask는 결과 값, Task, 재사용되는 완료 소스 중 하나를 담는 구조체다. 바로 끝나면 값만 담아 할당이 없다. 소켓 수신처럼 같은 자리에서 반복되는 작업은 완료 소스 객체를 돌려 써서 비동기로 가도 할당이 없다.</figcaption>
+    </figure>
+
+    <h3>언제 할당이 생기나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>경우</th><th>async Task&lt;T&gt;</th><th>async ValueTask&lt;T&gt;</th></tr></thead>
+        <tbody>
+          <tr><td>멈추지 않고 바로 끝난다</td><td>결과를 담은 Task를 새로 할당한다. 단 <code>bool</code>, -1~8 사이의 <code>int</code>, 기본값 같은 몇몇 결과는 런타임이 캐시한 Task를 돌려준다</td><td>할당 없음</td></tr>
+          <tr><td>한 번이라도 멈춘다</td><td>상태 기계 상자와 Task가 할당된다</td><td>상태 기계 상자가 할당된다. 풀링 빌더를 쓰면 줄일 수 있다</td></tr>
+          <tr><td>반환값이 없다(Task, ValueTask)</td><td>바로 끝나면 캐시된 <code>Task.CompletedTask</code>라 할당 없음</td><td>할당 없음. 이득이 거의 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      캐시 조회처럼 대부분 바로 답이 나오는 메서드가 <code>ValueTask</code>의 자리다. <code>if (_cache.TryGetValue(id, out var v)) return v;</code>로 끝나는 경로가 99%라면, 그 99%에서 할당이 사라진다. 반대로 대부분 실제로 기다리는 메서드는 상태 기계 상자가 어차피 생기므로 <code>ValueTask</code>로 바꿔도 거의 줄지 않고, 구조체가 커서 복사 비용만 는다.
+    </p>
+    <p>
+      .NET 6부터는 메서드에 <code>[AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder&lt;&gt;))]</code>를 붙여 상태 기계 상자를 풀에서 꺼내 쓰게 할 수 있다. 실제로 멈추는 경로의 할당까지 줄이지만, 풀을 쓰는 비용이 따로 들어 재 보고 붙인다.
+    </p>
+
+    <h3>소켓 수신은 이미 할당 없이 돈다</h3>
+    <p>
+      <code>Socket.ReceiveAsync(Memory&lt;byte&gt;, ...)</code>는 <code>ValueTask&lt;int&gt;</code>를 돌려준다. 런타임이 소켓마다 완료 소스 객체를 하나 들고 있다가, 수신이 끝날 때마다 그 객체를 다시 쓴다. 그래서 세션 수신 루프는 비동기로 기다려도 호출마다 할당이 생기지 않는다. 예전의 <code>SocketAsyncEventArgs</code>를 직접 재사용하던 일을 이 구조가 대신한다(<a href="../server/completion-port.html">완료 알림 기반 서버</a>).
+    </p>
+    <p>
+      이 재사용이 한 번만 기다려야 하는 이유다. 결과를 받은 순간 완료 소스는 다음 수신에 쓰일 수 있다. 같은 <code>ValueTask</code>를 다시 기다리면 이미 다른 수신의 결과를 담은 객체를 보거나, 예외가 나거나, 영원히 기다린다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>반환 타입</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>대부분 실제로 기다린다(DB, 외부 API)</td><td>Task</td><td>할당은 어차피 생긴다. 제약 없는 쪽이 안전하다</td></tr>
+          <tr><td>대부분 바로 끝나고, 초당 수만 번 불린다</td><td>ValueTask</td><td>바로 끝나는 경로의 할당이 사라진다</td></tr>
+          <tr><td>공개 API라 쓰는 쪽이 어떻게 쓸지 모른다</td><td>Task</td><td>여러 번 await, 저장, WhenAll이 모두 안전하다</td></tr>
+          <tr><td>같은 객체에서 반복되는 I/O(수신 루프)</td><td>ValueTask + IValueTaskSource</td><td>완료 소스를 재사용해 비동기 경로까지 할당이 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>세션 캐시와 설정 조회가 ValueTask의 자리다.</strong> "메모리에 있으면 바로, 없으면 DB에서" 읽는 함수는 대부분 바로 끝난다. 패킷마다 불리는 경로라면 <code>ValueTask</code>로 할당을 없애는 효과가 크다.
+      </li>
+      <li>
+        <strong>ValueTask를 필드에 담아 두지 않는다.</strong> 나중에 누가 몇 번 기다릴지 보장할 수 없다. 여러 곳에서 기다려야 하면 받은 즉시 <code>.AsTask()</code>로 바꿔 Task로 보관한다. <code>AsTask()</code>도 한 번만 부른다.
+      </li>
+      <li>
+        <strong>여러 작업을 함께 기다릴 때는 Task로 바꾼다.</strong> <code>Task.WhenAll</code>은 Task를 받으므로 <code>ValueTask</code>는 <code>AsTask()</code>로 바꿔야 하고, 그때 할당이 생긴다. 한꺼번에 기다리는 경로라면 처음부터 Task가 단순하다.
+      </li>
+      <li>
+        <strong>바꾸기 전에 잰다.</strong> 할당 프로파일러나 <code>dotnet-counters</code>의 할당 속도로 그 메서드가 실제로 할당의 큰 몫인지 확인한다(<a data-ref="csharp/diagnostics">.NET 진단 도구</a>). 대부분의 메서드에서는 차이가 보이지 않는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>ValueTask는 정확히 한 번만 기다린다.</strong> 두 번 <code>await</code>, 동시에 두 곳에서 <code>await</code>, 끝나기 전에 <code>.Result</code> 읽기가 모두 금지다. 컴파일러는 막지 않는다.</li>
+      <li><strong>ValueTask를 .Result로 동기 대기하지 않는다.</strong> 완료 소스 기반 ValueTask는 끝나기 전에 결과를 읽는 것을 지원하지 않는다. 동기로 써야 하면 <code>IsCompletedSuccessfully</code>를 확인하고 읽거나 <code>AsTask()</code>로 바꾼다.</li>
+      <li><strong>ValueTask가 늘 싸지는 않다.</strong> 결과 타입이 크면 구조체 복사가 늘고, 이것을 기다리는 메서드의 상태 기계도 그만큼 커진다. 할당 하나를 없애려다 복사 여러 번을 늘릴 수 있다.</li>
+      <li><strong>반환값 없는 메서드는 대개 Task로 충분하다.</strong> 바로 끝나는 <code>async Task</code>는 캐시된 완료 Task를 돌려줘 원래 할당이 없다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

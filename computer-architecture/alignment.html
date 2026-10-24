@@ -123,7 +123,7 @@ struct EntityStatePacked
 }
 // Unsafe.SizeOf&lt;EntityStatePacked&gt;() == 24  → 엔티티 10만 개면 3.2MB → 2.4MB</code></pre>
     <ul>
-      <li><strong>크기는 재서 확인한다.</strong> C#에서는 <code>Unsafe.SizeOf&lt;T&gt;()</code>가 관리 메모리에서의 실제 크기다. <code>Marshal.SizeOf&lt;T&gt;()</code>는 네이티브로 마샬링할 때의 크기라서 둘이 다를 수 있다.</li>
+      <li><strong>크기는 재서 확인한다.</strong> C#에서는 <code>Unsafe.SizeOf&lt;T&gt;()</code>가 관리 메모리에서의 실제 크기다. <code>Marshal.SizeOf&lt;T&gt;()</code>는 네이티브로 <a data-ref="csharp/unsafe-interop">마샬링</a>할 때의 크기라서 둘이 다를 수 있다.</li>
       <li><strong>패킷을 구조체로 그대로 읽지 않는다.</strong> <code>Pack = 1</code> 구조체에 수신 버퍼를 덮어씌우는 방식은 간편하지만, 정렬과 <a href="endianness.html">엔디안</a>을 플랫폼에 맡기게 된다. 필드를 <code>BinaryPrimitives.ReadInt32LittleEndian</code> 같은 API로 하나씩 읽으면 정렬과 바이트 순서가 코드에 드러난다.</li>
       <li><strong>ARM 서버로 옮길 때 다시 본다.</strong> AWS Graviton 같은 ARM64 서버가 흔해졌다. 일반 읽기·쓰기는 비정렬이어도 동작하지만, 아래 주의 사항처럼 원자적 연산은 정렬이 깨지면 실패한다.</li>
     </ul>

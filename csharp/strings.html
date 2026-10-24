@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>문자열 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/strings">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="value-reference-types.html">값 형식과 참조 형식</a> · <a href="immutability-null.html">불변과 null 다루기</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      C#의 <code>string</code>은 힙에 놓이는 불변 객체다. <code>Replace</code>, <code>Substring</code>, <code>+</code>처럼 고치는 것처럼 보이는 연산은 모두 <strong>새 문자열을 할당한다</strong>. 루프에서 문자열을 이어 붙이면 단계마다 지금까지의 내용을 통째로 복사해, 복사량이 반복 횟수의 제곱으로 는다. 반복해서 붙일 때는 <span class="blank">StringBuilder</span>를 쓰고, 서버의 뜨거운 경로에서는 아예 문자열을 만들지 않고 <code>Span&lt;char&gt;</code>이나 UTF-8 바이트로 다룬다.
+    </p>
+    <p>
+      두 번째 함정은 비교다. <code>string</code> API 중 일부는 비교 방식을 적지 않으면 <strong>현재 문화권 규칙</strong>으로 비교한다. 느리고, 서버 설정에 따라 결과가 바뀐다. 식별자와 프로토콜 문자열은 항상 <code>StringComparison.Ordinal</code>로 비교한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>이어 붙일 때마다 새 문자열이 생긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 236" role="img" aria-label="+로 다섯 번 이어 붙이면 단계마다 더 긴 새 문자열이 만들어지고 앞의 것은 버려진다. StringBuilder는 한 버퍼에 이어 쓰고 마지막에 한 번 문자열을 만든다">
+        <text class="f-strong" x="20" y="24">s += "ab" 다섯 번</text>
+        <rect class="f-pad" x="20" y="40" width="40" height="24"/><text class="f-sub" x="40" y="57" text-anchor="middle">ab</text>
+        <rect class="f-pad" x="20" y="70" width="80" height="24"/><text class="f-sub" x="60" y="87" text-anchor="middle">abab</text>
+        <rect class="f-pad" x="20" y="100" width="120" height="24"/><text class="f-sub" x="80" y="117" text-anchor="middle">ababab</text>
+        <rect class="f-pad" x="20" y="130" width="160" height="24"/><text class="f-sub" x="100" y="147" text-anchor="middle">abababab</text>
+        <rect class="f-hit" x="20" y="160" width="200" height="24"/><text class="f-text" x="120" y="177" text-anchor="middle">ababababab</text>
+        <text class="f-sub" x="20" y="208">할당 5번, 복사 2+4+6+8+10 = 30글자. 점선 넷은 곧 쓰레기다</text>
+
+        <text class="f-strong" x="420" y="24">StringBuilder</text>
+        <rect class="f-box" x="420" y="40" width="320" height="24"/>
+        <rect class="f-hit" x="420" y="40" width="200" height="24"/><text class="f-text" x="520" y="57" text-anchor="middle">ababababab</text>
+        <text class="f-sub" x="680" y="57" text-anchor="middle">남은 용량</text>
+        <text class="f-sub" x="420" y="88">한 버퍼에 이어 쓴다. 차면 두 배로 늘린다</text>
+        <rect class="f-hit" x="420" y="110" width="200" height="24"/><text class="f-text" x="520" y="127" text-anchor="middle">ababababab</text>
+        <text class="f-sub" x="420" y="152">ToString()에서 문자열을 한 번 만든다</text>
+      </svg>
+      <figcaption>+=로 다섯 번 붙이면 다섯 개의 문자열이 할당되고 그때마다 앞의 내용을 다시 복사한다. n번이면 복사량이 n²에 비례한다. StringBuilder는 버퍼에 이어 쓰다가 마지막에 한 번만 문자열을 만든다.</figcaption>
+    </figure>
+    <p>
+      한 문장 안에서 몇 개를 붙이는 <code>a + b + c</code>는 문제가 아니다. 컴파일러가 <code>string.Concat(a, b, c)</code> 한 번으로 바꿔, 길이를 미리 계산해 한 번만 할당한다. 문제는 루프에서 결과를 누적할 때다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>쓸 것</th></tr></thead>
+        <tbody>
+          <tr><td>몇 개를 한 번에 붙인다</td><td><code>+</code> 그대로, 또는 보간 문자열</td></tr>
+          <tr><td>목록을 구분자로 잇는다</td><td><code>string.Join</code></td></tr>
+          <tr><td>반복 횟수를 모르는 누적</td><td><code>StringBuilder</code>(크기를 알면 용량을 미리 준다)</td></tr>
+          <tr><td>최종 길이를 정확히 안다</td><td><code>string.Create(length, state, (span, s) =&gt; ...)</code>로 할당 한 번에 직접 채운다</td></tr>
+          <tr><td>문자열이 아예 필요 없다(로그 버퍼, 패킷)</td><td><code>Span&lt;char&gt;</code>·<code>Span&lt;byte&gt;</code>에 <code>TryFormat</code>으로 바로 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>보간 문자열은 C# 10부터 처리기로 바뀐다</h3>
+    <p>
+      예전의 <code>$"hp={hp}"</code>는 <code>string.Format</code>으로 바뀌어, 형식 문자열을 실행 중에 해석하고 값 형식 인자를 <code>object</code>로 <a data-ref="csharp/boxing">박싱</a>했다. C# 10부터는 컴파일러가 <code>DefaultInterpolatedStringHandler</code>로 바꿔, 조각마다 <code>AppendLiteral</code>·<code>AppendFormatted&lt;T&gt;</code>를 부르는 코드를 만든다. 형식 해석과 박싱이 사라지고 버퍼는 풀에서 빌린다(<a href="compiler-transforms.html">컴파일러가 바꿔 주는 것</a>).
+    </p>
+    <p>
+      같은 장치를 라이브러리가 쓸 수 있다. 처리기를 받는 메서드는 보간 문자열을 문자열로 만들기 전에 받는다. <code>Debug.Assert</code>의 메시지나 일부 로깅 API는 이것으로 조건이 거짓일 때나 로그 수준이 꺼져 있을 때 <strong>문자열을 아예 만들지 않는다</strong>. 그렇지 않은 일반 <code>Log(string)</code>에 보간 문자열을 넘기면 로그가 꺼져 있어도 문자열은 만들어진다.
+    </p>
+
+    <h3>인터닝은 중복을 없애는 대신 수명을 늘린다</h3>
+    <p>
+      인터닝은 같은 내용의 문자열을 프로세스 안에 하나만 두는 장치다. 소스의 문자열 리터럴은 런타임이 인턴 풀에 넣어, 같은 리터럴은 같은 객체를 가리킨다. 실행 중에 만든 문자열은 <code>string.Intern</code>으로 직접 넣는다. 다만 리터럴 인턴은 런타임의 동작이지 언어가 보장하는 것은 아니므로(<code>CompilationRelaxations.NoStringInterning</code>), 참조가 같다는 것에 기대는 코드는 쓰지 않는다.
+    </p>
+    <p>
+      인턴 풀에 들어간 문자열은 <strong>프로세스가 끝날 때까지 회수되지 않는다</strong>. 아이템 등급 이름처럼 종류가 정해진 값에는 맞지만, 사용자 이름이나 채팅 내용처럼 종류가 끝없는 값을 인턴하면 메모리가 계속 는다. 그리고 인턴하려면 그 문자열을 먼저 만들어야 하므로 할당은 이미 일어난 뒤다. 할당을 줄이고 싶은 것이라면 인터닝이 아니라 아래의 Span과 UTF-8 쪽이 답이다.
+    </p>
+
+    <h3>비교 방식을 적는다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>비교</th><th>무엇을 보나</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td><code>Ordinal</code></td><td>UTF-16 코드 단위를 숫자로 비교한다. 가장 빠르다</td><td>키, 명령어, 프로토콜 문자열, 파일 경로</td></tr>
+          <tr><td><code>OrdinalIgnoreCase</code></td><td>대소문자만 무시한 서수 비교</td><td>대소문자 구분 없는 명령어, HTTP 헤더 이름</td></tr>
+          <tr><td><code>CurrentCulture</code></td><td>현재 문화권의 정렬 규칙</td><td>사용자에게 보여 줄 목록 정렬</td></tr>
+          <tr><td><code>InvariantCulture</code></td><td>문화권과 무관한 고정 규칙(언어 규칙은 적용된다)</td><td>문화권과 무관하게 일정해야 하는 언어적 정렬</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>==</code>와 <code>Equals(string)</code>, <code>Contains(string)</code>은 기본이 서수 비교다. 반면 <code>StartsWith(string)</code>, <code>EndsWith(string)</code>, <code>IndexOf(string)</code>, <code>CompareTo</code>는 비교 방식을 주지 않으면 <strong>현재 문화권</strong>으로 비교한다. 그 결과가 서버 문화권 설정에 따라 바뀌고 <a data-ref="computer-architecture/simd">SIMD</a> 최적화도 받지 못한다는 점은 <a href="../algorithm/strings-limits.html">문자열 검색과 계산 한계</a>에서 다뤘다. 대소문자 무시 비교를 <code>ToLower()</code>로 만들지 않는다. 문자열을 하나 더 만들고, 터키어의 i처럼 문화권마다 결과가 다르다.
+    </p>
+
+    <h3>문자열은 UTF-16이다</h3>
+    <p>
+      .NET 문자열은 <code>char</code>(UTF-16 코드 단위) 배열이다. 한글 한 글자는 <code>char</code> 하나지만, 이모지나 일부 한자는 서로게이트 쌍 <code>char</code> 두 개다. 그래서 <code>Length</code>는 글자 수가 아니라 코드 단위 수이고, 임의의 위치에서 자르면 쌍이 깨질 수 있다. 사용자가 보는 글자 수가 필요하면 <code>StringInfo</code>로 센다.
+    </p>
+    <p>
+      네트워크와 파일은 대개 UTF-8이다. 받은 바이트를 <code>Encoding.UTF8.GetString</code>으로 바꾸면 그때마다 문자열이 할당된다. C# 11의 UTF-8 리터럴 <code>"MOVE"u8</code>은 <code>ReadOnlySpan&lt;byte&gt;</code>를 바로 만들어, 받은 바이트와 할당 없이 비교할 수 있다. <code>System.Text.Json</code>의 <code>Utf8JsonReader</code>도 문자열을 만들지 않고 UTF-8 그대로 읽는다(<a href="ref-span.html">ref와 Span</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱마다 도는 경로에서 문자열을 만들지 않는다.</strong> 매 틱 <code>$"Player {id} moved to {pos}"</code>로 디버그 문자열을 만들어 두는 코드는 로그가 꺼져 있어도 할당을 낸다. 수천 명이면 GC가 바빠진다(<a href="gc-basics.html">GC 동작과 세대</a>). 로그 수준 검사를 먼저 하거나, 처리기 기반 로깅이나 소스 생성 로깅(<code>LoggerMessage</code>)을 쓴다.
+      </li>
+      <li>
+        <strong>채팅·명령어 파싱은 Span으로 자른다.</strong> <code>Split</code>은 조각마다 문자열을 할당한다. <code>ReadOnlySpan&lt;char&gt;</code>의 <code>IndexOf</code>와 슬라이스로 자르고, 숫자는 <code>int.Parse(span)</code>으로 바로 읽는다. 명령어 비교도 <code>span.Equals("/w", StringComparison.Ordinal)</code>처럼 서수로 한다.
+      </li>
+      <li>
+        <strong>키 문자열 비교는 서수로 고정한다.</strong> <code>Dictionary&lt;string, T&gt;</code>는 기본이 서수 비교라 안전하지만, 대소문자를 무시하려면 <code>StringComparer.OrdinalIgnoreCase</code>를 넘긴다. 문화권 비교자를 쓰면 서버를 다른 지역 설정으로 띄운 날 같은 키가 다르게 판정된다.
+      </li>
+      <li>
+        <strong>캐릭터 이름 길이는 바이트로도 제한한다.</strong> DB 컬럼과 패킷 필드는 바이트 단위인데 <code>Length</code>는 UTF-16 코드 단위다. 이모지가 섞이면 같은 <code>Length</code>라도 UTF-8 바이트 수가 크게 달라진다. 저장·전송 형식 기준으로 검사한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>StringBuilder가 언제나 빠른 것은 아니다.</strong> 몇 개를 한 번 붙이는 자리에서는 <code>string.Concat</code>이 길이를 미리 알아 한 번에 할당하므로 더 빠르다. 루프에서 누적할 때만 쓴다.</li>
+      <li><strong>Substring은 복사한다.</strong> 잘라 낸 길이만큼 새 문자열을 할당한다. 잠깐 보고 버릴 조각이면 <code>AsSpan(start, length)</code>로 본다.</li>
+      <li><strong>인터닝을 메모리 절약 기법으로 쓰지 않는다.</strong> 종류가 무한한 값을 넣으면 회수되지 않는 누수가 된다.</li>
+      <li><strong>string.Empty와 ""는 같다.</strong> 둘 다 같은 객체를 가리키고 성능 차이도 없다. 빈 문자열 검사는 <code>string.IsNullOrEmpty</code>나 <code>Length == 0</code>으로 한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LINQ와 지연 실행 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/linq-deferred">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="compiler-transforms.html">컴파일러가 바꿔 주는 것</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <code>var q = list.Where(…).Select(…);</code>는 결과를 만들지 않는다. "원본을 이렇게 걸러 이렇게 바꾼다"는 계산 방법을 담은 반복자 객체의 사슬을 만들 뿐이다. 실제 계산은 <code>foreach</code>로 돌거나 <code>ToList</code>, <code>Count</code>, <code>First</code>를 부르는 순간에 일어난다. 이것이 지연 실행이다.
+    </p>
+    <p>
+      그래서 같은 질의를 두 번 쓰면 <span class="blank">원본을 두 번 다시 훑는다</span>. 원본이 바뀌었으면 다른 결과가 나오고, 원본이 DB면 질의가 두 번 나간다. 람다가 캡처한 변수도 만든 시점이 아니라 실행 시점의 값으로 읽힌다. 편리함의 대가로 사슬 단계마다 객체와 대리자가 할당되므로, 게임 서버의 틱 루프에서는 쓸 자리를 가린다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>꺼낼 때 하나씩 끌어당긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="foreach가 Select 반복자에 다음 원소를 요청하면 Select가 Where에, Where가 원본 리스트에 요청을 전달해 원소가 하나씩 거슬러 올라온다">
+        <defs><marker id="lq-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="60" width="130" height="56" rx="6"/>
+        <text class="f-text" x="85" y="84" text-anchor="middle">원본 List</text>
+        <text class="f-sub" x="85" y="104" text-anchor="middle">몬스터 1000</text>
+
+        <rect class="f-hit" x="200" y="60" width="140" height="56" rx="6"/>
+        <text class="f-text" x="270" y="84" text-anchor="middle">Where 반복자</text>
+        <text class="f-sub" x="270" y="104" text-anchor="middle">m =&gt; m.Hp &gt; 0</text>
+
+        <rect class="f-hit" x="390" y="60" width="140" height="56" rx="6"/>
+        <text class="f-text" x="460" y="84" text-anchor="middle">Select 반복자</text>
+        <text class="f-sub" x="460" y="104" text-anchor="middle">m =&gt; m.Id</text>
+
+        <rect class="f-cell2" x="580" y="60" width="120" height="56" rx="6"/>
+        <text class="f-text" x="640" y="84" text-anchor="middle">foreach</text>
+        <text class="f-sub" x="640" y="104" text-anchor="middle">MoveNext()</text>
+
+        <line class="f-line f-dash" x1="578" y1="72" x2="534" y2="72" marker-end="url(#lq-a)"/>
+        <line class="f-line f-dash" x1="388" y1="72" x2="344" y2="72" marker-end="url(#lq-a)"/>
+        <line class="f-line f-dash" x1="198" y1="72" x2="154" y2="72" marker-end="url(#lq-a)"/>
+        <text class="f-sub" x="360" y="44" text-anchor="middle">"다음 하나" 요청이 위로 올라간다</text>
+
+        <line class="f-line" x1="152" y1="104" x2="196" y2="104" marker-end="url(#lq-a)"/>
+        <line class="f-line" x1="342" y1="104" x2="386" y2="104" marker-end="url(#lq-a)"/>
+        <line class="f-line" x1="532" y1="104" x2="576" y2="104" marker-end="url(#lq-a)"/>
+        <text class="f-sub" x="360" y="140" text-anchor="middle">조건을 통과한 원소 하나만 아래로 내려온다</text>
+
+        <text class="f-text" x="360" y="178" text-anchor="middle">질의를 만든 줄: 반복자 두 개와 람다 대리자만 생기고 원본은 읽지 않는다</text>
+        <text class="f-text" x="360" y="202" text-anchor="middle">질의를 두 번 열거: 이 사슬 전체가 처음부터 다시 돈다</text>
+      </svg>
+      <figcaption>LINQ 연산자는 앞 단계를 감싼 반복자 객체를 돌려준다. <code>foreach</code>가 다음 원소를 달라고 하면 요청이 사슬을 거슬러 원본까지 올라가고, 조건을 통과한 원소 하나만 내려온다. 그래서 <code>First()</code>나 <code>Take(3)</code>은 필요한 만큼만 읽고 멈춘다.</figcaption>
+    </figure>
+    <p>
+      <code>Where</code>와 <code>Select</code>는 <code>yield return</code>으로 만든 반복자와 같은 구조다(<a href="compiler-transforms.html">컴파일러가 바꿔 주는 것</a>). 원소를 하나 받아 하나 내보내므로 메모리를 따로 쓰지 않고, 필요한 만큼만 계산한다. 하지만 모든 연산자가 그렇지는 않다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>연산자</th><th>언제 도나</th><th>메모리</th></tr></thead>
+        <tbody>
+          <tr><td><code>Where</code>, <code>Select</code>, <code>Take</code>, <code>Skip</code>, <code>Concat</code></td><td>열거할 때, 원소 하나씩</td><td>거의 없다(스트리밍)</td></tr>
+          <tr><td><code>OrderBy</code>, <code>GroupBy</code>, <code>Reverse</code></td><td>열거할 때. 단, 첫 원소를 내기 전에 앞 단계를 끝까지 읽는다</td><td>원소 전체를 버퍼에 담는다</td></tr>
+          <tr><td><code>Distinct</code></td><td>열거할 때, 원소 하나씩. 처음 보는 원소를 바로 내보낸다</td><td>지금까지 본 원소를 집합에 기억해 둔다. 서로 다른 원소가 많을수록 커진다</td></tr>
+          <tr><td><code>ToList</code>, <code>ToArray</code>, <code>ToDictionary</code></td><td>그 자리에서 즉시</td><td>결과를 새 컬렉션에 담는다</td></tr>
+          <tr><td><code>Count()</code>, <code>Sum</code>, <code>Any</code>, <code>First</code>, <code>Max</code></td><td>그 자리에서 즉시</td><td>값 하나. <code>Any</code>와 <code>First</code>는 찾으면 멈춘다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      사슬 중간에 <code>OrderBy</code>가 하나 끼면 뒤에 <code>Take(3)</code>을 붙여도 앞 단계 전체를 읽어 정렬한 뒤에야 세 개가 나온다. "필요한 만큼만"이라는 지연 실행의 이점이 그 지점에서 끊긴다.
+    </p>
+
+    <h3>질의는 결과가 아니라 계산 방법이다</h3>
+<pre><code class="language-csharp">int minLevel = 10;
+var strong = players.Where(p =&gt; p.Level &gt;= minLevel);   // 아직 아무것도 하지 않는다
+
+minLevel = 50;                       // 람다는 변수 자체를 캡처했다
+int n = strong.Count();              // 50 이상으로 센다. 원본을 한 번 훑는다
+foreach (var p in strong) Send(p);   // 원본을 또 훑는다. 그 사이 players가 바뀌었으면 n과 다르다
+
+var snapshot = strong.ToList();      // 한 번만 계산해 담아 둔다</code></pre>
+    <p>
+      여러 번 열거하면 계산이 반복되는 것만이 문제가 아니다. 원본이 그 사이에 바뀌면 같은 질의가 다른 결과를 내고, 원본이 한 번만 읽히는 스트림이면 두 번째 열거는 예외 없이 빈 결과를 낸다. 열거하는 도중에 원본 <code>List&lt;T&gt;</code>를 고치면 <code>InvalidOperationException</code>이 난다. 여러 번 쓸 결과면 <code>ToList</code>로 담는다. 메서드 밖으로 질의를 그대로 돌려주면, 호출한 쪽이 연결이나 트랜잭션이 닫힌 뒤에 열거할 수도 있다.
+    </p>
+
+    <h3>IQueryable은 식을 넘기고 번역은 남이 한다</h3>
+    <p>
+      <code>IEnumerable&lt;T&gt;</code>의 LINQ는 람다를 대리자(컴파일된 코드)로 받아 메모리에서 실행한다. <code>IQueryable&lt;T&gt;</code>의 LINQ는 같은 람다를 <strong>식 트리</strong>(<code>Expression&lt;Func&lt;…&gt;&gt;</code>)로 받는다. 코드가 아니라 "p.Level ≥ 50"이라는 구조를 데이터로 넘기는 것이고, EF Core 같은 제공자가 그것을 SQL로 번역해 DB에서 실행한다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th><code>IEnumerable&lt;T&gt;</code></th><th><code>IQueryable&lt;T&gt;</code></th></tr></thead>
+        <tbody>
+          <tr><td>람다가 되는 것</td><td>대리자(실행할 코드)</td><td>식 트리(해석할 데이터)</td></tr>
+          <tr><td>어디서 도나</td><td>이 프로세스의 메모리</td><td>제공자가 번역한 곳(대개 DB)</td></tr>
+          <tr><td>번역 못 하는 메서드를 쓰면</td><td>해당 없음</td><td>EF Core 3.0부터는 마지막 <code>Select</code>만 메모리에서 계산하고, 그 밖의 자리(<code>Where</code> 등)면 실행할 때 예외</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      경계를 넘는 순간을 코드에 드러낸다. <code>AsEnumerable()</code>이나 <code>ToList()</code> 앞은 SQL, 뒤는 메모리다. 이 경계를 모르고 <code>ToList()</code>를 앞에 붙이면 필터 없이 테이블 전체를 읽어 온 뒤 메모리에서 거른다. 데이터가 적을 때는 멀쩡하다가 운영 데이터에서 무너진다.
+    </p>
+
+    <h3>할당 비용</h3>
+    <p>
+      LINQ 한 줄의 비용은 원소를 처리하는 계산보다 주변에서 나온다. 연산자마다 반복자 객체가 하나, 람다마다 대리자가 하나, 바깥 변수를 캡처하면 디스플레이 클래스가 하나 생긴다. 열거할 때는 원소마다 대리자를 거치는 간접 호출이 붙는다. <code>ToList</code>는 결과 리스트와 그 내부 배열을 만든다.
+    </p>
+    <p>
+      .NET은 버전마다 이 비용을 줄여 왔다. 원본이 배열이나 <code>List&lt;T&gt;</code>이면 <code>Count()</code>가 원소를 세지 않고 길이를 바로 읽고, 이어진 <code>Where</code>와 <code>Select</code>는 반복자 하나로 합쳐지고, 숫자 배열의 <code>Sum</code>·<code>Min</code>·<code>Max</code>는 SIMD로 돈다(<a href="../computer-architecture/simd.html">SIMD와 벡터 연산</a>). 그래도 사슬을 만들고 대리자를 부르는 비용 자체는 남는다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>자리</th><th>쓰는 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>서버 기동, 기획 데이터 로딩, 운영 도구, 관리자 API</td><td>LINQ</td><td>한 번 돌거나 드물게 돈다. 읽기 쉬움이 더 크다</td></tr>
+          <tr><td>요청 처리(로그인, 상점) 중 몇십 개 원소</td><td>LINQ. 결과를 여러 번 쓰면 <code>ToList</code></td><td>할당이 요청 하나에 몇 개 늘 뿐이다</td></tr>
+          <tr><td>틱마다, 대상 수천 개에 대해 도는 코드</td><td><code>for</code>/<code>foreach</code> 반복문, Span</td><td>틱마다 반복자·대리자·클로저가 쌓여 <a data-ref="csharp/gc-basics">GC</a>를 부른다</td></tr>
+          <tr><td>같은 결과를 여러 번 쓴다</td><td><code>ToList</code>/<code>ToArray</code>로 한 번 담기</td><td>원본을 다시 훑지 않고 결과가 고정된다</td></tr>
+          <tr><td>DB 질의</td><td><code>IQueryable</code>로 조건을 다 붙인 뒤 마지막에 한 번 실행</td><td>필터가 SQL로 내려가야 필요한 행만 온다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 루프에서는 반복문으로 쓴다.</strong> <code>zone.Monsters.Where(m =&gt; m.IsAlive &amp;&amp; m.Target == id).ToList()</code>를 틱마다 몬스터마다 부르면 그때마다 반복자, 대리자, 디스플레이 클래스, 리스트가 생긴다. 재사용하는 리스트에 반복문으로 채우면 할당이 0이 된다. 같은 성능 문제를 피하려고 구조체 기반으로 만든 LINQ 대체 라이브러리도 있지만, 먼저 그 경로가 정말 뜨거운지 프로파일러로 확인한다(<a href="../server/tick-loop.html">서버 틱 루프</a>).
+      </li>
+      <li>
+        <strong>질의를 필드에 담아 두지 않는다.</strong> <code>IEnumerable&lt;Player&gt; nearby = …Where(…)</code>를 멤버로 들고 있으면 꺼낼 때마다 원본을 다시 훑고, 람다가 캡처한 객체를 계속 붙잡는다. 결과가 필요하면 결과를 담는다.
+      </li>
+      <li>
+        <strong>DB 접근 계층은 실행 지점을 숨기지 않는다.</strong> 저장소 메서드가 <code>IQueryable</code>을 그대로 돌려주면 호출하는 쪽에서 언제 SQL이 나가는지, 몇 번 나가는지 알 수 없다. 메서드 안에서 실행해 결과를 돌려준다(<a data-ref="database/query-plan">쿼리 실행 계획</a>).
+      </li>
+      <li>
+        <strong>정렬 결과를 결정적으로 만든다.</strong> 랭킹이나 보상 지급 순서를 <code>OrderBy</code>로 정할 때 키가 같은 원소의 순서도 정해 둔다. <code>OrderBy</code>는 안정 정렬이지만 원본 순서가 <code>Dictionary</code> 순회처럼 매번 다르면 결과도 매번 다르다. <code>ThenBy</code>로 고유 키를 더한다(<a href="../algorithm/sorting.html">정렬</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>질의를 만드는 줄은 아무것도 검사하지 않는다.</strong> 원본이 null이 아니면 예외 없이 지나가고, 람다 안의 오류와 연결 문제는 열거할 때 터진다. 스택 추적이 엉뚱한 곳을 가리키는 이유다.</li>
+      <li><strong><code>Count() &gt; 0</code> 대신 <code>Any()</code>를 쓴다.</strong> 컬렉션이 아닌 질의에서 <code>Count()</code>는 끝까지 세고, <code>Any()</code>는 하나 찾으면 멈춘다.</li>
+      <li><strong>원본을 열거하는 중에 고치지 않는다.</strong> 질의 결과를 <code>foreach</code>하며 원본 리스트에서 <code>Remove</code>하면 예외가 난다. 지울 것을 <code>ToList</code>로 먼저 모은 뒤 지운다.</li>
+      <li><strong>애매하면 담아 둔다.</strong> 여러 번 실행되는 것은 눈에 안 보이고, 메모리를 조금 더 쓰는 것은 보인다. 다만 수십만 행처럼 큰 결과는 담는 비용을 따져 스트리밍으로 둔다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

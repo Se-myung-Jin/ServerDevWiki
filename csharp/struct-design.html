@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>struct와 class 고르기 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/struct-design">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="value-reference-types.html">값 형식과 참조 형식</a> · <a href="boxing.html">박싱</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      struct는 할당을 복사로 바꾸는 선택이다. 그래서 조건이 좁다. <strong>작고, 만든 뒤 바뀌지 않고, 많이 만들고, 통째로 하나의 값인 것</strong>만 struct가 맞다. 좌표, 벡터, 색, 금액, 엔티티 ID가 그렇다. 정체성이 있고 여러 곳이 함께 가리키며 상태가 바뀌는 것은 class다.
+    </p>
+    <p>
+      struct는 기본으로 <code>readonly struct</code>로 만든다. 바뀌는 struct는 사본을 고치고 원본은 그대로인 버그를 부르고, 컴파일러가 원본을 지키려고 몰래 사본을 만드는 <span class="blank">방어적 복사</span>를 일으킨다. 복사를 줄이려고 붙인 <code>in</code>이 오히려 복사를 늘리는 이유도 이것이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>네 조건이 모두 맞아야 한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>조건</th><th>어기면</th></tr></thead>
+        <tbody>
+          <tr><td>작다(대략 16바이트 안팎)</td><td>넘기고 반환하고 대입할 때마다 통째로 복사한다. 크기가 커지면 할당을 아낀 것보다 복사가 비싸진다</td></tr>
+          <tr><td>바뀌지 않는다</td><td>컬렉션·프로퍼티에서 꺼낸 사본을 고치는 버그, 방어적 복사</td></tr>
+          <tr><td>많이, 짧게 쓴다</td><td>할당을 아낄 일이 없으면 struct로 얻는 것이 없다</td></tr>
+          <tr><td>하나의 값이다</td><td>정체성("같은 플레이어인가")이 필요하면 참조가 맞다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      16바이트 기준은 .NET 설계 지침에서 왔다. 64비트에서 레지스터 두 개, 참조 두 개 크기다. 이 정도면 복사가 레지스터 몇 번의 이동으로 끝난다. 절대 기준은 아니다. 32바이트 struct라도 배열에 담아 순회만 하고 넘기지 않는다면 struct가 낫고, 8바이트라도 인터페이스로 자주 다룬다면 박싱 때문에 class가 낫다. 넘기는 방식과 횟수가 크기만큼 중요하다.
+    </p>
+
+    <h3>가변 struct는 사본을 고친다</h3>
+<pre><code class="language-csharp">struct Stat { public int Atk; public void Buff() =&gt; Atk += 10; }
+
+var list = new List&lt;Stat&gt; { new Stat { Atk = 5 } };
+list[0].Atk = 20;      // 컴파일 오류 CS1612: 인덱서가 돌려준 사본을 고치려 한다
+list[0].Buff();        // 컴파일된다. 사본의 Atk만 15가 되고 리스트 안은 5 그대로다
+
+var arr = new Stat[1];
+arr[0].Buff();         // 배열 원소는 사본이 아니라 그 자리다. 실제로 바뀐다</code></pre>
+    <p>
+      필드 대입은 컴파일러가 막아 주지만 메서드 호출은 막지 못한다. 인덱서와 프로퍼티는 값을 반환하므로 사본이 나오고, 배열 원소와 지역 변수, <code>ref</code> 반환만 원래 자리를 가리킨다. 같은 코드가 <code>List</code>에서는 아무 일도 안 하고 배열에서는 동작한다. <code>readonly struct</code>로 만들면 상태를 고치는 메서드 자체를 쓸 수 없어 이 부류가 컴파일에서 막힌다.
+    </p>
+
+    <h3>방어적 복사</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 250" role="img" aria-label="in 매개변수나 readonly 필드로 받은 일반 struct의 메서드를 부르면 컴파일러가 사본을 만들어 그 위에서 호출한다. readonly struct면 사본 없이 원본에서 바로 호출한다">
+        <defs><marker id="sd-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="180" y="24" text-anchor="middle">struct Big (일반)</text>
+        <text class="f-sub" x="180" y="44" text-anchor="middle">void F(in Big b) =&gt; b.Length();</text>
+        <rect class="f-box" x="40" y="62" width="120" height="40" rx="4"/>
+        <text class="f-text" x="100" y="87" text-anchor="middle">원본 (참조로 옴)</text>
+        <line class="f-line" x1="166" y1="82" x2="206" y2="82" marker-end="url(#sd-a)"/>
+        <rect class="f-hit" x="212" y="62" width="120" height="40" rx="4"/>
+        <text class="f-text" x="272" y="87" text-anchor="middle">숨은 사본</text>
+        <text class="f-sub" x="272" y="122" text-anchor="middle">Length()가 고칠지 몰라</text>
+        <text class="f-sub" x="272" y="140" text-anchor="middle">사본 위에서 부른다</text>
+        <text class="f-sub" x="186" y="176" text-anchor="middle">부를 때마다 통째로 복사. in이 오히려 손해</text>
+        <line class="f-grid" x1="370" y1="16" x2="370" y2="186"/>
+        <text class="f-strong" x="545" y="24" text-anchor="middle">readonly struct Big</text>
+        <text class="f-sub" x="545" y="44" text-anchor="middle">void F(in Big b) =&gt; b.Length();</text>
+        <rect class="f-box" x="485" y="62" width="120" height="40" rx="4"/>
+        <text class="f-text" x="545" y="87" text-anchor="middle">원본 (참조로 옴)</text>
+        <text class="f-sub" x="545" y="122" text-anchor="middle">어떤 멤버도 상태를 못 고친다</text>
+        <text class="f-sub" x="545" y="140" text-anchor="middle">원본에서 바로 부른다</text>
+        <text class="f-sub" x="545" y="176" text-anchor="middle">복사 없음. in이 뜻대로 동작한다</text>
+        <rect class="f-pad" x="40" y="196" width="640" height="38" rx="6"/>
+        <text class="f-text" x="360" y="220" text-anchor="middle">같은 일이 readonly 필드, ref readonly 반환, in 매개변수 모두에서 일어난다</text>
+      </svg>
+      <figcaption>읽기 전용 자리에 있는 일반 struct의 멤버를 부르면, 컴파일러는 그 멤버가 상태를 고칠 수도 있다고 보고 사본을 만든다. readonly struct이거나 그 멤버가 readonly로 표시되어 있으면 사본이 필요 없다.</figcaption>
+    </figure>
+    <p>
+      방어적 복사는 읽기 전용이어야 하는 자리에서 일어난다. <code>in</code> 매개변수, <code>readonly</code> 필드, <code>ref readonly</code> 반환값이다. 일반 struct의 메서드나 직접 쓴 프로퍼티 접근자를 부르면 매번 사본이 생긴다. C# 8부터는 struct 전체가 아니라 멤버 하나에 <code>readonly</code>를 붙여 "이 멤버는 상태를 고치지 않는다"고 표시할 수 있고, 자동 구현 프로퍼티의 <code>get</code>은 컴파일러가 알아서 readonly로 다룬다.
+    </p>
+    <p>
+      <code>in</code>에는 함정이 하나 더 있다. 변수가 아닌 값(상수, 프로퍼티 결과, 식)을 넘기면 컴파일러가 임시 변수를 만들어 그 참조를 넘긴다. 호출하는 쪽에서는 보이지 않는다. C# 12의 <code>ref readonly</code> 매개변수는 호출하는 쪽이 변수를 넘기도록 경고해 이 일을 드러낸다.
+    </p>
+
+    <h3>struct를 정의하는 방법</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>선언</th><th>특징</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td><code>readonly struct</code> (C# 7.2)</td><td>모든 필드가 readonly. 방어적 복사가 없다</td><td>대부분의 struct의 기본</td></tr>
+          <tr><td><code>readonly record struct</code> (C# 10)</td><td>위에 더해 <a data-ref="csharp/equality">값 동등성</a>, <code>IEquatable&lt;T&gt;</code>, <code>ToString</code>, <code>with</code> 식을 컴파일러가 만든다</td><td>ID, 좌표, 키처럼 비교가 잦은 값</td></tr>
+          <tr><td><code>record struct</code> (C# 10)</td><td>값 동등성은 같고 필드는 바뀔 수 있다</td><td>임시로 모으는 결과 묶음. 키로는 쓰지 않는다</td></tr>
+          <tr><td><code>ref struct</code> (C# 7.2)</td><td>스택에만 산다. 박싱·필드 보관·async 불가</td><td><code>Span&lt;T&gt;</code>처럼 메모리를 빌려 보는 타입(<a data-ref="csharp/ref-span">ref와 Span</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>좌표, 벡터, 색, 금액, 시간 범위</td><td><code>readonly struct</code></td><td>작고 많이 만들고 통째로 하나의 값이다</td></tr>
+          <tr><td>엔티티 ID, 아이템 ID, 키</td><td><code>readonly record struct</code></td><td>비교와 해시가 잦다. 박싱 없는 동등성이 저절로 생긴다</td></tr>
+          <tr><td>플레이어, 세션, 몬스터, 서비스</td><td>class</td><td>정체성이 있고 여러 곳이 함께 가리키며 상태가 바뀐다</td></tr>
+          <tr><td>대량으로 담아 순회만 하는 데이터</td><td>struct 배열</td><td>원소가 연속으로 박혀 캐시에 잘 맞고 GC가 볼 참조가 없다</td></tr>
+          <tr><td>다형성이 필요하다</td><td>class</td><td>struct는 상속이 없고 인터페이스로 다루면 박싱된다</td></tr>
+          <tr><td>크기가 애매하다</td><td>class로 시작해 재 본다</td><td>struct는 복사 의미가 바뀌어 나중에 되돌릴 때 고칠 곳이 많다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>ID는 <code>int</code>가 아니라 struct로 감싼다.</strong> <code>readonly record struct PlayerId(long Value)</code>와 <code>ItemId</code>를 따로 두면 플레이어 ID 자리에 아이템 ID를 넘기는 실수가 컴파일 오류가 된다. 크기와 비용은 <code>long</code>과 같다.
+      </li>
+      <li>
+        <strong>패킷 필드 묶음은 작은 readonly struct로.</strong> 수신 처리에서 위치·방향·속도를 struct로 꺼내 넘기면 패킷마다 할당이 없다. 바이트와 오가는 배치 규칙은 C++ 쪽과 같은 질문이다(<a href="../cpp/object-layout.html">객체 배치와 타입 특성</a>).
+      </li>
+      <li>
+        <strong>큰 struct를 <code>Dictionary</code> 값으로 두지 않는다.</strong> 값을 꺼낼 때마다 통째로 복사되고, 고치려면 꺼내서 고친 뒤 다시 넣어야 한다. .NET 6의 <code>CollectionsMarshal.GetValueRefOrNullRef</code>로 참조를 얻을 수 있지만, 그 사이 딕셔너리를 바꾸면 참조가 무효가 된다. 대개 class로 두는 편이 낫다.
+      </li>
+      <li>
+        <strong>틱마다 만드는 임시 계산 결과는 struct가 맞다.</strong> 판정 결과, 거리와 대상 묶음처럼 만들고 바로 버리는 것을 class로 두면 그 수만큼 0세대 쓰레기가 생긴다(<a data-ref="csharp/gc-basics">GC 동작과 세대</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>struct가 늘 빠른 것은 아니다.</strong> 할당을 없애는 대신 복사를 늘리는 맞바꿈이다. 크기와 넘기는 횟수에 따라 어느 쪽이 큰지 뒤집힌다.</li>
+      <li><strong><code>in</code>은 <code>readonly struct</code>와 짝일 때만 이득이다.</strong> 일반 struct에 붙이면 멤버를 부를 때마다 방어적 복사가 생긴다.</li>
+      <li><strong>가변 struct는 <code>List</code>에서 고쳐지지 않는다.</strong> 인덱서가 사본을 준다. 메서드로 고치면 컴파일 오류도 없이 사본만 바뀐다.</li>
+      <li><strong>struct를 인터페이스로 다루면 struct의 이점이 사라진다.</strong> 박싱으로 할당이 생기고, 박스 안을 고쳐도 원래 값은 바뀌지 않는다.</li>
+      <li><strong>기본값이 유효한 상태여야 한다.</strong> 배열 원소와 <code>default</code>는 생성자를 거치지 않고 모든 필드가 0이다. 0이 말이 안 되는 struct(예: 0이 아니어야 하는 나눗수)는 그 경우를 처리해야 한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

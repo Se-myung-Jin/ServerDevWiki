@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>async와 await의 실체 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/async-basics">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/io-models.html">I/O 모델</a> · <a href="../operating-system/thread-pool.html">스레드 풀과 실행 모델</a> · <a href="compiler-transforms.html">컴파일러가 바꿔 주는 것</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      컴파일러는 <code>async</code> 메서드를 <strong>상태 기계</strong>로 바꾼다. <code>await</code>마다 멈출 수 있는 지점이 생기고, 어디까지 실행했는지와 <code>await</code>를 넘어 살아야 하는 지역 변수가 상태 기계의 필드에 담긴다. 기다릴 대상이 아직 안 끝났으면 메서드는 그 자리에서 빠져나오고, 대상이 끝나면 저장해 둔 지점부터 이어서 실행한다.
+    </p>
+    <p>
+      <code>async</code>는 스레드를 만들지 않는다. I/O를 기다리는 동안에는 그 일을 맡아 도는 스레드가 아예 없다. 그래서 요청 하나가 빨라지지는 않고, <span class="blank">같은 스레드 수로 더 많은 요청을 동시에 받을 수 있게</span> 된다. 비동기를 쓰는 이유는 속도가 아니라 규모다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>멈추면 메서드를 빠져나오고, 끝나면 이어서 실행한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 262" role="img" aria-label="async 메서드가 await에서 멈추면 호출한 스레드는 미완료 Task를 받아 돌아가고, I/O가 끝나면 스레드 풀 스레드가 상태 기계에서 이어 실행한다">
+        <defs><marker id="ab-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-text" x="20" y="58">호출한 스레드</text>
+        <rect class="f-hit" x="150" y="36" width="170" height="34" rx="6"/><text class="f-text" x="235" y="58" text-anchor="middle">앞부분 실행 → await</text>
+        <rect class="f-box" x="340" y="36" width="230" height="34" rx="6"/><text class="f-sub" x="455" y="58" text-anchor="middle">미완료 Task를 받아 돌아가 다른 일</text>
+        <line class="f-line" x1="320" y1="53" x2="338" y2="53" marker-end="url(#ab-a)"/>
+        <rect class="f-pad" x="300" y="104" width="190" height="44" rx="6"/>
+        <text class="f-strong" x="395" y="123" text-anchor="middle">상태 기계 (힙)</text>
+        <text class="f-sub" x="395" y="140" text-anchor="middle">재개 지점 · 살아남는 지역 변수</text>
+        <line class="f-line" x1="250" y1="72" x2="318" y2="102" marker-end="url(#ab-a)"/>
+        <text class="f-sub" x="150" y="96">멈추며 상태를 맡긴다</text>
+        <text class="f-text" x="20" y="164">OS · 장치</text>
+        <rect class="f-box" x="150" y="170" width="300" height="28" rx="6"/><text class="f-sub" x="300" y="189" text-anchor="middle">I/O 진행 중. 이 일을 맡은 스레드는 없다</text>
+        <text class="f-text" x="20" y="232">스레드 풀 스레드</text>
+        <rect class="f-hit" x="520" y="210" width="210" height="34" rx="6"/><text class="f-text" x="625" y="232" text-anchor="middle">이어서 실행 → 완료</text>
+        <line class="f-line" x1="455" y1="150" x2="560" y2="207" marker-end="url(#ab-a)"/>
+        <text class="f-sub" x="520" y="170">완료 통지로 재개한다</text>
+      </svg>
+      <figcaption>await에서 기다릴 대상이 아직 안 끝났으면 상태를 힙에 맡기고 메서드를 빠져나온다. 호출한 쪽은 미완료 Task를 받아 바로 다른 일을 한다. I/O가 끝나면 완료 통지를 받은 스레드 풀 스레드가 상태 기계를 깨워 이어 실행한다.</figcaption>
+    </figure>
+    <p>
+      <code>await x</code>를 만나면 컴파일러가 넣어 둔 코드가 다음 순서로 돈다.
+    </p>
+    <ol>
+      <li><code>x.GetAwaiter()</code>로 기다리는 객체(awaiter)를 얻고 <code>IsCompleted</code>를 묻는다.</li>
+      <li>이미 끝났으면 멈추지 않고 <code>GetResult()</code>로 결과를 받아 바로 다음 줄로 간다. 이것이 <strong>동기 완료 빠른 경로</strong>다.</li>
+      <li>안 끝났으면 상태 번호를 적고, awaiter에 "끝나면 이 상태 기계의 <code>MoveNext</code>를 불러 달라"고 맡긴 뒤 메서드에서 빠져나온다.</li>
+      <li>대상이 끝나면 맡겨 둔 콜백이 <code>MoveNext</code>를 부르고, 상태 번호로 그 지점에 뛰어 이어 간다.</li>
+    </ol>
+    <p>
+      <code>await</code>할 수 있는 것은 <code>Task</code>만이 아니다. <code>GetAwaiter()</code>를 가지고, 그 결과가 <code>IsCompleted</code>, <code>OnCompleted</code>, <code>GetResult</code>를 가지면 무엇이든 된다(awaiter 패턴). <code>ValueTask</code>, <code>Task.Yield()</code>, 소켓의 비동기 메서드가 이 패턴으로 돈다.
+    </p>
+
+    <h3>상태 기계는 처음 멈출 때 힙으로 간다</h3>
+    <p>
+      릴리스 빌드에서 상태 기계는 구조체로 만들어진다. 끝까지 한 번도 멈추지 않으면 스택에서 쓰이고 사라지므로 상태 기계 자체의 할당이 없다. 처음으로 실제로 멈추는 순간, 런타임이 이 구조체를 힙의 상자 객체로 옮긴다(<a data-ref="csharp/boxing">박싱</a>). 멈춘 뒤에도 살아 있어야 하기 때문이다. 디버그 빌드는 디버깅 편의상 처음부터 클래스로 만든다.
+    </p>
+    <p>
+      그래서 <code>await</code>를 넘어 사는 지역 변수는 결국 힙에 있다. <code>Span&lt;T&gt;</code> 같은 ref struct를 <code>await</code> 앞뒤에 걸쳐 쓸 수 없는 이유다(<a data-ref="csharp/ref-span">ref와 Span</a>). 멈추지 않고 끝나는 경로가 많을수록 할당이 줄고, 이 성질을 반환 타입까지 넓힌 것이 <a data-ref="csharp/task-valuetask">Task와 ValueTask</a>다. 숨은 클래스로 바뀌는 다른 문법은 <a data-ref="csharp/compiler-transforms">컴파일러가 바꿔 주는 것</a>에서 다룬다.
+    </p>
+
+    <h3>I/O를 기다리는 동안 스레드는 없다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>동기 호출</th><th>비동기 호출</th></tr></thead>
+        <tbody>
+          <tr><td>기다리는 동안 스레드</td><td>그 호출 안에 묶여 있다</td><td>놓아준다. 기다리는 일을 맡은 스레드가 없다</td></tr>
+          <tr><td>요청 하나에 걸리는 시간</td><td>기준</td><td>상태 기계를 거치는 만큼 조금 더 든다</td></tr>
+          <tr><td>동시에 받을 수 있는 요청</td><td>스레드 수만큼</td><td>스레드 수와 상관없이 많다</td></tr>
+          <tr><td>스레드가 모자랄 때</td><td>대기열이 밀린다(스레드 풀 고갈)</td><td>잘 생기지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      소켓 수신을 비동기로 걸면, 요청은 OS와 장치가 처리하고 끝나면 완료 통지가 온다. Windows는 IOCP, Linux는 epoll이 그 통지를 전하고, .NET 런타임이 그것을 받아 스레드 풀에서 이어지는 코드를 돌린다(<a href="../server/completion-port.html">완료 알림 기반 서버</a>). 기다리는 시간 동안 아무 스레드도 그 요청 때문에 잠들어 있지 않다.
+    </p>
+
+    <h3>첫 await 전까지는 호출한 스레드에서 동기로 돈다</h3>
+    <p>
+      <code>async</code>를 붙였다고 메서드가 다른 스레드에서 시작하지 않는다. 첫 <code>await</code>에서 실제로 멈출 때까지는 부른 스레드가 그대로 실행한다. 그 앞에 무거운 계산이나 동기 I/O가 있으면 부른 쪽이 그만큼 막힌다. "async 메서드를 불렀는데 왜 호출이 안 돌아오나"의 흔한 원인이다.
+    </p>
+
+    <h2>선택 기준</h2>
+
+    <h3>I/O는 await, CPU 계산은 Task.Run</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>일의 종류</th><th>쓰는 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>소켓, 파일, DB, HTTP</td><td>비동기 API를 바로 <code>await</code></td><td>기다리는 동안 스레드를 쓰지 않는다</td></tr>
+          <tr><td>무거운 계산(길찾기, 압축, 직렬화)</td><td><code>Task.Run</code>으로 스레드 풀에 넘긴다</td><td>계산은 어딘가의 스레드가 해야 한다. 지금 스레드를 막지 않으려고 옮긴다</td></tr>
+          <tr><td>동기 API만 있는 I/O</td><td>되도록 비동기 API로 바꾼다</td><td><code>Task.Run</code>으로 감싸면 막히는 스레드가 풀 스레드로 바뀔 뿐 줄지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>Task.Run(() =&gt; db.Query())</code>는 비동기처럼 보이지만, 풀 스레드 하나가 쿼리 내내 막힌다. 서버에서 이런 "가짜 비동기"가 많으면 동기 코드와 똑같이 스레드 풀이 고갈된다. 비동기는 맨 아래 I/O까지 이어져야 효과가 있다(async all the way).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>await 뒤는 다른 스레드다.</strong> 서버에는 동기화 컨텍스트가 없어서, 이어지는 코드는 완료를 받은 스레드 풀 스레드에서 돈다. 로직 스레드에서 <code>await db.LoadAsync()</code>를 한 뒤 게임 상태를 고치면 단일 쓰기 규칙이 깨진다. 결과는 작업 큐에 메시지로 넣거나, 로직 스레드로 돌아오게 만든다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>, <a data-ref="csharp/sync-context">동기화 컨텍스트</a>).
+      </li>
+      <li>
+        <strong>틱 루프 안에서는 기다리지 않는다.</strong> 틱 루프는 전용 스레드에서 동기로 돌고, DB·외부 API처럼 기다려야 하는 일만 비동기로 걸어 둔다. 결과가 오면 다음 틱에 반영한다(<a href="../server/tick-loop.html">서버 틱 루프</a>).
+      </li>
+      <li>
+        <strong>패킷마다 도는 경로의 할당을 본다.</strong> 실제로 멈추는 <code>await</code>마다 상태 기계 상자와 <code>Task</code>가 할당된다. 초당 수십만 번 도는 처리기라면 동기로 끝나는 코드로 짜거나, <code>ValueTask</code>와 풀링 빌더로 할당을 줄인다.
+      </li>
+      <li>
+        <strong>C++ 코루틴과 같은 생각, 다른 책임.</strong> 둘 다 함수를 상태 기계로 바꾼다. C#은 <code>Task</code>, 스레드 풀, 컨텍스트, 그리고 멈춘 동안의 수명을 지켜 주는 <a data-ref="csharp/gc-basics">GC</a>까지 런타임이 함께 준다(<a href="../cpp/coroutines.html">C++20 코루틴</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>async는 빠르게 만드는 장치가 아니다.</strong> 요청 하나의 지연은 그대로이거나 조금 늘어난다. 얻는 것은 적은 스레드로 많은 동시 요청을 받는 능력이다.</li>
+      <li><strong>비동기 메서드를 동기로 기다리지 않는다.</strong> <code>.Result</code>, <code>.Wait()</code>는 스레드를 막아 비동기의 이득을 없애고, 환경에 따라 <a data-ref="operating-system/deadlock">데드락</a>을 만든다(<a data-ref="csharp/sync-context">동기화 컨텍스트</a>).</li>
+      <li><strong>async를 빼고 Task를 그대로 돌려줄 때는 조심한다.</strong> <code>return inner.DoAsync();</code>처럼 <code>await</code> 없이 넘기면 상태 기계가 안 생겨 싸다. 대신 <code>using</code>이나 <code>try</code> 범위가 Task가 끝나기 전에 닫히고, 예외 스택에서 이 메서드가 빠진다. 단순히 넘기기만 하는 메서드에만 쓴다.</li>
+      <li><strong>await 앞의 동기 구간을 짧게 둔다.</strong> 첫 <code>await</code>까지는 부른 스레드가 실행한다. 무거운 준비 작업이 있으면 그것까지 부른 쪽을 막는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

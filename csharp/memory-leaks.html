@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GC 언어의 메모리 누수 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/memory-leaks">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="gc-basics.html">GC 동작과 세대</a> · <a href="disposable.html">IDisposable과 결정적 해제</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      GC가 회수하는 기준은 "앞으로 쓰이느냐"가 아니라 "뿌리에서 참조를 따라 닿느냐"다. 다 쓴 객체라도 어딘가에서 참조가 남아 있으면 GC는 살아 있는 것으로 본다. 그래서 GC 언어의 누수는 해제를 잊어서가 아니라 <span class="blank">참조를 놓지 않아서</span> 생긴다.
+    </p>
+    <p>
+      가장 흔한 자리는 이벤트 구독이다. 구독하면 이벤트를 가진 쪽이 구독자를 참조한다. 오래 사는 객체의 이벤트를 짧게 살아야 할 객체가 구독하고 풀지 않으면, 짧은 쪽이 오래 사는 쪽과 함께 산다. 정적 컬렉션과 상한 없는 캐시가 그다음이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>구독은 게시자가 구독자를 붙드는 일이다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="세션이 월드의 이벤트를 구독하면 월드의 대리자 목록이 세션을 참조하므로, 세션 관리자가 세션을 지워도 월드에서 닿아 세션이 회수되지 않는다">
+        <defs><marker id="mlk-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="70" width="120" height="40" rx="6"/><text class="f-text" x="80" y="88" text-anchor="middle">정적 필드</text><text class="f-sub" x="80" y="104" text-anchor="middle">(뿌리)</text>
+        <line class="f-line" x1="140" y1="90" x2="198" y2="90" marker-end="url(#mlk-a)"/>
+        <rect class="f-box" x="200" y="60" width="170" height="60" rx="6"/><text class="f-text" x="285" y="84" text-anchor="middle">GameWorld</text><text class="f-sub" x="285" y="104" text-anchor="middle">서버 내내 산다</text>
+        <line class="f-line" x1="370" y1="90" x2="428" y2="90" marker-end="url(#mlk-a)"/>
+        <rect class="f-bar" x="430" y="60" width="140" height="60" rx="6"/><text class="f-text" x="500" y="84" text-anchor="middle">OnBossSpawned</text><text class="f-sub" x="500" y="104" text-anchor="middle">대리자 목록</text>
+        <line class="f-line" x1="570" y1="90" x2="618" y2="90" marker-end="url(#mlk-a)"/>
+        <rect class="f-miss" x="620" y="60" width="120" height="60" rx="6"/><text class="f-on" x="680" y="84" text-anchor="middle">Session</text><text class="f-on" x="680" y="104" text-anchor="middle">끊긴 플레이어</text>
+        <text class="f-sub" x="680" y="146" text-anchor="middle">세션 관리자에서는 지웠다</text>
+        <text class="f-sub" x="680" y="164" text-anchor="middle">그래도 월드에서 닿는다</text>
+        <path class="f-pad" d="M680,182 C600,214 360,214 300,124" marker-end="url(#mlk-a)"/>
+        <text class="f-sub" x="490" y="238" text-anchor="middle">코드가 말하는 방향: "세션이 월드를 듣는다"</text>
+      </svg>
+      <figcaption>점선은 코드를 읽을 때 떠올리는 방향이고, 실선이 실제 참조다. <code>world.OnBossSpawned += session.Notify;</code>는 월드의 대리자 목록에 세션을 담는다. 세션이 할 일을 다 해도 월드가 살아 있는 한 세션과 세션이 든 버퍼, 캐릭터 객체가 모두 살아 있다.</figcaption>
+    </figure>
+    <p>
+      대리자는 메서드와 그 메서드를 부를 대상 객체(<code>Target</code>)를 함께 든다. 그래서 인스턴스 메서드나 <code>this</code>를 쓰는 람다로 구독하면 대상 객체가 게시자에 매인다. 푸는 방법은 셋이다.
+    </p>
+    <ul>
+      <li><strong>해제한다.</strong> <code>-=</code>로 같은 대리자를 뺀다. 람다로 구독했다면 그 람다를 변수에 담아 두어야 뺄 수 있다. 같은 모양의 람다를 다시 적으면 다른 대리자라 빠지지 않는다.</li>
+      <li><strong>해제를 수명에 묶는다.</strong> 구독할 때 IDisposable 토큰을 돌려받고, 구독자의 <code>Dispose</code>에서 그 토큰을 놓는다(<a href="disposable.html">IDisposable과 결정적 해제</a>).</li>
+      <li><strong>수명을 맞춘다.</strong> 게시자와 구독자가 같이 생기고 같이 사라지면 문제가 없다. 오래 사는 게시자 쪽에만 조심하면 된다.</li>
+    </ul>
+
+    <h3>참조가 남는 자리</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>자리</th><th>무엇이 붙드나</th><th>대책</th></tr></thead>
+        <tbody>
+          <tr><td>이벤트 구독</td><td>게시자의 대리자 목록이 구독자를 든다</td><td>해제, 구독 토큰, 수명 맞추기</td></tr>
+          <tr><td>정적 컬렉션</td><td>정적 필드는 뿌리라서 담긴 것이 서버 내내 산다</td><td>넣는 곳마다 빼는 곳을 짝지어 둔다</td></tr>
+          <tr><td>상한 없는 캐시</td><td>넣기만 하고 지우는 정책이 없다</td><td>개수·크기 상한과 만료(<code>MemoryCache</code>의 SizeLimit, 직접 만든 LRU)</td></tr>
+          <tr><td>타이머</td><td>살아 있는 타이머의 콜백이 대상 객체를 든다</td><td>쓰고 나면 Dispose한다. 대량이면 틱 기반 타이머 구조로 바꾼다(<a href="../data-structure/timer-structures.html">타이머 자료구조</a>)</td></tr>
+          <tr><td>취소 토큰 등록</td><td>오래 사는 토큰에 <code>Register</code>한 콜백이 남는다</td><td>돌려받은 <code>CancellationTokenRegistration</code>을 Dispose한다(<a data-ref="csharp/cancellation">취소와 시한</a>)</td></tr>
+          <tr><td>끝나지 않는 Task</td><td>완료를 기다리는 이어지는 코드와 그 클로저가 남는다</td><td>시한을 두고 취소한다</td></tr>
+          <tr><td>클로저 캡처</td><td>람다가 잡은 변수가 람다가 사는 동안 산다. 큰 객체 하나를 잡으면 그 전체가 산다</td><td>필요한 값만 지역 변수로 꺼내 잡는다(<a data-ref="csharp/compiler-transforms">컴파일러가 바꿔 주는 것</a>)</td></tr>
+          <tr><td>스레드 정적, <code>ThreadLocal&lt;T&gt;</code></td><td><a data-ref="operating-system/thread-pool">스레드 풀</a> 스레드는 오래 살아서 거기 담은 값도 오래 산다</td><td>작업이 끝나면 비운다</td></tr>
+          <tr><td>풀어 주지 않은 <code>GCHandle</code></td><td>핸들이 뿌리가 된다. 고정 핸들이면 <a data-ref="operating-system/fragmentation">단편화</a>까지 만든다</td><td><code>Free()</code>를 짝지어 부른다. 고정이 필요하면 POH를 쓴다</td></tr>
+          <tr><td>네이티브 메모리</td><td>GC가 모르는 메모리다(<code>NativeMemory</code>, <code>Marshal.AllocHGlobal</code>)</td><td>SafeHandle로 감싸 Dispose한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>풀은 누수와 반대 방향으로도 틀린다</h3>
+    <p>
+      <code>ArrayPool&lt;T&gt;</code>에서 빌린 배열을 돌려주지 않는 것은 누수가 아니다. 풀은 빌려준 배열을 기억하지 않으므로, 돌려받지 못한 배열은 쓰는 쪽이 놓는 순간 GC가 회수한다. 잃는 것은 재사용의 이득뿐이다. 더 위험한 것은 반대다. 돌려준 뒤에도 그 배열을 계속 쓰면, 다른 곳에서 빌려 간 같은 배열을 함께 고쳐 데이터가 섞인다. 이것은 메모리가 늘지 않아 누수보다 찾기 어렵다.
+    </p>
+    <p>
+      작은 객체를 직접 만든 풀에 오래 담아 두는 것도 손해가 될 수 있다. 0세대에서 죽었을 객체가 풀에 붙잡혀 2세대로 올라가고, 전체 GC 때마다 표시된다. 풀은 큰 배열이나 만들기 비싼 객체에 쓴다(<a href="gc-basics.html">GC 동작과 세대</a>).
+    </p>
+
+    <h2>누수를 좁혀 가는 순서</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>단계</th><th>무엇을 보나</th><th>도구</th></tr></thead>
+        <tbody>
+          <tr><td>1. 정말 느는가</td><td>같은 부하에서 2세대 GC 직후의 힙 크기가 계속 오르는지. 오르내리면 정상이다</td><td><code>dotnet-counters</code>의 GC Heap Size, Gen 2 Size</td></tr>
+          <tr><td>2. 관리 힙인가</td><td>프로세스 메모리(RES)는 느는데 GC 힙은 그대로면 네이티브 쪽이다</td><td>힙 크기와 작업 집합을 나란히(<a href="../system-programming/virtual-vs-resident.html">할당과 실제 확보</a>)</td></tr>
+          <tr><td>3. 무엇이 쌓이나</td><td>시간을 두고 두 번 떠서 타입별 개수와 크기의 차이</td><td><code>dotnet-gcdump</code>, <code>dotnet-dump analyze</code>의 <code>dumpheap -stat</code></td></tr>
+          <tr><td>4. 누가 붙드나</td><td>쌓인 객체 하나에서 뿌리까지의 참조 경로</td><td><code>gcroot &lt;주소&gt;</code>, Visual Studio·PerfView의 경로 보기</td></tr>
+          <tr><td>5. 어디서 끊나</td><td>경로 중 수명이 어긋난 연결(구독, 정적 목록, 캐시)</td><td>코드</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      4단계가 핵심이다. 코드를 읽어서는 누가 붙드는지 잘 보이지 않지만, 덤프의 뿌리 경로는 "정적 필드 → 월드 → 이벤트 → 세션"처럼 사슬을 그대로 보여 준다. 도구별 사용법은 <a data-ref="csharp/diagnostics">.NET 진단 도구</a>에서 다룬다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>접속자 수가 그대로인데 메모리가 계속 오르면 세션이 안 죽는 것이다.</strong> 세션 관리자에서는 지웠는데 월드 이벤트, 파티, 길드 채널, 타이머 중 하나가 아직 세션을 든 경우가 대부분이다. 덤프에서 Session 타입 개수가 현재 접속자 수보다 많으면 확정이다.
+      </li>
+      <li>
+        <strong>세션의 Dispose에서 모든 구독을 푼다.</strong> 세션이 무엇을 구독했는지 목록으로 들고 있다가 한꺼번에 해제한다. 구독 지점이 흩어져 있으면 새 기능을 붙인 사람이 해제를 빠뜨린다.
+      </li>
+      <li>
+        <strong>정적 "전역 목록"은 넣는 곳과 빼는 곳을 한 클래스에 둔다.</strong> 플레이어 이름 사전, 최근 거래 기록 같은 정적 컬렉션은 서버가 도는 며칠 동안 쌓인다. 상한과 만료가 없는 정적 컬렉션은 그 자체로 누수 예정지다.
+      </li>
+      <li>
+        <strong>누수는 오래 돌려야 보인다.</strong> 몇 분짜리 부하 테스트에서는 캐시가 채워지는 것과 구분되지 않는다. 접속과 종료를 반복하는 봇을 몇 시간 돌리고 2세대 GC 직후의 힙 크기를 본다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>메모리가 는다고 다 누수는 아니다.</strong> 캐시가 차는 중이거나, <a data-ref="csharp/gc-modes">서버 GC</a>가 예산을 크게 잡았거나, 아직 2세대 GC가 돌지 않았을 수 있다. 2세대 GC 뒤에도 계속 오르는지가 기준이다.</li>
+      <li><strong>약한 참조는 만능이 아니다.</strong> <code>WeakReference</code>로 구독자를 들면 회수는 되지만, 언제 회수될지 정해지지 않아 이미 끊긴 세션에 이벤트가 한동안 계속 간다. 해제를 수명에 묶는 쪽이 먼저다.</li>
+      <li><strong>정적 이벤트는 특히 위험하다.</strong> 게시자가 정적이면 그 이벤트의 구독자는 해제하지 않는 한 영원히 산다.</li>
+      <li><strong>Dispose를 빠뜨린 것은 다른 종류의 누수다.</strong> 메모리가 아니라 핸들과 연결이 먼저 바닥난다. 참조 누수는 덤프의 뿌리 경로로, 자원 누수는 핸들 수와 연결 풀 지표로 찾는다(<a href="../system-programming/kernel-object-handle.html">커널 오브젝트와 핸들</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

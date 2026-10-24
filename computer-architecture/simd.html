@@ -118,7 +118,7 @@
           <tr><td><code>Vector&lt;T&gt;</code> (System.Numerics)</td><td>크기가 실행하는 CPU에 맞춰 정해진다. <code>Vector&lt;T&gt;.Count</code>로 레인 수를 알아낸다. 한 코드로 여러 CPU에 맞출 때 쓴다</td></tr>
           <tr><td><code>Vector128&lt;T&gt;</code>, <code>Vector256&lt;T&gt;</code>, <code>Vector512&lt;T&gt;</code></td><td>폭이 고정된 타입. <code>Vector128.IsHardwareAccelerated</code>로 가속 여부를 확인하고, 아니면 스칼라 경로로 간다. <code>Vector512</code>는 .NET 8부터</td></tr>
           <tr><td>System.Runtime.Intrinsics.X86 / Arm</td><td><code>Avx2.IsSupported</code>처럼 CPU 기능을 확인하고 특정 명령을 직접 부른다. 가장 빠르지만 플랫폼마다 따로 짜야 한다</td></tr>
-          <tr><td>이미 벡터화된 라이브러리</td><td><code>Span&lt;T&gt;.IndexOf</code>, <code>SequenceEqual</code>, 서수 비교 문자열 검색, UTF-8 변환, Base64, 배열에 대한 LINQ <code>Sum</code>·<code>Min</code>·<code>Max</code>, <code>TensorPrimitives</code>(.NET 8)</td></tr>
+          <tr><td>이미 벡터화된 라이브러리</td><td><code>Span&lt;T&gt;.IndexOf</code>, <code>SequenceEqual</code>, <a data-ref="csharp/strings">서수 비교</a> 문자열 검색, UTF-8 변환, Base64, 배열에 대한 LINQ <code>Sum</code>·<code>Min</code>·<code>Max</code>, <code>TensorPrimitives</code>(.NET 8)</td></tr>
         </tbody>
       </table>
     </div>

@@ -140,7 +140,7 @@
         그래서 오픈 직후 첫 요청들이 느리다. ReadyToRun으로 미리 컴파일해 두거나, 오픈 전에 주요 경로를 한 번씩 실행하는 warm-up을 둔다.
       </li>
       <li>
-        <strong>네이티브 라이브러리는 첫 호출 때 찾는다.</strong> P/Invoke로 부르는 네이티브 라이브러리가 없으면 시작이 아니라 그 함수를 처음 부르는 순간 <code>DllNotFoundException</code>이 난다. 서버 시작 단계에서 필요한 네이티브 함수를 한 번씩 불러 확인하면 배포 사고를 일찍 잡는다.
+        <strong>네이티브 라이브러리는 첫 호출 때 찾는다.</strong> <a data-ref="csharp/unsafe-interop">P/Invoke</a>로 부르는 네이티브 라이브러리가 없으면 시작이 아니라 그 함수를 처음 부르는 순간 <code>DllNotFoundException</code>이 난다. 서버 시작 단계에서 필요한 네이티브 함수를 한 번씩 불러 확인하면 배포 사고를 일찍 잡는다.
       </li>
       <li>
         <strong>배포 전에 의존을 확인한다.</strong> Linux에서는 <code>ldd ./server</code>로 어떤 라이브러리를 어디서 찾는지, 못 찾는 것이 있는지(<code>not found</code>) 바로 보인다. 컨테이너 베이스 이미지를 바꿀 때 특히 본다.

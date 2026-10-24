@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>값 형식과 참조 형식 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/value-reference-types">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../operating-system/process-memory-layout.html">프로세스 메모리 구성</a> · <a href="../system-programming/call-stack.html">호출 스택</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      값 형식과 참조 형식을 가르는 것은 <strong>대입하거나 넘길 때 무엇이 복사되느냐</strong>다. 값 형식(<code>struct</code>, <code>int</code>, <code>enum</code>)은 내용 전체가 복사되고, 참조 형식(<code>class</code>, <code>string</code>, 배열, 대리자)은 객체를 가리키는 <span class="blank">참조만 복사</span>된다. 그래서 값 형식 두 변수는 서로 독립이고, 참조 형식 두 변수는 같은 객체를 함께 본다.
+    </p>
+    <p>
+      "값 형식은 스택, 참조 형식은 힙"은 결과를 거칠게 요약한 말이지 정의가 아니다. 값은 그것을 담은 저장 공간이 사는 곳에 놓인다. 클래스의 필드나 배열 원소인 값 형식은 그 객체와 함께 힙에 있고, 클로저가 잡은 지역 변수와 <code>await</code>를 넘어 사는 지역 변수도 힙으로 옮겨진다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>대입하면 무엇이 복사되나</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 270" role="img" aria-label="값 형식은 대입하면 내용이 통째로 복사되어 두 변수가 독립이고, 참조 형식은 참조만 복사되어 두 변수가 힙의 한 객체를 함께 가리킨다">
+        <defs><marker id="vr-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="170" y="24" text-anchor="middle">값 형식: Point b = a;</text>
+        <text class="f-sub" x="40" y="62">a</text>
+        <rect class="f-box" x="60" y="44" width="220" height="30" rx="4"/>
+        <text class="f-text" x="170" y="64" text-anchor="middle">X = 3, Y = 4</text>
+        <text class="f-sub" x="40" y="112">b</text>
+        <rect class="f-hit" x="60" y="94" width="220" height="30" rx="4"/>
+        <text class="f-text" x="170" y="114" text-anchor="middle">X = 3, Y = 4 (사본)</text>
+        <text class="f-sub" x="170" y="150" text-anchor="middle">b.X = 9 를 해도 a는 그대로다</text>
+        <line class="f-grid" x1="360" y1="20" x2="360" y2="166"/>
+        <text class="f-strong" x="540" y="24" text-anchor="middle">참조 형식: Player b = a;</text>
+        <text class="f-sub" x="392" y="62">a</text>
+        <rect class="f-box" x="410" y="44" width="90" height="30" rx="4"/>
+        <text class="f-text" x="455" y="64" text-anchor="middle">참조</text>
+        <text class="f-sub" x="392" y="112">b</text>
+        <rect class="f-hit" x="410" y="94" width="90" height="30" rx="4"/>
+        <text class="f-text" x="455" y="114" text-anchor="middle">참조 (사본)</text>
+        <rect class="f-cell2" x="560" y="60" width="140" height="60" rx="6"/>
+        <text class="f-sub" x="630" y="80" text-anchor="middle">힙의 Player 객체</text>
+        <text class="f-text" x="630" y="104" text-anchor="middle">Hp = 100</text>
+        <line class="f-line" x1="500" y1="59" x2="556" y2="78" marker-end="url(#vr-a)"/>
+        <line class="f-line" x1="500" y1="109" x2="556" y2="100" marker-end="url(#vr-a)"/>
+        <text class="f-sub" x="540" y="150" text-anchor="middle">b.Hp = 0 을 하면 a로도 0이 보인다</text>
+        <rect class="f-pad" x="40" y="180" width="640" height="62" rx="6"/>
+        <text class="f-text" x="360" y="204" text-anchor="middle">값 형식도 클래스의 필드, 배열 원소, 박싱된 값이면 힙에 있다</text>
+        <text class="f-sub" x="360" y="226" text-anchor="middle">놓이는 곳은 형식이 아니라 그 값을 담은 저장 공간의 수명이 정한다</text>
+      </svg>
+      <figcaption>왼쪽은 내용이 통째로 복사되어 두 변수가 따로 논다. 오른쪽은 참조만 복사되어 두 변수가 한 객체를 본다. 이 차이 하나가 나머지 차이를 거의 다 설명한다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>값 형식</th><th>참조 형식</th></tr></thead>
+        <tbody>
+          <tr><td>예</td><td><code>int</code>, <code>double</code>, <code>bool</code>, <code>enum</code>, <code>struct</code>, 튜플</td><td><code>class</code>, <code>string</code>, 배열, 대리자, <code>record</code>(class)</td></tr>
+          <tr><td>대입·전달</td><td>내용 전체를 복사한다</td><td>참조(주소) 하나를 복사한다</td></tr>
+          <tr><td>한쪽을 고치면</td><td>다른 쪽은 그대로다</td><td>다른 쪽에서도 보인다</td></tr>
+          <tr><td>null</td><td>될 수 없다. <code>int?</code>처럼 <code>Nullable&lt;T&gt;</code>로 감싸야 한다</td><td>될 수 있다</td></tr>
+          <tr><td>기본값</td><td>모든 필드가 0, <code>false</code>, <code>null</code>인 값</td><td><code>null</code></td></tr>
+          <tr><td>객체 헤더</td><td>없다. 필드만큼의 크기다</td><td>힙 객체마다 헤더와 타입 정보 포인터(64비트에서 16바이트)가 붙는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      값 형식 안에 참조 형식 필드가 있으면 복사되는 것은 그 참조뿐이다. <code>struct Squad { List&lt;Player&gt; Members; }</code>를 복사하면 두 사본이 같은 리스트를 가리킨다. 사본에서 <code>Members.Add</code>를 하면 원본에도 보인다. "struct라서 독립적"이라는 생각이 깨지는 흔한 자리다.
+    </p>
+
+    <h3>값이 어디에 놓이나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>값 형식이 들어 있는 자리</th><th>놓이는 곳</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>메서드의 지역 변수, 매개변수</td><td>스택(또는 레지스터)</td><td>메서드가 끝나면 함께 사라져도 된다</td></tr>
+          <tr><td>클래스의 필드</td><td>그 객체와 함께 힙</td><td>객체가 사는 동안 남아야 한다</td></tr>
+          <tr><td>배열의 원소</td><td>배열과 함께 힙</td><td>배열이 객체다. 원소가 연속으로 박혀 있다</td></tr>
+          <tr><td>박싱된 값</td><td>힙</td><td>참조로 가리킬 실체가 필요하다(<a href="boxing.html">박싱</a>)</td></tr>
+          <tr><td>람다가 캡처한 지역 변수</td><td>컴파일러가 만든 클래스의 필드로 힙</td><td>람다가 메서드보다 오래 살 수 있다(<a data-ref="csharp/compiler-transforms">컴파일러가 바꿔 주는 것</a>)</td></tr>
+          <tr><td><code>await</code>를 넘어 사는 지역 변수</td><td>상태 기계의 필드. 실제로 멈추면 힙</td><td>멈춘 동안 스택 프레임이 없어진다(<a data-ref="csharp/async-basics">async와 await의 실체</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      반대 방향도 있다. 참조 형식의 <em>참조</em> 자체는 지역 변수면 스택에 있다. 그리고 최근 .NET(9 이후)의 <a data-ref="csharp/jit-aot">JIT</a>는 메서드 밖으로 빠져나가지 않는 일부 박스와 작은 객체를 힙 대신 스택에 둔다(탈출 분석). 규격은 어디에 두라고 정하지 않았고, 정하는 것은 수명이다. 그래서 위치보다 "복사되느냐"로 생각하는 쪽이 틀리지 않는다.
+    </p>
+
+    <h3>매개변수로 넘기는 네 가지 방법</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>표기</th><th>넘어가는 것</th><th>메서드 안에서 할 수 있는 일</th></tr></thead>
+        <tbody>
+          <tr><td>(없음)</td><td>값 형식은 내용의 사본, 참조 형식은 참조의 사본</td><td>참조 형식이면 객체 내용은 고칠 수 있다. 매개변수에 새 객체를 넣어도 호출한 쪽 변수는 그대로다</td></tr>
+          <tr><td><code>ref</code></td><td>호출한 쪽 변수 자체의 참조</td><td>읽고 쓴다. 새 값을 넣으면 호출한 쪽 변수가 바뀐다</td></tr>
+          <tr><td><code>out</code></td><td>호출한 쪽 변수의 참조</td><td>반드시 값을 넣고 돌아가야 한다. <code>TryGetValue</code>의 결과 전달</td></tr>
+          <tr><td><code>in</code> (C# 7.2), <code>ref readonly</code> (C# 12)</td><td>읽기 전용 참조</td><td>읽기만 한다. 큰 struct를 복사 없이 넘길 때 쓴다. 함정은 <a href="struct-design.html">struct와 class 고르기</a>에서 다룬다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      "참조 형식은 참조로 전달된다"는 말은 틀렸다. C#은 기본으로 모두 값으로 전달하고, 참조 형식에서는 그 값이 참조일 뿐이다. 메서드 안에서 <code>player = new Player()</code>를 해도 호출한 쪽은 옛 객체를 그대로 들고 있다. 호출한 쪽 변수를 바꾸려면 <code>ref</code>가 필요하다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>값 형식이 비싸지는 때와 싸지는 때</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>값 형식</th><th>참조 형식</th></tr></thead>
+        <tbody>
+          <tr><td>작은 값을 많이 만든다</td><td>할당이 없다. <a data-ref="csharp/gc-basics">GC</a>가 볼 것이 없다</td><td>객체마다 할당과 헤더, 나중에 GC 비용</td></tr>
+          <tr><td>배열에 대량으로 담는다</td><td>원소가 연속으로 박혀 순회가 빠르다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>)</td><td>참조 배열이라 원소마다 다른 곳으로 점프한다</td></tr>
+          <tr><td>크고 자주 넘긴다</td><td>넘길 때마다 통째로 복사한다</td><td>참조 하나만 복사한다</td></tr>
+          <tr><td>object나 인터페이스로 다룬다</td><td>박싱으로 할당이 생긴다</td><td>그대로다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      둘 중 어느 것을 정의할지는 <a href="struct-design.html">struct와 class 고르기</a>에서 기준을 정리한다. 여기서 기억할 것은 하나다. 값 형식은 "할당을 복사로 바꾸는 선택"이다. 작으면 이득이고 크면 손해다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>위치·벡터 같은 작은 값은 struct로 둔다.</strong> <code>Vector3</code>, 엔티티 ID, 좌표, 금액은 틱마다 수만 개씩 만들어지고 버려진다. 클래스였다면 그 수만큼 힙 할당과 GC가 생긴다. 반대로 플레이어, 세션, 몬스터처럼 정체성이 있고 여러 곳이 함께 가리키는 것은 class다.
+      </li>
+      <li>
+        <strong>메서드에 struct를 넘겨 고쳤는데 바깥이 안 바뀌는 버그.</strong> <code>void ApplyBuff(Stat s) { s.Atk += 10; }</code>는 사본을 고치고 버린다. 고치려면 <code>ref Stat</code>로 받거나 고친 값을 반환한다. 코드 리뷰에서 struct 매개변수를 고치는 줄이 보이면 의심한다.
+      </li>
+      <li>
+        <strong>async 메서드의 지역 변수도 할당이 될 수 있다.</strong> 패킷 처리기가 <code>await</code>를 넘어 큰 struct를 들고 있으면, 실제로 멈출 때 그 struct가 상태 기계 객체에 담겨 힙으로 간다. 처리기에서 할당을 줄였다고 생각했는데 프로파일러에 상태 기계가 보이는 이유다(<a data-ref="csharp/task-valuetask">Task와 ValueTask</a>).
+      </li>
+      <li>
+        <strong>C++의 값 의미와 비슷하지만 같지 않다.</strong> C++은 클래스도 값으로 복사되는 것이 기본이라 이동이 필요했고, C#은 class가 참조라 그 문제가 덜하다(<a href="../cpp/move-semantics.html">이동 시맨틱</a>). C# struct에는 복사 생성자가 없어서 복사는 언제나 바이트 단위다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"값 형식은 스택"은 절반만 맞다.</strong> 필드·배열 원소·박스·클로저·async 상태 기계 안의 값 형식은 힙에 있다. 성능 문제가 실제로 생기는 곳이 바로 그 자리들이다.</li>
+      <li><strong>struct 안의 참조 필드는 공유된다.</strong> 사본을 만들어도 리스트나 배열 필드는 같은 객체를 가리킨다. 깊은 복사가 필요하면 직접 만든다.</li>
+      <li><strong>참조 형식도 값으로 전달된다.</strong> 매개변수에 새 객체를 넣는 것은 호출한 쪽에 보이지 않는다. 객체의 내용을 고치는 것만 보인다.</li>
+      <li><strong>값 형식의 기본값은 늘 존재한다.</strong> <code>new Point[100]</code>은 생성자 없이 모두 0으로 채워진다. 매개변수 없는 생성자(C# 10부터 선언 가능)도 배열 원소와 <code>default</code>에서는 불리지 않는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

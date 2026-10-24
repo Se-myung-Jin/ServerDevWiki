@@ -102,7 +102,7 @@
         <strong>서버를 여러 프로세스로 나눈 구조</strong>(게임 서버, 채팅 서버, DB 에이전트 등)는 대부분 소켓으로 붙인다. 공유 메모리는 여러 존 프로세스가 같은 대형 읽기 전용 데이터(맵, 기획 테이블)를 함께 매핑하거나, 감시 프로세스가 상태를 들여다보는 정도로 좁게 쓴다.
       </li>
       <li>
-        <strong>컨테이너의 종료 신호를 받는다.</strong> Kubernetes는 파드를 내릴 때 <a data-ref="system-programming/signals">SIGTERM</a>을 보낸다. .NET 6 이상은 <code>PosixSignalRegistration</code>이나 Generic Host의 종료 이벤트로 받아, 접속을 정리하고 저장을 끝낸 뒤 내려가게 한다. 받지 않으면 유예 시간 뒤에 강제 종료된다.
+        <strong>컨테이너의 종료 신호를 받는다.</strong> Kubernetes는 파드를 내릴 때 <a data-ref="system-programming/signals">SIGTERM</a>을 보낸다. .NET 6 이상은 <code>PosixSignalRegistration</code>이나 <a data-ref="csharp/generic-host-di">Generic Host</a>의 종료 이벤트로 받아, 접속을 정리하고 저장을 끝낸 뒤 내려가게 한다. 받지 않으면 유예 시간 뒤에 강제 종료된다.
       </li>
     </ul>
 

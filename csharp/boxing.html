@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>박싱 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/boxing">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="value-reference-types.html">값 형식과 참조 형식</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      박싱은 값 형식을 <code>object</code>나 인터페이스처럼 참조로 다뤄야 할 때, 힙에 객체를 하나 만들어 값을 복사해 넣는 일이다. 참조로 가리킬 실체가 필요하기 때문이다. 언박싱은 그 객체에서 타입을 확인한 뒤 값을 다시 꺼내 복사한다.
+    </p>
+    <p>
+      한 번의 비용은 작다. 문제는 <strong>코드에 드러나지 않는 자리</strong>에서 루프마다, 패킷마다 일어난다는 점이다. 박스는 할당이고, 할당은 나중에 <a data-ref="csharp/gc-basics">GC</a>가 치워야 한다. 비용은 변환 연산이 아니라 <span class="blank">쌓이는 쓰레기</span>에서 나온다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>박싱은 할당 하나와 복사 하나다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="스택의 int 42를 object에 담으면 힙에 헤더와 타입 정보와 값 42를 가진 새 객체가 만들어지고, 언박싱하면 타입을 확인한 뒤 값을 다시 복사한다">
+        <defs><marker id="bx-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="90" y="28" text-anchor="middle">int n = 42;</text>
+        <rect class="f-box" x="40" y="44" width="100" height="36" rx="4"/>
+        <text class="f-text" x="90" y="67" text-anchor="middle">42</text>
+        <text class="f-sub" x="90" y="100" text-anchor="middle">스택, 4바이트</text>
+        <line class="f-line" x1="146" y1="62" x2="250" y2="62" marker-end="url(#bx-a)"/>
+        <text class="f-text" x="198" y="54" text-anchor="middle">object o = n;</text>
+        <text class="f-sub" x="198" y="82" text-anchor="middle">박싱: 할당 + 복사</text>
+        <rect class="f-cell2" x="256" y="36" width="230" height="52" rx="6"/>
+        <rect class="f-cell" x="266" y="46" width="70" height="32"/>
+        <text class="f-sub" x="301" y="66" text-anchor="middle">헤더</text>
+        <rect class="f-cell" x="336" y="46" width="80" height="32"/>
+        <text class="f-sub" x="376" y="66" text-anchor="middle">타입 정보</text>
+        <rect class="f-hit" x="416" y="46" width="60" height="32"/>
+        <text class="f-text" x="446" y="67" text-anchor="middle">42</text>
+        <text class="f-sub" x="371" y="108" text-anchor="middle">힙의 새 객체, 64비트에서 24바이트</text>
+        <line class="f-line" x1="492" y1="62" x2="590" y2="62" marker-end="url(#bx-a)"/>
+        <text class="f-text" x="541" y="54" text-anchor="middle">(int)o</text>
+        <text class="f-sub" x="541" y="82" text-anchor="middle">타입 확인 + 복사</text>
+        <rect class="f-box" x="596" y="44" width="90" height="36" rx="4"/>
+        <text class="f-text" x="641" y="67" text-anchor="middle">42</text>
+        <rect class="f-pad" x="40" y="140" width="646" height="66" rx="6"/>
+        <text class="f-text" x="363" y="166" text-anchor="middle">루프 안에서 박싱하면 반복 횟수만큼 객체가 생긴다</text>
+        <text class="f-sub" x="363" y="190" text-anchor="middle">모두 곧 죽는 쓰레기라 0세대 수집이 그만큼 자주 돈다</text>
+      </svg>
+      <figcaption>4바이트 int 하나를 object로 다루려고 24바이트 객체가 하나 생긴다. 언박싱은 할당이 없지만 박스의 타입이 정확히 일치하는지 확인한다.</figcaption>
+    </figure>
+    <p>
+      언박싱은 박싱한 그 타입으로만 된다. <code>int</code>를 담은 박스를 <code>(long)o</code>로 꺼내면 숫자 변환이 아니라 <code>InvalidCastException</code>이다. <code>(long)(int)o</code>처럼 먼저 원래 타입으로 꺼낸 뒤 바꾼다. <code>null</code>을 값 형식으로 꺼내면 <code>NullReferenceException</code>이고, <code>int?</code>로 꺼내면 <code>null</code>이 된다.
+    </p>
+    <p>
+      박스는 원래 값과 연결되어 있지 않다. 박싱한 뒤 원래 변수를 고쳐도 박스 안의 값은 그대로이고, 인터페이스로 받은 박스의 메서드가 상태를 고쳐도 원래 변수는 모른다. 가변 struct를 인터페이스로 넘겼다가 "고쳤는데 안 바뀐" 버그가 여기서 나온다.
+    </p>
+
+    <h3>박싱이 숨어 있는 자리</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>자리</th><th>왜 박싱되나</th><th>피하는 법</th></tr></thead>
+        <tbody>
+          <tr><td><code>object</code> 매개변수, <code>params object[]</code></td><td>참조가 필요하다</td><td>제네릭 오버로드를 둔다</td></tr>
+          <tr><td>struct를 인터페이스 타입 변수에 담기</td><td>인터페이스 참조도 참조다</td><td>제네릭 제약 <code>where T : IFoo</code>로 받는다</td></tr>
+          <tr><td>비제네릭 컬렉션(<code>ArrayList</code>, <code>Hashtable</code>)</td><td>원소 타입이 <code>object</code>다</td><td><code>List&lt;T&gt;</code>, <code>Dictionary&lt;K,V&gt;</code></td></tr>
+          <tr><td><code>string.Format</code>, 옛 문자열 보간</td><td><code>object</code> 인자로 넘긴다</td><td>C# 10·.NET 6부터 보간은 <code>DefaultInterpolatedStringHandler</code>가 제네릭으로 받아 박싱하지 않는다</td></tr>
+          <tr><td><code>Equals</code>·<code>GetHashCode</code>·<code>ToString</code>을 재정의하지 않은 struct</td><td>상속받은 <code>ValueType</code>의 구현을 부르려면 박스가 필요하다</td><td>세 메서드를 재정의하고 <code>IEquatable&lt;T&gt;</code>를 구현한다(<a href="equality.html">동등성과 해시</a>)</td></tr>
+          <tr><td>struct 키에 <code>IEquatable&lt;T&gt;</code>가 없는 <code>Dictionary</code></td><td>기본 비교자가 <code>Equals(object)</code>로 비교한다</td><td><code>IEquatable&lt;T&gt;</code> 구현</td></tr>
+          <tr><td><code>List&lt;T&gt;</code>를 <code>IEnumerable&lt;T&gt;</code>로 받아 <code>foreach</code></td><td>struct 열거자가 인터페이스로 박싱된다</td><td>구체 타입으로 순회한다. LINQ 메서드 사슬도 같은 이유로 할당한다</td></tr>
+          <tr><td>struct의 인스턴스 메서드로 대리자 만들기</td><td>대리자의 대상은 객체 참조다</td><td>정적 메서드와 상태 인자로 바꾼다</td></tr>
+          <tr><td><code>Enum.HasFlag</code></td><td>.NET Framework에서는 두 값을 박싱했다</td><td>.NET Core 2.1부터 <a data-ref="csharp/jit-aot">JIT</a>가 박싱 없이 처리한다. 옛 런타임이면 비트 연산을 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>제네릭 제약이 박싱을 없앤다</h3>
+<pre><code class="language-csharp">// 박싱된다: struct가 IComparable 참조로 바뀐다
+static int CompareBoxed(IComparable a, object b) =&gt; a.CompareTo(b);
+
+// 박싱되지 않는다: T가 값 형식이면 JIT가 그 타입 전용 코드를 만들고
+// constrained 호출로 struct의 구현을 바로 부른다
+static int Compare&lt;T&gt;(T a, T b) where T : IComparable&lt;T&gt; =&gt; a.CompareTo(b);</code></pre>
+    <p>
+      제약이 있으면 컴파일러는 <code>constrained.</code> 접두사를 붙여 메서드를 부른다. 값 형식이 그 메서드를 직접 구현했으면 박스 없이 그 구현으로 바로 간다. JIT가 값 형식마다 전용 코드를 만들기 때문에 가능하다(<a data-ref="csharp/generics">제네릭</a>). 같은 struct를 인터페이스 타입 변수에 담는 순간 이 이득이 사라진다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>어디서 일어나는지 찾는 법</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>무엇을 보나</th></tr></thead>
+        <tbody>
+          <tr><td>IL 보기(ILSpy, <a data-ref="csharp/compiler-transforms">SharpLab</a>)</td><td><code>box</code> 명령이 있는 줄. 의심 가는 코드 조각을 확인할 때</td></tr>
+          <tr><td>BenchmarkDotNet의 <code>[MemoryDiagnoser]</code></td><td>호출 한 번당 할당 바이트. 0이 아니면 무언가 할당한다</td></tr>
+          <tr><td><code>GC.GetAllocatedBytesForCurrentThread()</code></td><td>코드 구간 앞뒤의 차이. 단위 테스트에서 "할당 0"을 고정할 때</td></tr>
+          <tr><td><code>dotnet-counters</code>의 할당률, 할당 프로파일러</td><td>운영 중 어느 타입이 많이 할당되나. <code>System.Int32</code>, <code>System.Single</code> 같은 값 형식 타입이 할당 목록에 보이면 박싱이다(<a data-ref="csharp/diagnostics">.NET 진단 도구</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      박싱은 대부분 신경 쓸 필요가 없다. 초기화 코드, 관리 도구, 요청이 드문 API에서 박스 몇 개는 아무 일도 아니다. 찾아서 없앨 곳은 <a data-ref="server/tick-loop">틱 루프</a>, 패킷 처리, 로그 같은 뜨거운 경로뿐이다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>로그가 가장 흔한 범인이다.</strong> <code>Log.Debug("pos {0} {1}", x, y)</code> 형태의 <code>params object[]</code> 로그는 로그 수준이 꺼져 있어도 배열 할당과 박싱을 먼저 하고 들어간다. 수준을 먼저 확인하거나, 제네릭 오버로드나 보간 핸들러를 받는 로거(<code>Microsoft.Extensions.Logging</code>의 소스 생성 <code>LoggerMessage</code> 등)를 쓴다.
+      </li>
+      <li>
+        <strong>struct 키는 <code>IEquatable&lt;T&gt;</code>를 구현한다.</strong> <code>Dictionary&lt;EntityId, Entity&gt;</code>의 키 struct가 이것을 구현하지 않으면 조회마다 키를 박싱해 비교한다. 엔티티 조회는 틱마다 수만 번이다. <code>readonly record struct EntityId(int Value)</code>로 정의하면 컴파일러가 <code>IEquatable&lt;T&gt;</code>까지 만들어 준다.
+      </li>
+      <li>
+        <strong>공통 인터페이스로 묶은 struct 컴포넌트.</strong> <code>List&lt;IComponent&gt;</code>에 struct 컴포넌트를 담으면 원소마다 박스다. struct로 만든 의미가 사라진다. 타입별 배열에 담고 제네릭으로 처리한다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>).
+      </li>
+      <li>
+        <strong>enum 키 딕셔너리는 이제 괜찮다.</strong> 오래된 .NET Framework에서는 enum 키 <code>Dictionary</code>가 비교에서 박싱하는 경우가 있었다. 지금 런타임은 enum 비교자를 따로 만들어 박싱하지 않는다. 옛 정보를 보고 enum 키를 정수로 바꿀 필요는 없다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>박스는 복사본이다.</strong> 박싱한 값을 고쳐도 원래 변수는 바뀌지 않고, 원래 변수를 고쳐도 박스는 그대로다.</li>
+      <li><strong>언박싱은 정확히 같은 타입으로만.</strong> <code>int</code> 박스를 <code>long</code>으로 꺼내면 예외다. 숫자 변환은 꺼낸 뒤에 한다.</li>
+      <li><strong>struct가 인터페이스를 구현했다는 것만으로는 안전하지 않다.</strong> 그 인터페이스 타입으로 다루는 순간 박싱된다. 제네릭 제약을 거쳐야 박싱이 없다.</li>
+      <li><strong>작은 struct라고 박싱이 싼 것은 아니다.</strong> 1바이트 <code>bool</code>도 박스는 객체 하나다. 비용은 크기가 아니라 할당 횟수다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

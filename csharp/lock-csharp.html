@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>C#의 lock · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/lock-csharp">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../operating-system/sync-primitives.html">동기화 객체</a> · <a href="../operating-system/deadlock.html">데드락</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      C#의 <code>lock</code> 문은 새 장치가 아니라 <code>Monitor.Enter</code>와 <code>Monitor.Exit</code>를 <code>try/finally</code>로 감싼 것이다. 블록을 어떻게 빠져나가든 락이 풀린다. Monitor는 <strong>같은 스레드가 다시 잡아도 막히지 않는</strong> 재진입 락이고, 경합이 없으면 객체 헤더 한 칸만 건드리고 끝난다.
+    </p>
+    <p>
+      제약은 하나에서 나온다. <span class="blank">잡은 스레드가 풀어야 한다</span>. <code>await</code> 뒤의 코드는 다른 스레드에서 이어질 수 있으므로 lock 안에서는 await를 쓸 수 없다. 비동기 구간을 보호해야 하면 소유자가 없는 <code>SemaphoreSlim</code>을 쓴다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>lock은 Monitor 호출로 바뀐다</h3>
+<pre><code class="language-csharp">// 작성한 코드
+lock (_gate)
+{
+    _count++;
+}
+
+// 컴파일러가 바꾼 코드(C# 4 이후)
+bool taken = false;
+try
+{
+    Monitor.Enter(_gate, ref taken);
+    _count++;
+}
+finally
+{
+    if (taken) Monitor.Exit(_gate);
+}</code></pre>
+    <p>
+      <code>taken</code> 변수가 있는 이유는 Enter와 try 사이에서 예외가 끼어드는 경우까지 막으려는 것이다. 락을 실제로 잡았을 때만 푼다. 예외, return, break 어느 길로 나가도 finally가 돈다.
+    </p>
+    <p>
+      락은 배제만 주지 않는다. 락에 들어가는 지점은 획득, 나오는 지점은 해제 순서를 가진다. 그래서 임계 구역 안의 읽기와 쓰기가 구역 밖으로 밀려 나가지 않고, 앞 스레드가 구역 안에서 쓴 값을 다음 스레드가 본다(<a href="../computer-architecture/atomics-memory-order.html">원자적 연산과 메모리 순서</a>). lock으로 감싼 필드에 volatile을 따로 붙일 필요가 없는 이유다.
+    </p>
+
+    <h3>경합이 없으면 객체 헤더만 바꾼다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="경합이 없으면 객체 헤더에 스레드 번호를 적고 끝난다. 잡혀 있으면 잠깐 돌며 기다리고, 그래도 못 잡으면 동기화 블록을 만들어 커널에서 잠든다">
+        <defs><marker id="lk-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="20" y="22">관리 객체</text>
+        <rect class="f-hit" x="20" y="32" width="150" height="34"/><text class="f-text" x="95" y="54" text-anchor="middle">객체 헤더</text>
+        <rect class="f-box" x="20" y="66" width="150" height="34"/><text class="f-text" x="95" y="88" text-anchor="middle">메서드 테이블 포인터</text>
+        <rect class="f-box" x="20" y="100" width="150" height="44"/><text class="f-sub" x="95" y="127" text-anchor="middle">필드</text>
+        <line class="f-line" x1="172" y1="49" x2="226" y2="49" marker-end="url(#lk-a)"/>
+        <rect class="f-hit" x="230" y="30" width="210" height="44" rx="6"/>
+        <text class="f-strong" x="335" y="49" text-anchor="middle">① 비어 있으면</text>
+        <text class="f-sub" x="335" y="66" text-anchor="middle">헤더에 내 스레드 번호를 CAS로 쓴다</text>
+        <line class="f-line" x1="335" y1="76" x2="335" y2="100" marker-end="url(#lk-a)"/>
+        <rect class="f-box" x="230" y="104" width="210" height="44" rx="6"/>
+        <text class="f-strong" x="335" y="123" text-anchor="middle">② 남이 잡고 있으면</text>
+        <text class="f-sub" x="335" y="140" text-anchor="middle">잠깐 돌며(스핀) 다시 확인한다</text>
+        <line class="f-line" x1="335" y1="150" x2="335" y2="174" marker-end="url(#lk-a)"/>
+        <rect class="f-miss" x="230" y="178" width="210" height="44" rx="6"/>
+        <text class="f-on" x="335" y="197" text-anchor="middle">③ 그래도 못 잡으면</text>
+        <text class="f-on" x="335" y="214" text-anchor="middle">동기화 블록을 달고 잠든다</text>
+        <text class="f-sub" x="470" y="49">사용자 모드에서 끝난다. 수십 ns</text>
+        <text class="f-sub" x="470" y="123">아직 커널에 가지 않는다</text>
+        <text class="f-sub" x="470" y="194">깨우는 쪽도 커널을 거친다</text>
+        <text class="f-sub" x="470" y="211">문맥 교환 비용이 붙는다</text>
+      </svg>
+      <figcaption>Monitor는 스핀과 커널 대기를 섞은 락이다. 경합이 없는 동안은 객체 헤더 한 칸에 스레드 번호와 재진입 횟수를 적고 끝난다(thin lock). 오래 못 잡으면 객체에 동기화 블록을 붙이고, 그 안의 이벤트로 잠든다.</figcaption>
+    </figure>
+    <p>
+      관리 힙의 모든 객체는 앞에 객체 헤더라는 한 워드를 달고 있다. 해시 코드나 락 상태가 여기 들어간다. 경합이 없으면 Monitor는 이 칸에 자기 스레드 번호를 원자적으로 써넣는 것으로 끝난다. 같은 스레드가 다시 잡으면 같은 칸의 재진입 횟수만 올린다.
+    </p>
+    <p>
+      남이 쥐고 있으면 곧바로 잠들지 않고 잠깐 돌며 다시 확인한다. 임계 구역이 짧으면 그사이 풀리기 때문이다. 그래도 못 잡으면 객체에 동기화 블록(sync block)을 붙이고 커널 이벤트로 잠든다. 이렇게 커지는 것을 인플레이션이라 부른다. 해시 코드를 이미 꺼낸 객체나 <code>Monitor.Wait</code>를 쓴 객체는 헤더에 자리가 모자라 처음부터 동기화 블록을 단다. 잠들고 깨는 비용은 <a href="../operating-system/pcb-context-switch.html">PCB와 컨텍스트 스위칭</a>에서 다뤘다.
+    </p>
+
+    <h3>.NET 9의 System.Threading.Lock</h3>
+    <p>
+      .NET 9와 C# 13부터는 락 전용 타입 <code>System.Threading.Lock</code>이 있다. 필드를 이 타입으로 선언하고 lock 문에 넘기면 컴파일러가 Monitor 대신 <code>EnterScope()</code>로 얻은 범위 객체를 using으로 감싸 쓴다. 객체 헤더를 빌려 쓰지 않는 전용 구현이라 더 가볍고, 같은 스레드의 재진입도 된다.
+    </p>
+<pre><code class="language-csharp">private readonly Lock _gate = new();   // .NET 9 / C# 13
+
+public void Add(int n)
+{
+    lock (_gate)          // _gate.EnterScope()를 using으로 감싼 코드가 된다
+    {
+        _total += n;
+    }
+}</code></pre>
+    <p>
+      함정이 하나 있다. 이 전용 경로는 lock에 넘긴 식의 정적 타입이 정확히 <code>Lock</code>일 때만 쓰인다. <code>object</code> 변수에 담아 넘기면 같은 객체가 Monitor로 잠긴다. 한쪽은 Lock으로, 다른 쪽은 object로 잠그면 두 경로가 서로를 막지 못한다. 컴파일러가 이 변환에 경고(CS9216)를 낸다.
+    </p>
+
+    <h3>await는 lock 안에 들어갈 수 없다</h3>
+    <p>
+      Monitor와 Lock은 모두 잡은 스레드를 기억하고, 다른 스레드가 Exit를 부르면 <code>SynchronizationLockException</code>을 던진다. await 뒤의 코드는 <a data-ref="operating-system/thread-pool">스레드 풀</a>의 아무 스레드에서나 이어질 수 있다(<a data-ref="csharp/sync-context">동기화 컨텍스트</a>). 그래서 컴파일러가 lock 블록 안의 await를 아예 오류(CS1996)로 막는다.
+    </p>
+    <p>
+      비동기 구간을 하나씩만 들어가게 하려면 <code>SemaphoreSlim(1, 1)</code>을 쓴다. 세마포어는 소유자를 기억하지 않으므로 다른 스레드가 풀어도 된다. 대신 재진입이 없다. 같은 흐름이 두 번 들어가려 하면 자기 자신을 기다리며 멈춘다.
+    </p>
+<pre><code class="language-csharp">private readonly SemaphoreSlim _io = new(1, 1);
+
+public async Task SaveAsync(Data d, CancellationToken ct)
+{
+    await _io.WaitAsync(ct);
+    try
+    {
+        await _db.WriteAsync(d, ct);   // 여기서 다른 스레드로 넘어가도 괜찮다
+    }
+    finally
+    {
+        _io.Release();
+    }
+}</code></pre>
+
+    <h2>무엇으로 잠그나</h2>
+
+    <h3>락 객체는 나만 아는 것으로</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>락 대상</th><th>문제</th></tr></thead>
+        <tbody>
+          <tr><td><code>this</code></td><td>그 인스턴스를 가진 바깥 코드도 같은 객체를 잠글 수 있다. 내 임계 구역이 남의 코드 때문에 길어지거나 교착된다</td></tr>
+          <tr><td><code>typeof(Foo)</code></td><td>타입 객체는 프로세스 전체가 공유한다</td></tr>
+          <tr><td>문자열 리터럴</td><td><a data-ref="csharp/strings">인터닝</a> 때문에 전혀 관계없는 코드의 같은 문자열과 한 객체다</td></tr>
+          <tr><td>공개 필드, 컬렉션 자체</td><td>남이 잡을 수 있다. 컬렉션은 내부 구현이 자기를 잠그기도 한다</td></tr>
+          <tr><td><a data-ref="csharp/value-reference-types">값 형식</a></td><td>lock 문은 컴파일 오류다. <code>Monitor.Enter(int)</code>를 직접 부르면 매번 다른 상자로 박싱되어 아무것도 막지 못한다(<a data-ref="csharp/boxing">박싱</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      기본은 <code>private readonly object _gate = new();</code>, .NET 9 이후라면 <code>private readonly Lock _gate = new();</code>다. 바깥에서 볼 수 없으니 누가 이 락을 잡는지 이 클래스 안만 보면 다 안다.
+    </p>
+
+    <h3>상황에 따라 고르는 도구</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>도구</th><th>알아 둘 점</th></tr></thead>
+        <tbody>
+          <tr><td>짧은 동기 임계 구역</td><td><code>lock</code> (<code>Lock</code> 또는 <code>object</code>)</td><td>대부분 이것이면 된다</td></tr>
+          <tr><td>안에서 await한다</td><td><code>SemaphoreSlim.WaitAsync</code></td><td>재진입 없음. finally에서 Release</td></tr>
+          <tr><td>정수 하나를 늘리거나 바꾼다</td><td><code>Interlocked</code></td><td>락이 필요 없다(<a href="volatile-interlocked.html">volatile과 Interlocked</a>)</td></tr>
+          <tr><td>읽기가 압도적이고 읽는 구간이 길다</td><td><code>ReaderWriterLockSlim</code></td><td>잡는 비용이 lock보다 크다. 구간이 짧으면 lock이 더 빠르다. 스레드에 묶여 await와 함께 못 쓴다</td></tr>
+          <tr><td>아주 짧은 구간, 잠들면 손해</td><td><code>SpinLock</code></td><td>struct라 readonly 필드에 두거나 복사하면 사본을 잠근다. 재 보고 쓴다</td></tr>
+          <tr><td>기다릴 시간에 상한을 둔다</td><td><code>Monitor.TryEnter(obj, timeout, ref taken)</code></td><td>못 잡으면 false. 교착을 기록하고 빠져나올 수 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>락은 스레드 사이의 입구에만 둔다.</strong> 게임 상태를 로직 스레드 하나가 고치는 구조라면 락이 필요한 곳은 작업 큐와 결과 큐뿐이다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>). 캐릭터, 인벤토리, 파티마다 lock을 두기 시작하면 잡는 순서가 엇갈려 교착이 생기고, 틱마다 경합 비용이 쌓인다.
+      </li>
+      <li>
+        <strong>lock 안에서 부르는 것을 줄인다.</strong> 로그 출력, DB 호출, 이벤트 발행, 가상 메서드처럼 안에서 무엇을 할지 모르는 호출은 다른 락을 잡을 수 있다. 필요한 값을 복사해 락을 풀고 나서 부른다(<a href="../operating-system/deadlock.html">데드락</a>).
+      </li>
+      <li>
+        <strong>경합은 카운터로 본다.</strong> <code>dotnet-counters</code>의 Monitor 락 경합 횟수가 틱마다 수천씩 오르면 어딘가에서 같은 락을 두고 다투고 있다. 어느 락인지는 추적으로 좁힌다(<a href="diagnostics.html">.NET 진단 도구</a>).
+      </li>
+      <li>
+        <strong>교착은 덤프에서 확인한다.</strong> 서버가 멈추면 덤프를 뜨고 SOS의 <code>syncblk</code>로 어느 스레드가 어느 락을 쥐었는지, <code>clrstack -all</code>로 누가 무엇을 기다리는지 본다(<a href="../system-programming/crash-dump.html">크래시 덤프와 심볼</a>). thin lock 상태의 락은 syncblk에 나오지 않으니 스택과 함께 본다.
+      </li>
+      <li>
+        <strong>C++의 std::mutex와 재진입 규칙이 다르다.</strong> C#의 lock은 같은 스레드가 다시 잡아도 되지만 std::mutex는 멈춘다. 두 언어로 같은 구조를 옮길 때 재진입에 기대던 코드가 C++에서 교착된다(<a href="../cpp/cpp-concurrency.html">C++ 동시성</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>lock이 지켜 주는 것은 블록 안뿐이다.</strong> 블록 안에서 꺼낸 리스트를 블록 밖에서 순회하면 그때부터는 아무도 막아 주지 않는다. 밖으로 넘길 것은 사본으로 넘긴다.</li>
+      <li><strong>재진입이 된다고 기대지 않는다.</strong> 같은 락을 여러 층에서 잡으면 어디까지가 임계 구역인지 코드에서 보이지 않는다. 공개 메서드만 잡고 내부 메서드는 "이미 잡혀 있다"는 전제로 짠다.</li>
+      <li><strong>.Result나 .Wait()를 lock 안에서 부르지 않는다.</strong> await는 컴파일러가 막지만 동기 대기는 막지 않는다. 기다리는 작업이 같은 락을 필요로 하면 서로를 기다리며 멈춘다.</li>
+      <li><strong>Lock과 object를 섞지 않는다.</strong> 같은 Lock 인스턴스를 어떤 곳은 Lock 타입으로, 어떤 곳은 object로 잠그면 서로 다른 장치로 잠긴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -139,7 +139,7 @@
         <strong>const 객체는 이동되지 않는다.</strong> <code>const std::string s = ...; v.push_back(std::move(s));</code>는 복사한다. <code>std::move</code>가 <code>const std::string&amp;&amp;</code>을 만들고, 이동 생성자는 const가 아닌 rvalue 참조만 받으므로 복사 생성자가 선택된다. 성능 측정에서 이동이 안 일어나는 원인으로 흔하다.
       </li>
       <li>
-        <strong>C#에는 이동이 없다. 필요가 없기 때문이다.</strong> C#은 클래스가 기본이라 대입이 이미 참조 하나의 복사다. 값 형식(struct)은 작게 만드는 것이 전제이고, 큰 struct를 넘길 때는 <code>in</code>·<code>ref</code>로 복사를 피한다(<a data-ref="csharp/struct-design">struct 설계</a>). C++은 값이 기본이라 복사를 피하는 장치가 언어에 필요했고, C#은 참조가 기본이라 그 장치를 <a data-ref="csharp/gc-basics">GC</a>가 대신한다.
+        <strong>C#에는 이동이 없다. 필요가 없기 때문이다.</strong> C#은 클래스가 기본이라 대입이 이미 참조 하나의 복사다. <a data-ref="csharp/value-reference-types">값 형식</a>(struct)은 작게 만드는 것이 전제이고, 큰 struct를 넘길 때는 <code>in</code>·<code>ref</code>로 복사를 피한다(<a data-ref="csharp/struct-design">struct 설계</a>). C++은 값이 기본이라 복사를 피하는 장치가 언어에 필요했고, C#은 참조가 기본이라 그 장치를 <a data-ref="csharp/gc-basics">GC</a>가 대신한다.
       </li>
     </ul>
 

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GC 모드와 멈춤 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/gc-modes">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="gc-basics.html">GC 동작과 세대</a> · <a href="../server/tick-loop.html">서버 틱 루프</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      GC가 객체를 옮기고 참조를 고치는 동안에는 응용 스레드를 세워야 한다. 이 <strong>멈춤</strong>은 없앨 수 없다. GC 모드는 멈춤을 어디에 얼마나 나눠 낼지를 고르는 설정이다. 워크스테이션 GC는 힙 하나를 짧게 자주 거두고, 서버 GC는 코어마다 힙과 GC 스레드를 두어 많이 모아 한꺼번에 거둔다.
+    </p>
+    <p>
+      백그라운드 GC는 2세대의 표시 작업을 응용과 나란히 돌려 긴 멈춤을 짧은 멈춤 여럿으로 바꾼다. 그래도 시작과 끝의 짧은 멈춤이 남고, <span class="blank">0세대와 1세대 수거는 언제나 전부 세운다</span>. 게임 서버의 멈춤을 줄이는 근본 방법은 모드가 아니라 2세대로 올라가는 객체를 줄이는 것이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>같은 일을 다르게 나눠 낸다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 260" role="img" aria-label="워크스테이션 GC는 짧은 멈춤이 잦고, 서버 GC는 멈춤이 드물지만 한 번이 길 수 있고, 백그라운드 GC는 표시를 응용과 겹쳐 돌리고 시작과 끝, 그리고 사이의 0세대 수거에서만 멈춘다">
+        <text class="f-sub" x="160" y="22">시간 →</text>
+        <text class="f-strong" x="20" y="62">워크스테이션</text>
+        <rect class="f-box" x="160" y="44" width="560" height="28"/>
+        <rect class="f-miss" x="220" y="44" width="10" height="28"/>
+        <rect class="f-miss" x="330" y="44" width="10" height="28"/>
+        <rect class="f-miss" x="440" y="44" width="10" height="28"/>
+        <rect class="f-miss" x="550" y="44" width="10" height="28"/>
+        <rect class="f-miss" x="660" y="44" width="10" height="28"/>
+        <text class="f-sub" x="160" y="88">힙 하나. 할당한 스레드가 직접 거둔다. 짧고 잦다</text>
+
+        <text class="f-strong" x="20" y="132">서버</text>
+        <rect class="f-box" x="160" y="114" width="560" height="28"/>
+        <rect class="f-miss" x="330" y="114" width="26" height="28"/>
+        <rect class="f-miss" x="600" y="114" width="26" height="28"/>
+        <text class="f-sub" x="160" y="158">코어마다 힙과 GC 스레드. 드물고, 거둘 양이 많으면 한 번이 길다</text>
+
+        <text class="f-strong" x="20" y="202">백그라운드 2세대</text>
+        <rect class="f-box" x="160" y="184" width="560" height="28"/>
+        <rect class="f-bar" x="260" y="184" width="300" height="28"/>
+        <text class="f-text" x="370" y="203" text-anchor="middle">2세대 표시가 응용과 함께 돈다</text>
+        <rect class="f-miss" x="254" y="184" width="6" height="28"/>
+        <rect class="f-miss" x="560" y="184" width="6" height="28"/>
+        <rect class="f-miss" x="500" y="184" width="8" height="28"/>
+        <text class="f-sub" x="160" y="230">시작·끝의 짧은 멈춤과, 그사이 0·1세대 수거의 멈춤은 남는다</text>
+        <rect class="f-miss" x="600" y="236" width="14" height="12"/><text class="f-sub" x="620" y="246">응용이 멈춘 구간</text>
+      </svg>
+      <figcaption>칠한 막대가 응용 스레드가 모두 멈춘 구간이다. 길이는 모양만 보인 것이고, 실제 값은 힙 크기와 살아 있는 객체 수가 정한다. 어떤 모드에서도 멈춤이 0이 되지는 않는다.</figcaption>
+    </figure>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>워크스테이션 GC</th><th>서버 GC</th></tr></thead>
+        <tbody>
+          <tr><td>힙</td><td>하나</td><td>논리 코어마다 하나(.NET 9의 DATAS는 필요한 만큼만)</td></tr>
+          <tr><td>누가 거두나</td><td>할당하다 예산을 넘긴 그 스레드</td><td>코어마다 둔 높은 우선순위의 전용 GC 스레드가 나란히</td></tr>
+          <tr><td>0세대 예산</td><td>작다. 자주 거둔다</td><td>크다. 덜 자주, 한 번에 많이</td></tr>
+          <tr><td>노리는 것</td><td>짧은 멈춤, 적은 메모리</td><td>높은 처리량</td></tr>
+          <tr><td>메모리</td><td>적게 쓴다</td><td>힙이 코어 수만큼이라 더 쓴다</td></tr>
+          <tr><td>기본값</td><td>콘솔 앱, 데스크톱 앱</td><td>ASP.NET Core 웹 프로젝트(SDK가 켠다)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      서버 GC는 GC 작업을 여러 코어가 나눠 하므로 같은 양을 더 빨리 거둔다. 대신 예산이 커서 한 번에 거둘 양이 많고, 힙이 여럿이라 메모리를 더 쓴다. 코어가 32개인 기계에서 힙 32개가 각자 0세대 예산을 잡는 식이다. <strong>.NET 8</strong>에서 선택 기능으로 들어온 <strong>DATAS</strong>(Dynamic Adaptation To Application Sizes)는 힙 하나로 시작해 부하에 따라 힙 수와 예산을 늘리고 줄인다. <strong>.NET 9부터 서버 GC를 켜면 DATAS가 기본으로 켜진다.</strong> 서버 GC 자체가 기본이 된 것은 아니다.
+    </p>
+
+    <h3>백그라운드 GC는 2세대 표시만 겹친다</h3>
+    <p>
+      동시(concurrent) GC가 켜져 있으면(기본값) 2세대 수거는 백그라운드 GC로 돈다. 전용 스레드가 응용과 나란히 2세대를 표시하고, 응용 스레드는 그동안 계속 할당하고 실행한다. 다만 완전히 겹치지는 않는다.
+    </p>
+    <ul>
+      <li>시작할 때 뿌리를 잡는 짧은 멈춤이 있다.</li>
+      <li>끝날 때 그사이 바뀐 참조를 정리하는 짧은 멈춤이 있다.</li>
+      <li>백그라운드 GC가 도는 동안 0세대 예산이 차면 그 자리에서 0·1세대 수거(전경 GC)를 한다. 이것은 응용 스레드를 전부 세운다.</li>
+      <li>백그라운드 GC는 압축하지 않는다. <a data-ref="operating-system/fragmentation">단편화</a>가 쌓이면 결국 압축하는 블로킹 2세대 GC가 돈다.</li>
+    </ul>
+    <p>
+      그래서 백그라운드 GC는 "긴 멈춤 하나를 짧은 멈춤 여럿으로 바꾸는 장치"다. 2세대가 커질수록 표시에 오래 걸리고, 그 사이 전경 GC도 여러 번 끼어든다.
+    </p>
+
+    <h3>멈춤을 조절하는 손잡이</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>손잡이</th><th>하는 일</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td><code>GCSettings.LatencyMode = SustainedLowLatency</code></td><td>백그라운드 GC를 쓸 수 있으면 블로킹 2세대 GC를 되도록 피한다</td><td>힙이 더 커진다. 메모리가 모자라면 결국 블로킹 GC가 돈다</td></tr>
+          <tr><td><code>GCSettings.LatencyMode = LowLatency</code></td><td>2세대 GC를 거의 하지 않는다. 워크스테이션 GC 전용</td><td>짧은 구간에만 쓴다. 오래 두면 메모리가 계속 는다</td></tr>
+          <tr><td><code>GC.TryStartNoGCRegion(size)</code></td><td>지정한 양을 미리 확보하고, 그만큼 할당하는 동안 GC를 하지 않는다</td><td>크기 상한이 있고, 넘치면 구간이 깨진다. 아주 짧은 구간용</td></tr>
+          <tr><td><code>GCHeapCount</code>, <code>GCHeapAffinitizeMask</code></td><td>서버 GC의 힙 수와 쓸 코어를 정한다</td><td>너무 줄이면 서버 GC의 이점이 사라진다</td></tr>
+          <tr><td><code>GCHeapHardLimit</code>(또는 <code>…Percent</code>)</td><td>GC 힙의 상한을 정한다</td><td>상한에 닿으면 GC가 잦아지고 끝내 OutOfMemoryException</td></tr>
+          <tr><td><code>GCConserveMemory</code></td><td>힙 크기를 줄이려고 더 자주 압축한다</td><td>GC에 쓰는 CPU가 는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      설정은 프로젝트 파일(<code>&lt;ServerGarbageCollection&gt;true&lt;/ServerGarbageCollection&gt;</code>, <code>&lt;ConcurrentGarbageCollection&gt;</code>), <code>runtimeconfig.json</code>의 <code>System.GC.Server</code>, 환경 변수(<code>DOTNET_gcServer=1</code>) 중 하나로 정한다. 같은 바이너리를 환경 변수로 바꿔 가며 잴 수 있어 비교에는 환경 변수가 편하다.
+    </p>
+
+    <h3>컨테이너에서는 상한이 달라진다</h3>
+    <p>
+      .NET 런타임은 컨테이너의 메모리 제한을 읽어, 따로 정하지 않으면 그 75%를 GC 힙 상한으로 잡는다. CPU 제한도 읽어 서버 GC의 힙 수를 그에 맞춘다. 문제는 코어는 많이 주고 메모리는 적게 준 경우다. 힙마다 예산을 잡는 서버 GC가 상한에 금방 닿아 GC가 잦아진다. 이때는 DATAS를 쓰거나, <code>GCHeapCount</code>로 힙 수를 줄이거나, 워크스테이션 GC와 비교해 고른다(<a data-ref="operations/orchestration">컨테이너와 오케스트레이션</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 쪽</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>코어가 많고 처리량이 중요한 API 서버</td><td>서버 GC(+ DATAS)</td><td>GC 작업을 여러 코어로 나눠 빨리 끝낸다</td></tr>
+          <tr><td>한 기계에 서버 프로세스를 여럿 띄운다</td><td>워크스테이션 GC 또는 힙 수를 줄인 서버 GC</td><td>프로세스마다 코어 수만큼 힙을 잡으면 메모리가 모자란다</td></tr>
+          <tr><td>틱 주기를 지켜야 하는 게임 로직 서버</td><td>두 모드를 실제 부하로 재서 멈춤 분포를 비교</td><td>처리량이 아니라 가장 긴 멈춤이 틱을 놓치게 한다</td></tr>
+          <tr><td>메모리 제한이 빡빡한 컨테이너</td><td>DATAS, 워크스테이션 GC, <code>GCConserveMemory</code></td><td>힙 수와 예산을 줄여 상한에 덜 닿는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      어느 모드든 멈춤의 길이를 정하는 것은 살아 있는 객체의 양이다. 2세대로 올라가는 객체를 줄이면 모든 모드에서 멈춤이 짧아지고, 모드를 바꾸는 것은 그 위에서의 미세 조정이다(<a href="gc-basics.html">GC 동작과 세대</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>멈춤은 틱 예산에서 빠진다.</strong> 30Hz 틱이면 한 틱이 약 33ms다. GC 멈춤이 20ms면 그 틱에 쓸 시간이 13ms로 줄고, 멈춤이 틱보다 길면 틱 하나를 통째로 놓친다. 평균 틱 시간은 멀쩡한데 가끔 튀는 틱이 GC 시각과 겹치면 이것이 원인이다(<a href="../server/tick-loop.html">서버 틱 루프</a>, <a href="../operations/diagnosis.html">느린 서버 진단</a>).
+      </li>
+      <li>
+        <strong>멈춤은 분포로 잰다.</strong> <code>GC.GetGCMemoryInfo()</code>의 <code>PauseDurations</code>, <code>GC.GetTotalPauseDuration()</code>(.NET 7), 이벤트 추적의 GC 시작·끝 시각을 틱 시간 기록과 나란히 남긴다. 평균 멈춤으로는 문제의 한 번이 보이지 않는다.
+      </li>
+      <li>
+        <strong>대량 로딩 뒤에는 정리할 기회를 준다.</strong> 서버 시작 때 기획 데이터를 다 읽은 직후라면, 접속을 받기 전에 GC를 한 번 돌려 임시 객체를 치우고 남을 것을 2세대로 보내 두는 것이 나을 수 있다. 실행 중에 직접 GC를 부르는 것과는 다른 경우다.
+      </li>
+      <li>
+        <strong>NoGCRegion은 아주 짧은 구간에만 쓴다.</strong> 보스전 판정처럼 몇 ms 안에 끝나는 구간에서 할당량을 미리 알 때 쓸 수 있다. 할당량을 넘으면 구간이 깨지고, 끝낸 직후에는 미뤄 둔 GC가 몰려 올 수 있다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>서버 GC가 늘 빠르지는 않다.</strong> 처리량은 오르지만 메모리가 늘고, 한 번에 거둘 양이 많아 멈춤이 길어질 수 있다. 꼬리 지연이 중요한 서버에서는 반대 결과가 나오기도 한다.</li>
+      <li><strong>백그라운드 GC는 멈춤을 없애지 않는다.</strong> 0·1세대 수거는 언제나 전부 세우고, 단편화가 쌓이면 압축하는 블로킹 GC가 돈다.</li>
+      <li><strong>지연 모드를 오래 켜 두지 않는다.</strong> <code>LowLatency</code>와 <code>SustainedLowLatency</code>는 GC를 미루는 것이라, 미룬 만큼 메모리가 늘고 결국 더 큰 GC가 온다.</li>
+      <li><strong>설정 이름은 버전마다 조금씩 다르다.</strong> 환경 변수 접두사는 .NET 5부터 <code>DOTNET_</code>이고, 그 전에는 <code>COMPlus_</code>였다. 지금도 둘 다 읽지만 새 설정은 <code>DOTNET_</code>으로 적는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -159,7 +159,7 @@
         <strong>패킷 정의는 한 곳에 두고 코드를 생성한다.</strong> .NET 서버와 Unity 클라이언트가 같은 스키마 파일에서 클래스를 생성하면 양쪽 정의가 어긋나는 사고가 없다. 손으로 두 벌을 맞추면 필드 순서 하나가 바뀌어도 빌드는 통과하고 실행 중에 값이 틀어진다.
       </li>
       <li>
-        <strong>직렬화에서 할당을 줄인다.</strong> 리플렉션 기반 직렬화는 느리고 AOT 환경에서 깨질 수 있다. 소스 생성기를 쓰는 라이브러리(MessagePack-CSharp, Google.Protobuf의 생성 코드)를 쓰고, 버퍼는 풀에서 빌려 <code>IBufferWriter&lt;byte&gt;</code>에 바로 쓴다(<a href="../csharp/jit-aot.html">JIT와 AOT</a>, <a data-ref="csharp/ref-span">ref struct와 Span</a>).
+        <strong>직렬화에서 할당을 줄인다.</strong> 리플렉션 기반 직렬화는 느리고 AOT 환경에서 깨질 수 있다. <a data-ref="csharp/reflection-sourcegen">소스 생성기</a>를 쓰는 라이브러리(MessagePack-CSharp, Google.Protobuf의 생성 코드)를 쓰고, 버퍼는 풀에서 빌려 <code>IBufferWriter&lt;byte&gt;</code>에 바로 쓴다(<a href="../csharp/jit-aot.html">JIT와 AOT</a>, <a data-ref="csharp/ref-span">ref struct와 Span</a>).
       </li>
       <li>
         <strong>받은 값은 모두 검증한다.</strong> 서버 권위라도 역직렬화한 값의 범위를 보지 않으면 소용이 없다. 길이 필드가 엄청나게 크거나, 수량이 음수거나, 좌표가 맵 밖이면 처리하기 전에 거른다.

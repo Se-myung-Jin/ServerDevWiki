@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>인터페이스와 추상 클래스 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/interface-abstract">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="boxing.html">박싱</a> · <a href="generics.html">제네릭</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      인터페이스는 <strong>무엇을 할 수 있는지</strong>(능력)를, 추상 클래스는 <strong>무엇인지</strong>(정체와 공통 골격)를 말한다. 관계없는 여러 타입에 같은 능력을 붙일 때는 인터페이스, 공통 상태와 구현을 물려줄 때는 추상 클래스다. 다중 상속이 되느냐는 그 결과이지 고르는 기준이 아니다.
+    </p>
+    <p>
+      비용도 다르다. 인터페이스 호출은 가상 호출보다 한 단계를 더 거쳐 대상을 찾고, 구조체를 인터페이스 타입으로 다루면 <span class="blank">박싱</span>이 일어난다. 대개는 문제가 안 되지만, 틱마다 수십만 번 도는 경로에서는 제네릭 제약이나 <code>sealed</code>로 그 비용을 없앤다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>무엇이 다른가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>인터페이스</th><th>추상 클래스</th></tr></thead>
+        <tbody>
+          <tr><td>한 타입이 몇 개를</td><td>여러 개 구현한다</td><td>하나만 상속한다</td></tr>
+          <tr><td>인스턴스 상태(필드)</td><td>둘 수 없다. 정적 필드는 된다(C# 8)</td><td>둘 수 있다</td></tr>
+          <tr><td>생성자</td><td>인스턴스 생성자가 없다</td><td>있다. 파생 클래스가 반드시 거친다</td></tr>
+          <tr><td>구현</td><td>기본 구현을 줄 수 있다(C# 8)</td><td>자유롭다</td></tr>
+          <tr><td>구조체가</td><td>구현할 수 있다</td><td>상속할 수 없다</td></tr>
+          <tr><td>나중에 멤버를 더하면</td><td>기본 구현이 없으면 구현한 모든 타입이 깨진다</td><td>구현이 있는 가상 메서드로 더하면 안 깨진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      기본 인터페이스 메서드(C# 8)는 공개 인터페이스에 멤버를 더해도 기존 구현이 깨지지 않게 하려고 들어왔다. 다만 그 기본 구현은 <strong>인터페이스 타입으로 부를 때만</strong> 보인다. <code>Monster m</code>으로 들고 있으면 <code>m.Describe()</code>가 컴파일되지 않고, <code>((IDescribable)m).Describe()</code>여야 한다. 그리고 구조체가 기본 구현을 쓰면 그 호출에서 박싱된다. 상태를 둘 수 없으니 "골격을 물려주는" 추상 클래스를 대신하지는 못한다.
+    </p>
+
+    <h3>인터페이스 호출은 한 단계를 더 거친다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="가상 호출은 객체의 메서드 테이블에서 정해진 슬롯을 바로 읽고, 인터페이스 호출은 호출 지점의 스텁이 실제 타입을 확인해 구현을 찾아간다">
+        <defs><marker id="ifa-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">가상 호출 entity.Update()</text>
+        <rect class="f-box" x="20" y="40" width="130" height="34" rx="6"/><text class="f-text" x="85" y="62" text-anchor="middle">객체 → 타입</text>
+        <rect class="f-box" x="200" y="40" width="170" height="34" rx="6"/><text class="f-text" x="285" y="62" text-anchor="middle">메서드 테이블 슬롯 3</text>
+        <rect class="f-hit" x="420" y="40" width="160" height="34" rx="6"/><text class="f-text" x="500" y="62" text-anchor="middle">Monster.Update</text>
+        <line class="f-line" x1="150" y1="57" x2="196" y2="57" marker-end="url(#ifa-a)"/>
+        <line class="f-line" x1="370" y1="57" x2="416" y2="57" marker-end="url(#ifa-a)"/>
+        <text class="f-sub" x="596" y="62">슬롯 위치가 미리 정해져 있다</text>
+
+        <text class="f-strong" x="20" y="114">인터페이스 호출 ((IDamageable)x).Hit()</text>
+        <rect class="f-box" x="20" y="130" width="130" height="34" rx="6"/><text class="f-text" x="85" y="152" text-anchor="middle">호출 지점 스텁</text>
+        <rect class="f-box" x="200" y="130" width="170" height="34" rx="6"/><text class="f-text" x="285" y="152" text-anchor="middle">지난번 타입과 같나?</text>
+        <rect class="f-hit" x="420" y="124" width="160" height="22" rx="6"/><text class="f-text" x="500" y="140" text-anchor="middle">같다 → 바로 호출</text>
+        <rect class="f-pad" x="420" y="150" width="160" height="22" rx="6"/><text class="f-sub" x="500" y="166" text-anchor="middle">다르다 → 표에서 찾기</text>
+        <line class="f-line" x1="150" y1="147" x2="196" y2="147" marker-end="url(#ifa-a)"/>
+        <line class="f-line" x1="370" y1="142" x2="416" y2="136" marker-end="url(#ifa-a)"/>
+        <line class="f-line" x1="370" y1="152" x2="416" y2="160" marker-end="url(#ifa-a)"/>
+        <text class="f-sub" x="596" y="152">타입이 자주 바뀌면 느리다</text>
+      </svg>
+      <figcaption>한 클래스가 여러 인터페이스를 구현하면 인터페이스마다 멤버 위치가 달라, 메서드 테이블의 고정 슬롯 하나로는 찾을 수 없다. 그래서 호출 지점마다 스텁을 두고 실제 타입을 확인해 구현을 찾는다. 늘 같은 타입이 오면 비교 한 번으로 끝난다.</figcaption>
+    </figure>
+    <p>
+      .NET 런타임은 인터페이스 호출을 가상 스텁 디스패치로 처리한다. 처음에는 호출 지점이 "지난번에 본 타입이면 그 구현으로" 가는 스텁을 쓰고, 여러 타입이 섞여 들어오면 타입과 인터페이스 멤버로 구현을 찾는 일반 경로로 바뀐다. 그래서 한 자리에 늘 같은 타입이 오면 가상 호출과 거의 같고, 수십 가지 타입이 번갈아 오면 눈에 띄게 느려진다. 최근 .NET은 동적 PGO로 자주 오는 타입을 관측해 "그 타입이면 직접 호출"을 넣기도 한다. 가상 호출과 비가상화 일반은 <a href="../cpp/virtual-functions.html">가상 함수와 다형성</a>에서 C++와 함께 다뤘다.
+    </p>
+
+    <h3>구조체가 인터페이스를 구현할 때</h3>
+    <pre><code class="language-csharp">struct Damage : IComparable&lt;Damage&gt; { public int Value; public int CompareTo(Damage o) =&gt; Value.CompareTo(o.Value); }
+
+IComparable&lt;Damage&gt; boxed = dmg;          // 박싱. 힙에 사본이 생긴다
+int a = boxed.CompareTo(other);           // 인터페이스 호출
+
+static T Max&lt;T&gt;(T x, T y) where T : IComparable&lt;T&gt;
+    =&gt; x.CompareTo(y) &gt;= 0 ? x : y;       // T가 struct면 박싱 없이 Damage.CompareTo를 직접 부른다</code></pre>
+    <p>
+      구조체를 인터페이스 타입 변수에 담거나 인터페이스 매개변수로 넘기면 박싱되고, 그 뒤로는 상자 안의 사본을 고친다. 원본은 바뀌지 않는다. 같은 일을 제네릭 제약으로 받으면 <a data-ref="csharp/jit-aot">JIT</a>가 구조체 전용 코드를 만들어 직접 호출한다(<a href="generics.html">제네릭</a>). <code>List&lt;T&gt;.Enumerator</code>가 구조체이고 <code>foreach</code>가 그것을 직접 쓰는 것도 같은 이유다. <code>IEnumerable&lt;T&gt;</code>로 받아 순회하면 열거자가 박싱된다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 쪽</th></tr></thead>
+        <tbody>
+          <tr><td>관계없는 여러 타입이 같은 능력을 가진다(피격 가능, 저장 가능)</td><td>인터페이스</td></tr>
+          <tr><td>공통 상태와 처리 순서를 나눠 갖고 일부만 바꾼다</td><td>추상 클래스</td></tr>
+          <tr><td>구조체에도 붙여야 한다</td><td>인터페이스(쓰는 쪽은 제네릭 제약으로 받는다)</td></tr>
+          <tr><td>테스트에서 바꿔 끼운다, 모듈 사이 의존을 뒤집는다</td><td>인터페이스</td></tr>
+          <tr><td>계약과 공통 구현이 둘 다 필요하다</td><td>인터페이스로 계약, 그것을 구현한 추상 기반 클래스로 공통 부분</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      구현이 하나뿐이고 바뀔 계획도 없는 곳에 인터페이스를 미리 만들 필요는 없다. 한 층이 늘고 호출이 간접이 될 뿐이다. 두 번째 구현이나 테스트 대역이 필요해질 때 뽑아내도 늦지 않다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱마다 도는 호출은 인터페이스 뒤에 숨기지 않는다.</strong> 수만 개 엔티티를 <code>IUpdatable</code> 목록으로 들고 <code>Update()</code>를 부르면 호출마다 스텁을 거치고, 종류가 섞여 있어 예측도 잘 안 된다. 종류별 목록으로 나눠 구체 타입으로 돌리면 간접 호출이 사라지고 <a data-ref="system-programming/inline-codegen">인라인</a>도 된다(<a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>).
+      </li>
+      <li>
+        <strong>상속 계층에 끝이 있으면 sealed를 붙인다.</strong> <code>sealed class Monster</code>로 두면 JIT가 그 타입으로의 가상 호출과 인터페이스 호출을 직접 호출로 바꾸고 인라인할 수 있다. 타입 검사(<code>is Monster</code>)도 단순 비교 하나가 된다.
+      </li>
+      <li>
+        <strong>패킷 처리기 등록은 인터페이스 하나로 충분하다.</strong> <code>IPacketHandler&lt;T&gt;</code>를 메시지마다 구현하게 하고, 등록할 때 번호로 찾는 표에 넣는다. 처리기 호출은 패킷당 한 번이라 간접 호출 비용이 문제 되지 않는다. 비용을 신경 쓸 곳은 처리기 안의 로직이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>기본 인터페이스 메서드는 구현 클래스 변수로 부를 수 없다.</strong> 인터페이스 타입으로 바꿔야 보이고, 구조체는 그 과정에서 박싱된다.</li>
+      <li><strong>공개 인터페이스에 멤버를 더하는 것은 깨지는 변경이다.</strong> 다른 팀이나 다른 어셈블리가 구현하고 있다면 기본 구현을 주거나 새 인터페이스로 나눈다.</li>
+      <li><strong>구조체를 인터페이스로 받아 고치면 원본이 안 바뀐다.</strong> 박싱된 사본을 고친 것이기 때문이다. 변경이 필요한 구조체는 제네릭 제약과 <code>ref</code>로 넘긴다.</li>
+      <li><strong>추상 클래스 생성자에서 가상 메서드를 부르지 않는다.</strong> C#은 파생 클래스의 오버라이드가 불리는데, 그 시점에 파생 클래스 생성자 본문은 아직 돌지 않았다. C++과 동작이 반대다(<a href="../cpp/virtual-functions.html">가상 함수와 다형성</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

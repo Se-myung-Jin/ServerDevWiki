@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>제네릭 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="csharp/generics">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="boxing.html">박싱</a> · <a href="struct-design.html">struct와 class 고르기</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      C# 제네릭은 중간 언어(IL)에 타입 매개변수가 그대로 남고, 실제 기계어는 실행 중에 JIT가 만든다. 이때 <strong><a data-ref="csharp/value-reference-types">값 형식</a> 인자마다 전용 코드</strong>를 만들고, <strong>참조 형식 인자는 코드 한 벌을 공유</strong>한다. 값 형식 전용 코드 덕분에 <code>List&lt;int&gt;</code>는 박싱 없이 int를 그대로 담고, 비교와 산술이 <a data-ref="system-programming/inline-codegen">인라인</a>된다.
+    </p>
+    <p>
+      무엇을 할 수 있는지는 <code>where</code> 제약으로 미리 선언한다. 제약은 문법만의 문제가 아니다. 인터페이스 제약 하나가 값 형식의 인터페이스 호출에서 박싱을 없애고, C# 11의 정적 추상 멤버는 <code>T + T</code> 같은 연산을 제네릭으로 쓰게 해 준다. C++ 템플릿과의 비교는 <a href="../cpp/templates-constexpr.html">템플릿과 컴파일 시점 계산</a>에서 다뤘다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>값 형식은 따로, 참조 형식은 함께</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 220" role="img" aria-label="List of int와 List of Vector3는 각자 전용 기계어를 갖고, List of string과 List of Player는 System.__Canon으로 공유된 한 벌의 코드를 쓴다">
+        <defs><marker id="gen-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">IL에는 하나</text>
+        <rect class="f-box" x="20" y="90" width="150" height="40" rx="6"/><text class="f-text" x="95" y="115" text-anchor="middle">List&lt;T&gt;.Add</text>
+
+        <text class="f-strong" x="300" y="24">쓰인 타입</text>
+        <rect class="f-hit" x="300" y="36" width="150" height="30" rx="6"/><text class="f-text" x="375" y="56" text-anchor="middle">List&lt;int&gt;</text>
+        <rect class="f-hit" x="300" y="76" width="150" height="30" rx="6"/><text class="f-text" x="375" y="96" text-anchor="middle">List&lt;Vector3&gt;</text>
+        <rect class="f-box" x="300" y="126" width="150" height="30" rx="6"/><text class="f-text" x="375" y="146" text-anchor="middle">List&lt;string&gt;</text>
+        <rect class="f-box" x="300" y="166" width="150" height="30" rx="6"/><text class="f-text" x="375" y="186" text-anchor="middle">List&lt;Player&gt;</text>
+
+        <text class="f-strong" x="560" y="24">JIT가 만든 기계어</text>
+        <rect class="f-hit" x="560" y="36" width="180" height="30" rx="6"/><text class="f-text" x="650" y="56" text-anchor="middle">int 전용</text>
+        <rect class="f-hit" x="560" y="76" width="180" height="30" rx="6"/><text class="f-text" x="650" y="96" text-anchor="middle">Vector3 전용</text>
+        <rect class="f-box" x="560" y="140" width="180" height="40" rx="6"/><text class="f-text" x="650" y="158" text-anchor="middle">__Canon 공유 코드</text><text class="f-sub" x="650" y="174" text-anchor="middle">참조 형식 전부</text>
+
+        <line class="f-line" x1="170" y1="104" x2="296" y2="52" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="170" y1="108" x2="296" y2="92" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="170" y1="114" x2="296" y2="140" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="170" y1="118" x2="296" y2="180" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="450" y1="51" x2="556" y2="51" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="450" y1="91" x2="556" y2="91" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="450" y1="141" x2="556" y2="156" marker-end="url(#gen-a)"/>
+        <line class="f-line" x1="450" y1="181" x2="556" y2="166" marker-end="url(#gen-a)"/>
+      </svg>
+      <figcaption>값 형식 인자는 크기와 필드 배치가 저마다 달라 전용 코드가 만들어진다. 참조 형식은 모두 포인터 하나라 런타임이 System.__Canon이라는 자리표시 타입으로 코드 한 벌을 만들어 함께 쓴다.</figcaption>
+    </figure>
+    <p>
+      참조 형식끼리는 값이 모두 포인터 하나이고 <a data-ref="csharp/gc-basics">GC</a>가 다루는 방식도 같아서 기계어가 같아도 된다. 다만 공유 코드 안에서 <code>new T()</code>, <code>typeof(T)</code>, <code>T[]</code> 생성처럼 실제 타입을 알아야 하는 일은, 런타임이 호출할 때 넘겨준 타입 정보(제네릭 사전)를 한 번 더 찾아본다. 그래서 공유 코드는 전용 코드보다 조금 느리다.
+    </p>
+    <p>
+      값 형식 전용 코드에서는 JIT가 T를 정확히 안다. <code>if (typeof(T) == typeof(int))</code> 같은 분기는 컴파일 시점 상수로 접혀 해당하지 않는 갈래가 사라지고, <code>EqualityComparer&lt;T&gt;.Default.Equals</code>도 직접 비교로 바뀌어 인라인된다. 대가는 코드 크기다. 값 형식 인자가 많을수록 기계어가 그만큼 는다.
+    </p>
+
+    <h3>제약은 할 수 있는 일과 비용을 함께 바꾼다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>제약</th><th>할 수 있게 되는 일</th><th>성능에 미치는 영향</th></tr></thead>
+        <tbody>
+          <tr><td>없음</td><td>object 멤버, <code>== null</code> 비교(값 형식이면 늘 거짓)</td><td>인터페이스로 다루려면 캐스트가 필요해 값 형식은 박싱된다</td></tr>
+          <tr><td><code>where T : class</code></td><td>참조 형식만 받는다. <code>as</code>, null 대입</td><td>참조 형식 공유 코드로만 돈다</td></tr>
+          <tr><td><code>where T : struct</code></td><td>nullable이 아닌 값 형식만 받는다. <code>T?</code>가 <code>Nullable&lt;T&gt;</code>가 된다</td><td>언제나 전용 코드</td></tr>
+          <tr><td><code>where T : unmanaged</code> (C# 7.3)</td><td>참조를 품지 않은 값 형식. 포인터, <code>sizeof(T)</code>, 바이트로 다시 보기</td><td>버퍼와 직렬화에 쓴다(<a href="../cpp/object-layout.html">객체 배치와 타입 특성</a>의 trivially copyable과 같은 질문)</td></tr>
+          <tr><td><code>where T : IComparable&lt;T&gt;</code></td><td>그 인터페이스 멤버를 부른다</td><td>값 형식에서는 박싱 없이 직접 호출된다(constrained call)</td></tr>
+          <tr><td><code>where T : new()</code></td><td><code>new T()</code></td><td>내부적으로 <code>Activator.CreateInstance</code> 계열이라 생성자를 직접 부르는 것보다 느리다</td></tr>
+          <tr><td><code>where T : INumber&lt;T&gt;</code> (.NET 7)</td><td><code>T.Zero</code>, <code>a + b</code> 같은 정적 멤버와 연산자</td><td>값 형식 전용 코드라 일반 산술과 같은 속도</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      인터페이스 제약이 박싱을 없애는 원리는 이렇다. <code>void Sort&lt;T&gt;(T[] a) where T : IComparable&lt;T&gt;</code>에서 <code>a[i].CompareTo(a[j])</code>는 IL에서 <code>constrained.</code> 접두사가 붙은 호출이 된다. T가 값 형식이면 JIT가 그 타입의 <code>CompareTo</code>를 직접 부르는 코드를 만든다. 같은 일을 <code>IComparable</code> 매개변수로 받으면 구조체를 인터페이스로 넘기는 순간 박싱된다(<a href="boxing.html">박싱</a>).
+    </p>
+
+    <h3>정적 추상 멤버로 연산자를 제네릭으로 쓴다</h3>
+    <pre><code class="language-csharp">// C# 11, .NET 7: 인터페이스에 static abstract 멤버를 둘 수 있다
+static T Sum&lt;T&gt;(ReadOnlySpan&lt;T&gt; values) where T : INumber&lt;T&gt;
+{
+    T total = T.Zero;
+    foreach (var v in values) total += v;   // int면 정수 덧셈, double이면 실수 덧셈으로 컴파일된다
+    return total;
+}</code></pre>
+    <p>
+      예전에는 수치 코드를 제네릭으로 쓸 방법이 없어 int용, float용을 따로 만들거나 dynamic이나 박싱을 썼다. 정적 추상 멤버는 "이 타입에는 이런 정적 메서드와 연산자가 있다"를 인터페이스로 요구한다. 호출은 값 형식 전용 코드 안에서 정적으로 정해지므로 가상 호출이 없다.
+    </p>
+
+    <h3>변성은 읽기와 쓰기 방향을 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>표시</th><th>뜻</th><th>예</th></tr></thead>
+        <tbody>
+          <tr><td><code>out T</code> (공변)</td><td>T를 내놓기만 한다. 파생 → 기반으로 바꿔 받을 수 있다</td><td><code>IEnumerable&lt;Monster&gt;</code>를 <code>IEnumerable&lt;Entity&gt;</code>로</td></tr>
+          <tr><td><code>in T</code> (반공변)</td><td>T를 받기만 한다. 기반 → 파생으로 바꿔 받을 수 있다</td><td><code>Action&lt;Entity&gt;</code>를 <code>Action&lt;Monster&gt;</code>로</td></tr>
+          <tr><td>없음 (불변)</td><td>읽고 쓰기를 모두 한다. 어느 쪽으로도 바꿀 수 없다</td><td><code>List&lt;T&gt;</code>, <code>IList&lt;T&gt;</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      변성은 인터페이스와 대리자의 타입 매개변수에만 붙고, 타입 인자가 참조 형식일 때만 성립한다. <code>IEnumerable&lt;int&gt;</code>는 <code>IEnumerable&lt;object&gt;</code>로 바뀌지 않는다. 바꾸려면 원소마다 박싱이 필요하기 때문이다. 배열은 예외적으로 공변이라 <code>Entity[] a = new Monster[1]</code>이 컴파일되지만, 여기에 <code>Player</code>를 넣으면 실행 중에 <code>ArrayTypeMismatchException</code>이 난다. 그 검사 때문에 참조 형식 배열에 쓸 때마다 타입 확인 비용이 든다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>제네릭 정적 필드는 닫힌 타입마다 따로 있다.</strong> <code>class Pool&lt;T&gt; { static readonly Stack&lt;T&gt; items; }</code>는 <code>Pool&lt;Monster&gt;</code>와 <code>Pool&lt;Item&gt;</code>이 각자 스택을 갖는다. 타입별 <a data-ref="data-structure/memory-layout">객체 풀</a>이나 패킷 처리기 등록표를 사전 조회 없이 만드는 흔한 방법이다. 반대로 "모든 T가 공유하는 카운터"를 여기 두면 의도와 달리 타입마다 갈라진다.
+      </li>
+      <li>
+        <strong>값 형식 컴포넌트·이벤트는 제네릭으로 받는다.</strong> <code>Publish(IEvent e)</code>는 구조체 이벤트를 매번 박싱한다. <code>Publish&lt;T&gt;(in T e) where T : struct, IEvent</code>로 받으면 박싱이 없다. ECS의 컴포넌트 저장소도 같은 이유로 <code>ComponentArray&lt;T&gt; where T : unmanaged</code> 꼴이 된다(<a data-ref="game-patterns/ecs-storage">ECS 저장 구조</a>).
+      </li>
+      <li>
+        <strong>AOT로 빌드하면 실행 중에 새 제네릭을 만들 수 없다.</strong> Native AOT와 IL2CPP는 빌드 때 쓰일 인스턴스를 모두 찾아 미리 컴파일한다. <code>MakeGenericType</code>이나 리플렉션으로 처음 보는 값 형식 조합을 만들면 해당 코드가 없어 실패한다. 직렬화기 같은 라이브러리가 <a data-ref="csharp/reflection-sourcegen">소스 생성기</a>로 옮겨 가는 이유다(<a href="jit-aot.html">JIT와 AOT</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>제약 없는 T를 인터페이스로 캐스트하면 박싱된다.</strong> <code>((IComparable)value).CompareTo(...)</code>는 값 형식이면 상자를 만든다. 필요한 능력은 제약으로 선언한다.</li>
+      <li><strong>new() 제약은 생각보다 느리다.</strong> 뜨거운 경로에서 많이 만든다면 팩토리 대리자(<code>Func&lt;T&gt;</code>)나 정적 추상 팩토리 멤버를 받는다.</li>
+      <li><strong>값 형식 인자를 마구 늘리면 코드가 불어난다.</strong> 값 형식마다 전용 기계어가 생기므로, 큰 제네릭 메서드를 수십 가지 구조체로 쓰면 JIT 시간과 코드 크기가 함께 는다. 타입과 상관없는 부분은 비제네릭 메서드로 빼낸다.</li>
+      <li><strong>배열 공변성에 기대지 않는다.</strong> 컴파일은 되지만 쓰는 순간 실행 중 예외가 날 수 있다. 읽기 전용으로 넘길 때는 공변으로 선언된 <code>IReadOnlyList&lt;T&gt;</code>를 쓴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

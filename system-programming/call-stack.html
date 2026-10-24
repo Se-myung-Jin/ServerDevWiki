@@ -76,7 +76,7 @@
     </div>
     <p>
       두 규약 모두 함수를 부르는 시점에 스택 포인터를 16바이트 경계에 맞추게 한다. <a data-ref="computer-architecture/simd">SIMD</a> 명령이 정렬을 요구하기 때문이다(<a href="../computer-architecture/alignment.html">정렬과 패딩</a>).
-      레지스터 수와 인자 전달의 차이는 <a href="../computer-architecture/32-64-bit.html">32비트와 64비트</a>에 정리했다. C#에서 네이티브 함수를 부를 때(P/Invoke) 런타임이 이 규약을 맞춰 준다.
+      레지스터 수와 인자 전달의 차이는 <a href="../computer-architecture/32-64-bit.html">32비트와 64비트</a>에 정리했다. C#에서 네이티브 함수를 부를 때(<a data-ref="csharp/unsafe-interop">P/Invoke</a>) 런타임이 이 규약을 맞춰 준다.
     </p>
 
     <h3>스택 추적은 이 사슬을 거슬러 올라가는 것이다</h3>
