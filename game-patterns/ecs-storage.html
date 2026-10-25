@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECS 저장 구조 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/ecs-storage">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="ecs-terms.html">ECS와 컴포넌트 패턴</a> · <a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      ECS를 쓴다고 저장 방식이 하나로 정해지지는 않는다. 크게 두 갈래다. <strong>아키타입</strong> 방식은 컴포넌트 구성이 같은 엔티티끼리 한 테이블에 모은다. 컴포넌트가 열, 엔티티가 행이다.
+      <strong>sparse set</strong> 방식은 컴포넌트마다 저장소를 따로 두고 엔티티 번호로 찾는다.
+    </p>
+    <p>
+      맞바꿈이 정반대다. 아키타입은 <span class="blank">순회와 조회</span>가 빠르고 컴포넌트를 붙이고 떼는 일이 비싸다. sparse set은 <span class="blank">붙이고 떼기</span>가 싸고 여러 컴포넌트를 함께 도는 순회가 느리다.
+      그 게임이 무엇을 자주 하는지 보고 고른다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <figure class="fig">
+      <svg viewBox="0 0 720 300" role="img" aria-label="아키타입은 구성별 테이블에 행으로 담고 구성이 바뀌면 행을 옮긴다. sparse set은 엔티티 번호로 찾는 sparse 배열과 빽빽한 dense 배열을 컴포넌트마다 둔다">
+        <defs><marker id="es-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="175" y="22" text-anchor="middle">아키타입: 구성별 테이블</text>
+        <text class="f-sub" x="40" y="48">아키타입 A (위치, 속도)</text>
+        <rect class="f-box" x="40" y="56" width="40" height="26"/><text class="f-sub" x="60" y="74" text-anchor="middle">ID</text>
+        <rect class="f-box" x="80" y="56" width="56" height="26"/><text class="f-sub" x="108" y="74" text-anchor="middle">위치</text>
+        <rect class="f-box" x="136" y="56" width="56" height="26"/><text class="f-sub" x="164" y="74" text-anchor="middle">속도</text>
+        <rect class="f-cell" x="40" y="82" width="40" height="28"/><text class="f-text" x="60" y="101" text-anchor="middle">e1</text>
+        <rect class="f-cell" x="80" y="82" width="56" height="28"/><rect class="f-cell" x="136" y="82" width="56" height="28"/>
+        <rect class="f-pad" x="40" y="110" width="152" height="28"/><text class="f-sub" x="116" y="129" text-anchor="middle">e2가 떠난 자리</text>
+
+        <text class="f-sub" x="40" y="170">아키타입 B (위치, 속도, 체력)</text>
+        <rect class="f-box" x="40" y="178" width="40" height="26"/><text class="f-sub" x="60" y="196" text-anchor="middle">ID</text>
+        <rect class="f-box" x="80" y="178" width="56" height="26"/><text class="f-sub" x="108" y="196" text-anchor="middle">위치</text>
+        <rect class="f-box" x="136" y="178" width="56" height="26"/><text class="f-sub" x="164" y="196" text-anchor="middle">속도</text>
+        <rect class="f-box" x="192" y="178" width="56" height="26"/><text class="f-sub" x="220" y="196" text-anchor="middle">체력</text>
+        <rect class="f-cell" x="40" y="204" width="40" height="28"/><text class="f-text" x="60" y="223" text-anchor="middle">e3</text>
+        <rect class="f-cell" x="80" y="204" width="56" height="28"/><rect class="f-cell" x="136" y="204" width="56" height="28"/><rect class="f-cell" x="192" y="204" width="56" height="28"/>
+        <rect class="f-cell" x="40" y="232" width="40" height="28"/><text class="f-text" x="60" y="251" text-anchor="middle">e4</text>
+        <rect class="f-cell" x="80" y="232" width="56" height="28"/><rect class="f-cell" x="136" y="232" width="56" height="28"/><rect class="f-cell" x="192" y="232" width="56" height="28"/>
+        <rect class="f-hit" x="40" y="260" width="208" height="28"/><text class="f-text" x="60" y="279" text-anchor="middle">e2</text><text class="f-sub" x="164" y="279" text-anchor="middle">값을 모두 복사</text>
+        <path class="f-line" d="M194,124 C300,124 310,274 252,274" fill="none" marker-end="url(#es-a)"/>
+        <text class="f-text" x="300" y="196">체력</text>
+        <text class="f-text" x="300" y="214">추가</text>
+
+        <text class="f-strong" x="545" y="22" text-anchor="middle">sparse set: 컴포넌트마다 따로 (체력)</text>
+        <text class="f-sub" x="390" y="44">sparse: 엔티티 번호 → dense 위치</text>
+        <text class="f-sub" x="412" y="60" text-anchor="middle">e0</text>
+        <text class="f-sub" x="456" y="60" text-anchor="middle">e1</text>
+        <text class="f-sub" x="500" y="60" text-anchor="middle">e2</text>
+        <text class="f-sub" x="544" y="60" text-anchor="middle">e3</text>
+        <text class="f-sub" x="588" y="60" text-anchor="middle">e4</text>
+        <text class="f-sub" x="632" y="60" text-anchor="middle">e5</text>
+        <rect class="f-cell" x="390" y="66" width="44" height="28"/><text class="f-sub" x="412" y="85" text-anchor="middle">-</text>
+        <rect class="f-cell" x="434" y="66" width="44" height="28"/><text class="f-text" x="456" y="85" text-anchor="middle">0</text>
+        <rect class="f-cell" x="478" y="66" width="44" height="28"/><text class="f-sub" x="500" y="85" text-anchor="middle">-</text>
+        <rect class="f-cell" x="522" y="66" width="44" height="28"/><text class="f-text" x="544" y="85" text-anchor="middle">1</text>
+        <rect class="f-cell" x="566" y="66" width="44" height="28"/><text class="f-text" x="588" y="85" text-anchor="middle">2</text>
+        <rect class="f-cell" x="610" y="66" width="44" height="28"/><text class="f-sub" x="632" y="85" text-anchor="middle">-</text>
+        <line class="f-line" x1="456" y1="94" x2="414" y2="154" marker-end="url(#es-a)"/>
+        <line class="f-line" x1="544" y1="94" x2="458" y2="154" marker-end="url(#es-a)"/>
+        <line class="f-line" x1="588" y1="94" x2="502" y2="154" marker-end="url(#es-a)"/>
+        <text class="f-sub" x="540" y="174">dense: 붙은 엔티티</text>
+        <rect class="f-hit" x="390" y="156" width="44" height="28"/><text class="f-text" x="412" y="175" text-anchor="middle">e1</text>
+        <rect class="f-hit" x="434" y="156" width="44" height="28"/><text class="f-text" x="456" y="175" text-anchor="middle">e3</text>
+        <rect class="f-hit" x="478" y="156" width="44" height="28"/><text class="f-text" x="500" y="175" text-anchor="middle">e4</text>
+        <text class="f-sub" x="540" y="224">dense: 체력 값</text>
+        <rect class="f-hit" x="390" y="206" width="44" height="28"/><text class="f-text" x="412" y="225" text-anchor="middle">100</text>
+        <rect class="f-hit" x="434" y="206" width="44" height="28"/><text class="f-text" x="456" y="225" text-anchor="middle">80</text>
+        <rect class="f-hit" x="478" y="206" width="44" height="28"/><text class="f-text" x="500" y="225" text-anchor="middle">45</text>
+        <text class="f-sub" x="390" y="266">붙이기는 dense 끝에 추가, 떼기는 끝 원소와 바꿔 지우기</text>
+        <text class="f-sub" x="390" y="284">다른 컴포넌트의 저장소는 그대로다</text>
+      </svg>
+      <figcaption>왼쪽: e2에 체력을 붙이면 구성이 바뀌어 아키타입 B로 이사한다. 모든 컴포넌트 값을 새 테이블에 복사하고 옛 자리를 메운다. 오른쪽: 체력 컴포넌트만의 sparse set이다. sparse 배열은 엔티티 번호로 dense 위치를 찾고, dense 쪽은 빈틈없이 붙어 있어 이 컴포넌트 하나만 도는 순회는 빠르다.</figcaption>
+    </figure>
+
+    <h3>아키타입은 같은 구성의 엔티티를 한 테이블에 모은다</h3>
+    <p>
+      아키타입은 "정확히 같은 컴포넌트 집합"이다. 위치·속도를 가진 엔티티와 위치·속도·체력을 가진 엔티티는 다른 아키타입이다. 아키타입마다 테이블이 있고, 컴포넌트마다 열이 연속 배열로 붙어 있다.
+      한 테이블 안에서는 <a href="../data-structure/memory-layout.html">SoA</a> 배치가 저절로 된다.
+    </p>
+    <ul>
+      <li><strong>Unity Entities</strong>는 테이블을 <strong>16KB 청크</strong>로 잘라 담는다. 청크 하나에 같은 아키타입 엔티티가 여럿 들어가고(최대 128개), 청크 안에서 컴포넌트별 배열이 이어진다.</li>
+      <li><strong>Bevy</strong>는 기본 저장 방식이 테이블이다. <strong>flecs</strong>도 아키타입마다 테이블을 둔다.</li>
+    </ul>
+
+    <h3>쿼리는 테이블을 고르는 일로 끝난다</h3>
+    <p>
+      "위치와 속도를 가진 엔티티"를 찾는 일은 엔티티를 하나씩 검사하는 일이 아니다. 그 두 컴포넌트를 포함하는 <strong>아키타입 목록</strong>을 고르고, 각 테이블의 열을 처음부터 끝까지 읽으면 된다.
+      아키타입 수는 엔티티 수보다 훨씬 적다. 그래서 대부분의 구현은 쿼리마다 맞는 테이블 목록을 <strong>캐시</strong>해 두고, 새 아키타입이 생길 때만 갱신한다.
+    </p>
+
+    <h3>구성이 바뀌면 행을 옮겨야 한다</h3>
+    <p>
+      컴포넌트를 하나 붙이거나 떼면 아키타입이 바뀐다. 엔티티는 새 테이블에 행을 받고, 남는 컴포넌트 값을 <strong>전부 복사</strong>한다. 옛 테이블의 빈자리는 보통 마지막 행을 옮겨 메운다.
+      그래서 그 마지막 엔티티의 위치도 바뀌고, 엔티티 번호 → (테이블, 행) 표를 함께 고쳐야 한다.
+    </p>
+    <p>
+      flecs처럼 "이 테이블에서 체력을 더하면 어느 테이블로 가는가"를 그래프 간선으로 캐시해 목적지 찾기를 싸게 만드는 구현도 있다. 그래도 값 복사는 남는다.
+    </p>
+
+    <h3>구성 조합이 많으면 테이블이 잘게 쪼개진다</h3>
+    <p>
+      버프·상태 표시를 컴포넌트로 두면 조합 수만큼 아키타입이 생긴다. 테이블마다 엔티티가 몇 개씩만 들어가면 청크가 덜 차고, 순회가 테이블 사이를 자주 건너뛴다. 아키타입이 순회에서 얻은 이점이 줄어드는 자리다.
+    </p>
+
+    <h3>sparse set은 컴포넌트마다 따로 담는다</h3>
+    <p>
+      sparse set은 배열 두 개다. <strong>sparse</strong>는 엔티티 번호를 인덱스로 써서 dense 쪽 위치를 담고, <strong>dense</strong>는 그 컴포넌트가 붙은 엔티티와 값을 빈틈없이 담는다.
+      붙이기는 dense 끝에 넣고 sparse 칸을 채우면 되고, 떼기는 끝 원소와 바꿔 지우면 된다. 둘 다 O(1)이고 다른 컴포넌트는 건드리지 않는다.
+    </p>
+    <p>
+      <strong>EnTT</strong>가 대표다. 컴포넌트 종류마다 이 구조의 풀이 하나씩 있다. 컴포넌트 하나만 도는 순회는 dense 배열을 그대로 읽어 빠르다.
+    </p>
+    <p>
+      문제는 <strong>여러 컴포넌트를 함께 도는 순회</strong>다. 보통 가장 작은 풀을 돌면서 나머지 풀에 그 엔티티가 있는지 sparse로 찾는다. 이 조회가 메모리 곳곳을 건드려 캐시가 덜 듣는다.
+      EnTT는 이를 위해 <strong>그룹</strong>을 둔다. 소유 그룹은 관련 풀들을 재배치해, 조건을 만족하는 엔티티를 모든 풀의 앞쪽에 같은 순서로 모은다. 그러면 함께 도는 순회도 배열을 나란히 읽는 일이 된다. 대신 그룹에 묶인 풀은 붙이고 뗄 때 재배치 비용이 붙는다.
+    </p>
+
+    <h3>둘을 섞는 구현도 있다</h3>
+    <p>
+      둘 중 하나만 고르지 않아도 된다. Bevy는 컴포넌트마다 <code>#[component(storage = "SparseSet")]</code>로 sparse set 저장을 고를 수 있다. flecs도 컴포넌트에 Sparse 특성을 달아 그 컴포넌트만 따로 담게 하고, 테이블을 쪼개지 않는 옵션을 둔다.
+      자주 붙였다 떼는 표시 컴포넌트만 sparse set으로 빼고, 나머지는 테이블에 두는 식이다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>유리한 쪽</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>같은 조합을 매 틱 전부 돈다, 구성은 거의 안 바뀐다</td><td>아키타입</td><td>테이블 열을 순서대로 읽는다. 비싼 이동이 드물다</td></tr>
+          <tr><td>상태 표시를 자주 붙였다 뗀다</td><td>sparse set</td><td>옮길 것이 없다. 아키타입이면 매번 행 이동</td></tr>
+          <tr><td>컴포넌트 하나만 도는 순회가 대부분</td><td>둘 다 빠르다</td><td>sparse set도 dense 배열을 그대로 읽는다</td></tr>
+          <tr><td>여러 컴포넌트를 함께 도는 순회가 많다</td><td>아키타입 (또는 EnTT 그룹)</td><td>sparse set은 풀 사이를 무작위로 조회한다</td></tr>
+          <tr><td>대부분은 순회, 일부 컴포넌트만 자주 바뀐다</td><td>섞기</td><td>그 컴포넌트만 sparse로 뺀다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>서버 엔티티는 구성이 비교적 안정적이다.</strong> 몬스터·투사체·플레이어 캐릭터는 생성 때 정해진 컴포넌트를 오래 유지하는 경우가 많아 아키타입과 맞는다. 버프·디버프·전투 상태처럼 수시로 바뀌는 것이 구성 변경을 일으키지 않게 설계하는 쪽이 더 중요하다(<a href="ecs-structural-change.html">구조 변경과 틱 경계</a>).
+      </li>
+      <li>
+        <strong>스냅샷과 델타를 만들기 좋다.</strong> 같은 컴포넌트 값이 연속 배열에 있어 통째로 복사하거나 바뀐 청크만 골라내기 쉽다. Unity Entities는 청크마다 바뀐 버전 번호를 두어 바뀐 청크만 처리할 수 있게 한다(<a data-ref="game-patterns/state-sync">스냅샷과 상태 동기화</a>).
+      </li>
+      <li>
+        <strong>엔티티 번호 → 위치 표가 하나 더 있다.</strong> 패킷으로 받은 엔티티 번호로 컴포넌트를 찾으면 이 표를 거친다. 이동이 잦은 구조에서는 행 위치를 캐시해 두면 안 되고, 매번 번호로 찾는다.
+      </li>
+      <li>
+        <strong>C#에서 직접 만들면 컴포넌트 배열을 <code>struct</code> 배열로 둔다.</strong> <code>Span&lt;T&gt;</code>로 열을 넘기면 복사 없이 순회한다(<a href="../csharp/ref-span.html">ref와 Span</a>). 참조 필드가 섞인 컴포넌트는 GC가 그 배열을 다시 훑게 만든다(<a href="../csharp/gc-basics.html">GC 동작과 세대</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>아키타입이 언제나 빠른 것은 아니다.</strong> 빠른 쪽은 순회이고, 구성 변경은 오히려 느리다. 무엇을 자주 하는지 재고 고른다.</li>
+      <li><strong>저장 방식 고르기와 ECS로 가기는 다른 결정이다.</strong> 행동을 시스템으로 빼는 것은 <a href="ecs-terms.html">ECS와 컴포넌트 패턴</a>의 문제이고, 그 컴포넌트를 어디에 담을지는 구현마다 다르다.</li>
+      <li><strong>행 위치나 dense 인덱스를 들고 있지 않는다.</strong> 두 방식 모두 지울 때 끝 원소를 빈자리로 옮긴다. 엔티티를 오래 가리킬 때는 (인덱스, 세대) 번호만 들고 있는다(<a href="../data-structure/memory-layout.html">세대 핸들</a>).</li>
+      <li><strong>sparse 배열은 엔티티 번호 최댓값만큼 커진다.</strong> 번호가 넓게 퍼지면 메모리를 낭비한다. EnTT처럼 sparse를 페이지 단위로 나눠 필요한 페이지만 잡는 방식으로 줄인다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

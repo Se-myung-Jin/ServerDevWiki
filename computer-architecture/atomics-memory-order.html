@@ -179,7 +179,7 @@ if (Volatile.Read(ref _ready))     // acquire: 뒤의 읽기가 앞으로 당겨
         <strong>통계 카운터.</strong> 여러 IO 스레드가 같은 카운터를 <code>++</code>하면 값이 조금씩 모자라게 나온다. <code>Interlocked</code>로 바꾸거나, 스레드별로 세었다가 합친다(<a href="cache-coherence.html">false sharing</a>도 함께 고려한다).
       </li>
       <li>
-        <strong>설정·테이블 핫 리로드.</strong> 새 데이터 객체를 완성한 뒤 참조 하나를 <code>Volatile.Write</code>나 <code>Interlocked.Exchange</code>로 바꿔 끼우면, 읽는 쪽은 락 없이 항상 완성된 옛 버전이나 새 버전 중 하나를 본다.
+        <strong>설정·테이블 <a data-ref="game-patterns/data-driven">핫 리로드</a>.</strong> 새 데이터 객체를 완성한 뒤 참조 하나를 <code>Volatile.Write</code>나 <code>Interlocked.Exchange</code>로 바꿔 끼우면, 읽는 쪽은 락 없이 항상 완성된 옛 버전이나 새 버전 중 하나를 본다.
       </li>
       <li>
         <strong>ARM 서버 이전.</strong> AWS Graviton 같은 ARM64 서버로 옮기면, x86에서 우연히 동작하던 배리어 누락이 드러날 수 있다. 이전 전에 플래그·공개 패턴을 점검한다.

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>상태 폭발과 계층형 FSM · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/state-explosion">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="game-fsm.html">게임 FSM</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      상태 폭발은 상태가 많아서 생기는 것이 아니다. <span class="blank">서로 상관없는 축을 한 FSM에 합쳐서</span> 상태 수가 축의 곱이 되는 것이다. 행동 넷에 무기 상태 셋을 한 기계에 넣으면 상태가 열둘이 되고, 그 열둘은 대부분 같은 코드를 복사해 들고 있다.
+    </p>
+    <p>
+      해법은 두 가지이고 푸는 문제가 다르다. 축이 서로 독립이면 축마다 기계를 따로 두고 나란히 돌린다(<strong>동시성 FSM</strong>). 그러면 상태 수가 곱에서 합으로 준다. 여러 상태가 같은 처리를 되풀이하면 그 처리를 상위 상태에 한 번만 적고, 하위 상태가 처리하지 않은 입력은 위로 넘긴다(<strong>계층형 FSM</strong>). 이쪽은 상태 수가 아니라 되풀이되는 전이와 처리 코드를 줄인다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>축을 하나 더하면 상태 수가 곱으로 는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 270" role="img" aria-label="행동 넷과 무기 셋을 한 기계에 넣으면 열두 상태가 되고, 두 기계로 나누면 일곱 상태가 된다">
+        <text class="f-strong" x="30" y="30">한 기계에 합치면 4 × 3 = 12</text>
+        <text class="f-sub" x="30" y="50">행동 × 무기</text>
+        <g>
+          <rect class="f-cell" x="30" y="64" width="84" height="30" rx="4"/><text class="f-text" x="72" y="84" text-anchor="middle">대기·맨손</text>
+          <rect class="f-cell" x="118" y="64" width="84" height="30" rx="4"/><text class="f-text" x="160" y="84" text-anchor="middle">대기·검</text>
+          <rect class="f-cell" x="206" y="64" width="84" height="30" rx="4"/><text class="f-text" x="248" y="84" text-anchor="middle">대기·활</text>
+          <rect class="f-cell" x="30" y="98" width="84" height="30" rx="4"/><text class="f-text" x="72" y="118" text-anchor="middle">이동·맨손</text>
+          <rect class="f-cell" x="118" y="98" width="84" height="30" rx="4"/><text class="f-text" x="160" y="118" text-anchor="middle">이동·검</text>
+          <rect class="f-cell" x="206" y="98" width="84" height="30" rx="4"/><text class="f-text" x="248" y="118" text-anchor="middle">이동·활</text>
+          <rect class="f-cell" x="30" y="132" width="84" height="30" rx="4"/><text class="f-text" x="72" y="152" text-anchor="middle">공격·맨손</text>
+          <rect class="f-cell" x="118" y="132" width="84" height="30" rx="4"/><text class="f-text" x="160" y="152" text-anchor="middle">공격·검</text>
+          <rect class="f-cell" x="206" y="132" width="84" height="30" rx="4"/><text class="f-text" x="248" y="152" text-anchor="middle">공격·활</text>
+          <rect class="f-cell" x="30" y="166" width="84" height="30" rx="4"/><text class="f-text" x="72" y="186" text-anchor="middle">기절·맨손</text>
+          <rect class="f-cell" x="118" y="166" width="84" height="30" rx="4"/><text class="f-text" x="160" y="186" text-anchor="middle">기절·검</text>
+          <rect class="f-cell" x="206" y="166" width="84" height="30" rx="4"/><text class="f-text" x="248" y="186" text-anchor="middle">기절·활</text>
+        </g>
+        <text class="f-sub" x="30" y="222">무기를 하나 더하면 16, 탈것 여부를 더하면 32</text>
+        <text class="f-sub" x="30" y="240">같은 행동 코드가 무기 수만큼 복사된다</text>
+
+        <line class="f-line f-dash" x1="350" y1="20" x2="350" y2="250"/>
+
+        <text class="f-strong" x="390" y="30">축마다 기계를 두면 4 + 3 = 7</text>
+        <text class="f-sub" x="390" y="50">두 기계가 나란히 돈다</text>
+        <rect class="f-box" x="390" y="64" width="160" height="150" rx="8"/>
+        <text class="f-text" x="470" y="84" text-anchor="middle">행동 기계</text>
+        <rect class="f-cell2" x="405" y="94" width="130" height="24" rx="4"/><text class="f-text" x="470" y="111" text-anchor="middle">대기</text>
+        <rect class="f-hit" x="405" y="122" width="130" height="24" rx="4"/><text class="f-text" x="470" y="139" text-anchor="middle">이동</text>
+        <rect class="f-cell2" x="405" y="150" width="130" height="24" rx="4"/><text class="f-text" x="470" y="167" text-anchor="middle">공격</text>
+        <rect class="f-cell2" x="405" y="178" width="130" height="24" rx="4"/><text class="f-text" x="470" y="195" text-anchor="middle">기절</text>
+        <rect class="f-box" x="580" y="64" width="160" height="122" rx="8"/>
+        <text class="f-text" x="660" y="84" text-anchor="middle">무기 기계</text>
+        <rect class="f-cell2" x="595" y="94" width="130" height="24" rx="4"/><text class="f-text" x="660" y="111" text-anchor="middle">맨손</text>
+        <rect class="f-hit" x="595" y="122" width="130" height="24" rx="4"/><text class="f-text" x="660" y="139" text-anchor="middle">검</text>
+        <rect class="f-cell2" x="595" y="150" width="130" height="24" rx="4"/><text class="f-text" x="660" y="167" text-anchor="middle">활</text>
+        <text class="f-sub" x="390" y="240">현재 상태는 기계마다 하나씩, 지금은 (이동, 검)이다</text>
+      </svg>
+      <figcaption>왼쪽은 행동과 무기를 한 기계에 넣어 조합마다 상태를 만든 모양이다. 오른쪽은 두 축을 기계 둘로 나눴다. 표현할 수 있는 조합은 같지만 적어야 할 상태는 열둘에서 일곱으로 준다.</figcaption>
+    </figure>
+    <p>
+      늘어난 상태들은 서로 다른 행동을 담고 있지도 않다. "이동·검"과 "이동·활"은 이동 코드가 같고 무기와 얽힌 몇 줄만 다르다. 한 기계에 넣는 한 이 같은 코드는 상태마다 복사되고, 이동을 고칠 때마다 무기 수만큼 고쳐야 한다. 전이도 마찬가지다. "기절하면 어느 상태에서든 기절로"를 무기마다 적어야 한다.
+    </p>
+
+    <h3>축이 독립이면 기계를 따로 두고 나란히 돌린다</h3>
+<pre><code class="language-csharp">class Hero
+{
+    public ActionState Action;   // 대기, 이동, 공격, 기절
+    public WeaponState Weapon;   // 맨손, 검, 활
+
+    public void HandleInput(Input input)
+    {
+        Action = Action.HandleInput(this, input) ?? Action;   // 각 기계가 같은 입력을 따로 본다
+        Weapon = Weapon.HandleInput(this, input) ?? Weapon;
+    }
+}</code></pre>
+    <p>
+      행동 기계는 무기를 모르고, 무기 기계는 행동을 모른다. 상태 수는 4 + 3이 되고, 무기를 하나 더해도 무기 기계에 상태 하나가 늘 뿐이다. 이 방식을 상태도(statechart)에서는 직교 영역(orthogonal region)이라고 부른다.
+    </p>
+    <p>
+      다만 두 축이 완전히 독립인 경우는 드물다. "기절 중에는 무기를 바꿀 수 없다"처럼 한 기계가 다른 기계의 상태를 조건으로 봐야 하는 자리가 생긴다. 이때는 무기 기계의 전이 조건에서 <code>hero.Action is not StunnedState</code>를 확인한다. 이런 확인이 몇 군데면 괜찮지만, 두 기계가 서로의 상태를 거의 모든 전이에서 본다면 애초에 독립된 축이 아니었다는 신호다.
+    </p>
+
+    <h3>여러 상태가 같은 처리를 되풀이하면 위로 올린다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="지상 상위 상태가 대기, 이동, 앉기를 감싸고 점프와 피격 처리를 맡는다. 하위 상태가 처리하지 않은 입력은 위로 넘어간다">
+        <defs><marker id="sx-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="30" y="30" width="440" height="160" rx="10"/>
+        <text class="f-strong" x="48" y="54">지상 (상위 상태)</text>
+        <text class="f-sub" x="48" y="74">점프 키 → 공중, 피격 → 경직, 기절 → 기절. 여기 한 번만 적는다</text>
+        <rect class="f-cell2" x="48" y="100" width="120" height="44" rx="22"/><text class="f-text" x="108" y="127" text-anchor="middle">대기</text>
+        <rect class="f-hit" x="190" y="100" width="120" height="44" rx="22"/><text class="f-text" x="250" y="127" text-anchor="middle">이동</text>
+        <rect class="f-cell2" x="332" y="100" width="120" height="44" rx="22"/><text class="f-text" x="392" y="127" text-anchor="middle">앉기</text>
+        <text class="f-sub" x="48" y="172">하위 상태는 자기만 다른 것(이동 키, 아래 키)만 처리한다</text>
+        <path class="f-line" d="M250,100 L250,84" marker-end="url(#sx-a)"/>
+        <rect class="f-box" x="560" y="80" width="150" height="56" rx="28"/>
+        <text class="f-text" x="635" y="113" text-anchor="middle">공중</text>
+        <line class="f-line" x1="470" y1="108" x2="554" y2="108" marker-end="url(#sx-a)"/>
+        <text class="f-sub" x="512" y="98" text-anchor="middle">점프 키</text>
+        <text class="f-sub" x="560" y="160">전이는 상위 상태 테두리에서</text>
+        <text class="f-sub" x="560" y="178">나가므로 하위 셋 모두에 적용된다</text>
+      </svg>
+      <figcaption>이동 상태가 점프 키를 받으면 자기는 처리하지 않고 위의 지상 상태로 넘긴다. 지상 상태가 공중으로 전이시킨다. 점프·피격·기절 전이를 대기, 이동, 앉기에 세 번 적지 않아도 된다.</figcaption>
+    </figure>
+<pre><code class="language-csharp">abstract class GroundState : HeroState
+{
+    public override HeroState? HandleInput(Hero h, Input input) =&gt; input switch
+    {
+        Input.Jump =&gt; AirState.Instance,
+        Input.Stunned =&gt; StunnedState.Instance,
+        _ =&gt; null,                    // 상위에서도 처리하지 않으면 그대로
+    };
+}
+
+sealed class DuckingState : GroundState
+{
+    public override HeroState? HandleInput(Hero h, Input input) =&gt;
+        input == Input.ReleaseDown
+            ? StandingState.Instance
+            : base.HandleInput(h, input);   // 처리하지 않은 입력은 위로 넘긴다
+}</code></pre>
+    <p>
+      입력은 가장 안쪽 상태가 먼저 받는다. 처리하지 않으면 상위 상태가 받고, 거기서도 처리하지 않으면 그 위로 올라간다. 상속으로 구현하면 <code>base</code> 호출이 그대로 위임이 된다. 상속 대신 "현재 상태의 경로"를 스택으로 들고 안쪽부터 차례로 물어보는 방식도 있는데, 상위 상태가 자기 데이터를 가져야 할 때 이쪽이 낫다.
+    </p>
+    <p>
+      계층이 생기면 진입·종료 순서도 정해야 한다. 이동(지상 안)에서 공중으로 가면 이동의 종료, 지상의 종료, 공중의 진입 순서다. 이동에서 앉기로 가면 둘 다 지상 안이므로 지상은 나가지도 들어오지도 않는다. 공통 조상까지만 나오고 들어간다고 기억하면 된다.
+    </p>
+
+    <h3>둘은 서로 다른 문제에 쓴다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇이 문제인가</th><th>해법</th><th>무엇이 주나</th></tr></thead>
+        <tbody>
+          <tr><td>서로 상관없는 축이 한 기계에 합쳐져 있다</td><td>동시성 FSM: 축마다 기계를 따로 둔다</td><td>상태 수가 곱에서 합으로 준다</td></tr>
+          <tr><td>여러 상태가 같은 전이와 처리를 되풀이한다</td><td>계층형 FSM: 겹치는 처리를 상위 상태에 둔다</td><td>말단 상태 수는 그대로다. 되풀이되던 전이와 코드가 한 자리로 모인다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      실제로는 둘을 함께 쓴다. 상태도(Harel statechart)가 바로 계층과 직교 영역을 한꺼번에 가진 표기법이다. 계층형은 위임, 동시성은 병행이다. 둘을 같은 말로 부르면 지금 문제에 어느 쪽을 써야 할지 정할 수 없다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>상태 이상은 FSM 상태가 아니라 집합으로 둔다.</strong> 기절, 침묵, 둔화, 중독은 동시에 여러 개 걸리고 각각 끝나는 시각이 다르다. 이것을 행동 FSM의 상태로 넣으면 바로 곱이 된다. 상태 이상은 버프 목록이나 비트 플래그로 따로 들고, 행동 FSM은 전이 조건에서 "기절이 걸려 있나"만 묻는다. 동시성 FSM의 가장 흔한 서버 모양이다.
+       수치를 바꾸는 버프·디버프의 계산은 <a href="stat-modifiers.html">스탯과 버프 계산</a>에서 다룬다.</li>
+      <li>
+        <strong>보스 페이즈는 계층으로 적는다.</strong> 체력 70%, 30%에서 페이즈가 바뀌는 보스는 페이즈를 상위 상태로, 각 페이즈의 패턴을 하위 상태로 둔다. 페이즈 전환 조건과 "모든 패턴 공통으로 전멸 시 리셋"은 상위에 한 번만 적고, 패턴 코드는 페이즈 안에서만 신경 쓴다.
+      </li>
+      <li>
+        <strong>공통 상위 상태가 서버 이벤트를 받아 준다.</strong> <a data-ref="game-patterns/world-partition">존 이동</a>, 서버 점검 공지, 연결 끊김 같은 입력은 거의 모든 상태에서 같은 처리를 한다. 최상위 상태에 한 번 두면 새 상태를 추가할 때 빠뜨리지 않는다.
+      </li>
+      <li>
+        <strong>상태가 곱으로 늘면 저장 형식도 곱으로 는다.</strong> 상태 값을 DB나 패킷에 싣는 FSM이라면 기계를 나눌 때 저장 필드도 둘로 나눈다. 합친 상태 번호 하나로 저장하면 나중에 한 축만 바꿔도 모든 번호가 다시 매겨진다(<a href="game-fsm.html">게임 FSM</a>의 저장 주의).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>상태가 많다고 모두 상태 폭발은 아니다.</strong> 한 축 안에서 상태가 많은 것은 나눌 축이 없어 기계를 쪼개도 줄지 않는다. 그 경우는 <a href="behavior-tree.html">비헤이비어 트리</a>처럼 전이를 적지 않는 구조로 가는 편이 낫다.</li>
+      <li><strong>계층형 FSM은 상태 수를 줄여 주지 않는다.</strong> 줄어드는 것은 되풀이되던 전이와 처리 코드다. 상태가 곱으로 늘어 생긴 문제를 계층으로 풀려고 하면 계층만 깊어진다.</li>
+      <li><strong>나란한 기계는 같은 입력을 받는 순서가 결과를 바꿀 수 있다.</strong> 행동 기계가 먼저 기절로 가고 무기 기계가 그것을 조건으로 본다면, 어느 기계가 먼저 입력을 받느냐에 따라 무기 교체가 될 수도 안 될 수도 있다. 순서를 고정하고 코드에 드러낸다.</li>
+      <li><strong>계층을 너무 깊게 만들지 않는다.</strong> 입력이 어느 층에서 처리되는지 따라가려면 층마다 코드를 열어야 한다. 두세 층을 넘으면 전이를 추적하기 어려워진다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

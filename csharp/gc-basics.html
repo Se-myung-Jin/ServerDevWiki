@@ -108,7 +108,7 @@
           <tr><td>요청 하나, 틱 하나 안에서 끝난다</td><td>그냥 만든다. 너무 잦으면 값 형식이나 <code>Span</code>으로 할당을 없앤다</td><td>0세대에서 죽으면 비용이 거의 없다(<a data-ref="csharp/ref-span">ref와 Span</a>)</td></tr>
           <tr><td>서버가 도는 내내 산다(기획 데이터, 맵)</td><td>시작할 때 만들어 둔다</td><td>2세대에 한 번 자리 잡으면 옮겨지지 않는다. 다만 전체 GC 때마다 표시된다</td></tr>
           <tr><td>중간 수명(세션, 진행 중인 전투)</td><td>개수와 참조 그래프를 작게 유지한다</td><td>1·2세대로 올라가 전체 GC를 부르는 주범이다</td></tr>
-          <tr><td>큰 배열(85,000바이트 이상)</td><td><code>ArrayPool&lt;T&gt;.Shared</code>로 빌려 쓴다</td><td>LOH 할당은 2세대 수거를 앞당기고 단편화를 만든다</td></tr>
+          <tr><td>큰 배열(85,000바이트 이상)</td><td><code>ArrayPool&lt;T&gt;.Shared</code>로 빌려 쓴다(<a href="../game-patterns/object-pool.html">오브젝트 풀</a>)</td><td>LOH 할당은 2세대 수거를 앞당기고 단편화를 만든다</td></tr>
         </tbody>
       </table>
     </div>

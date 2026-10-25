@@ -124,7 +124,7 @@ std::erase_if(npcs, [](const Npc&amp; n) { return n.dead; });</code></pre>
         <strong>틱 중에는 표시만 하고 틱 끝에 정리한다.</strong> 전투 처리 중 몬스터가 죽었다고 그 자리에서 목록에서 지우면, 같은 틱에 그 목록을 순회하던 AI나 시야 처리가 무효 반복자를 쓴다. 죽음 표시만 하고 틱 마지막 단계에서 <code>erase_if</code>로 한 번에 지운다(<a href="../server/tick-loop.html">서버 틱 루프</a>).
       </li>
       <li>
-        <strong>콜백이 같은 목록을 고치는 재진입을 막는다.</strong> 몬스터를 순회하며 <code>OnDeath</code>를 불렀더니 그 안에서 소환수를 스폰해 같은 <code>vector</code>에 넣는 식이다. 코드상으로는 멀리 떨어져 있어 눈에 띄지 않는다. 순회 중 추가는 대기 목록으로 받아 순회 뒤에 합친다.
+        <strong>콜백이 같은 목록을 고치는 재진입을 막는다.</strong> 몬스터를 순회하며 <code>OnDeath</code>를 불렀더니 그 안에서 소환수를 스폰해 같은 <code>vector</code>에 넣는 식이다. 코드상으로는 멀리 떨어져 있어 눈에 띄지 않는다. 순회 중 추가는 대기 목록으로 받아 순회 뒤에 합친다. <a data-ref="game-patterns/ecs-terms">ECS</a>는 같은 문제를 커맨드 버퍼로 푼다(<a href="../game-patterns/ecs-structural-change.html">ECS 구조 변경과 틱 경계</a>).
       </li>
       <li>
         <strong>다른 객체가 들고 있을 것은 포인터 대신 ID로 준다.</strong> 파티원이 "내 대상"을 <code>Npc*</code>로 들고 있으면, 그 NPC가 재할당으로 옮겨 가거나 지워진 뒤에 끊긴 포인터가 된다. 엔티티 ID를 들고 있다가 쓸 때마다 찾고, 지워진 슬롯을 재사용한다면 세대 번호로 옛 ID를 걸러 낸다.

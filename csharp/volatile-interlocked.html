@@ -157,7 +157,7 @@ struct PaddedCounter
 private readonly PaddedCounter[] _sent = new PaddedCounter[Environment.ProcessorCount];</code></pre>
       </li>
       <li>
-        <strong>세션 상태 전환은 CompareExchange로 한 번만.</strong> 연결 끊김은 수신 실패, 송신 실패, 하트비트 시간 초과에서 동시에 감지될 수 있다. 상태 필드를 <code>CompareExchange(ref _state, Closing, Open)</code>으로 바꾼 쪽만 정리 절차를 밟게 하면 이중 정리와 이중 반납이 사라진다(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>).
+        <strong>세션 상태 전환은 CompareExchange로 한 번만.</strong> 연결 끊김은 수신 실패, 송신 실패, 하트비트 시간 초과에서 동시에 감지될 수 있다. 상태 필드를 <code>CompareExchange(ref _state, Closing, Open)</code>으로 바꾼 쪽만 정리 절차를 밟게 하면 이중 정리와 <a data-ref="game-patterns/object-pool">이중 반납</a>이 사라진다(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>).
       </li>
       <li>
         <strong>송신 중 표시도 같은 방식이다.</strong> 세션마다 진행 중인 송신을 하나로 두려면 Exchange나 CompareExchange로 "송신 중" 플래그를 세운 스레드만 송신을 시작한다(<a href="../server/completion-port.html">완료 알림 기반 서버</a>).

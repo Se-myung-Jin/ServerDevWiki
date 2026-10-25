@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECS와 컴포넌트 패턴 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/ecs-terms">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a> · <a href="../csharp/struct-design.html">struct와 class 고르기</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      게임 객체를 상속 계층으로 만들다 막히면 기능을 조각으로 나눠 붙이는 <strong>합성</strong>으로 간다. 그 조각이 컴포넌트다.
+      여기까지가 <strong>컴포넌트 패턴</strong>이고, 컴포넌트가 데이터와 행동을 함께 가지면 <strong>EC</strong>라고 부른다. Unity의 <code>MonoBehaviour</code>가 이쪽이다.
+    </p>
+    <p>
+      <strong>ECS</strong>는 한 걸음 더 간다. 컴포넌트는 <span class="blank">행동 없는 데이터</span>만 담고, 행동은 <strong>시스템</strong>으로 나간다. 엔티티는 객체가 아니라 <strong>번호</strong> 하나다.
+      둘을 가르는 선은 컴포넌트 안에 행동이 있느냐 하나다. 데이터 지향 설계는 이 구조의 이름이 아니라 더 넓은 설계 태도라, 셋을 같은 말로 쓰면 어긋난다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>상속 계층은 기능이 겹치는 자리에서 막힌다</h3>
+    <p>
+      <code>Monster</code> 밑에 <code>FlyingMonster</code>와 <code>SwimmingMonster</code>를 두면, 날기도 하고 헤엄도 치는 몬스터를 넣을 자리가 없다. 다중 상속은 다이아몬드 문제를 부르고,
+      공통 기능을 위로 올리다 보면 모든 기능을 다 가진 거대한 기반 클래스가 남는다. 상자 하나가 쓰지도 않는 이동·AI 필드를 들고 다닌다.
+    </p>
+    <p>
+      합성은 질문을 바꾼다. "무엇의 하위 종류인가"가 아니라 "무엇을 가졌는가"로 객체를 만든다. 날기 컴포넌트와 헤엄 컴포넌트를 둘 다 붙이면 끝이다.
+      영역(물리, 렌더링, AI)마다 코드가 자기 컴포넌트 안에 머물러 서로 엉키지 않는다.
+    </p>
+
+    <h3>EC: 컴포넌트가 데이터와 행동을 함께 가진다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 300" role="img" aria-label="EC는 객체 안에 데이터와 행동을 가진 컴포넌트들이 들어 있고, ECS는 컴포넌트별 데이터 배열과 그것을 고르는 시스템으로 나뉜다">
+        <defs><marker id="et-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="175" y="24" text-anchor="middle">EC: 컴포넌트가 행동도 든다</text>
+        <rect class="f-box" x="20" y="40" width="310" height="230" rx="8"/>
+        <text class="f-text" x="36" y="64">몬스터 객체</text>
+        <rect class="f-cell" x="40" y="80" width="270" height="52" rx="6"/>
+        <text class="f-strong" x="56" y="102">Transform</text>
+        <text class="f-sub" x="56" y="121">위치 · 회전 + Update()</text>
+        <rect class="f-cell" x="40" y="142" width="270" height="52" rx="6"/>
+        <text class="f-strong" x="56" y="164">Health</text>
+        <text class="f-sub" x="56" y="183">체력 + TakeDamage()</text>
+        <rect class="f-cell" x="40" y="204" width="270" height="52" rx="6"/>
+        <text class="f-strong" x="56" y="226">MonsterAI</text>
+        <text class="f-sub" x="56" y="245">목표 + Update()</text>
+
+        <text class="f-strong" x="545" y="24" text-anchor="middle">ECS: 데이터는 배열, 행동은 시스템</text>
+        <text class="f-text" x="380" y="135">위치</text>
+        <rect class="f-hit" x="420" y="113" width="44" height="34" rx="4"/><text class="f-text" x="442" y="135" text-anchor="middle">e1</text>
+        <rect class="f-hit" x="468" y="113" width="44" height="34" rx="4"/><text class="f-text" x="490" y="135" text-anchor="middle">e2</text>
+        <rect class="f-hit" x="516" y="113" width="44" height="34" rx="4"/><text class="f-text" x="538" y="135" text-anchor="middle">e3</text>
+        <rect class="f-hit" x="564" y="113" width="44" height="34" rx="4"/><text class="f-text" x="586" y="135" text-anchor="middle">e4</text>
+        <text class="f-text" x="380" y="185">속도</text>
+        <rect class="f-hit" x="420" y="163" width="44" height="34" rx="4"/><text class="f-text" x="442" y="185" text-anchor="middle">e1</text>
+        <rect class="f-hit" x="468" y="163" width="44" height="34" rx="4"/><text class="f-text" x="490" y="185" text-anchor="middle">e2</text>
+        <rect class="f-pad" x="516" y="163" width="44" height="34" rx="4"/>
+        <rect class="f-hit" x="564" y="163" width="44" height="34" rx="4"/><text class="f-text" x="586" y="185" text-anchor="middle">e4</text>
+        <text class="f-text" x="380" y="235">체력</text>
+        <rect class="f-hit" x="420" y="213" width="44" height="34" rx="4"/><text class="f-text" x="442" y="235" text-anchor="middle">e1</text>
+        <rect class="f-pad" x="468" y="213" width="44" height="34" rx="4"/>
+        <rect class="f-hit" x="516" y="213" width="44" height="34" rx="4"/><text class="f-text" x="538" y="235" text-anchor="middle">e3</text>
+        <rect class="f-hit" x="564" y="213" width="44" height="34" rx="4"/><text class="f-text" x="586" y="235" text-anchor="middle">e4</text>
+        <rect class="f-box" x="628" y="113" width="80" height="84" rx="6"/>
+        <text class="f-text" x="668" y="152" text-anchor="middle">이동</text>
+        <text class="f-text" x="668" y="170" text-anchor="middle">시스템</text>
+        <rect class="f-box" x="628" y="213" width="80" height="34" rx="6"/>
+        <text class="f-text" x="668" y="235" text-anchor="middle">피해</text>
+        <line class="f-line" x1="610" y1="130" x2="626" y2="130" marker-end="url(#et-a)"/>
+        <line class="f-line" x1="610" y1="180" x2="626" y2="180" marker-end="url(#et-a)"/>
+        <line class="f-line" x1="610" y1="230" x2="626" y2="230" marker-end="url(#et-a)"/>
+        <text class="f-sub" x="380" y="80">엔티티 = 번호(e1~e4)</text>
+        <text class="f-sub" x="380" y="98">빈 칸은 그 컴포넌트가 없다</text>
+        <text class="f-sub" x="545" y="285" text-anchor="middle">이동 시스템은 위치와 속도를 함께 가진 e1, e2, e4만 고른다</text>
+      </svg>
+      <figcaption>왼쪽은 객체 하나가 컴포넌트를 담고, 컴포넌트마다 자기 갱신 함수가 있다. 오른쪽은 컴포넌트가 종류별 데이터로만 모여 있고, 시스템이 필요한 조합을 가진 엔티티만 골라 처리한다. 실제 저장 방식은 <a href="ecs-storage.html">ECS 저장 구조</a>에서 본다.</figcaption>
+    </figure>
+    <p>
+      EC에서 엔티티는 컴포넌트를 담는 객체다. 컴포넌트는 클래스이고, 엔진이 매 프레임 컴포넌트마다 갱신 함수를 부른다. 다른 컴포넌트가 필요하면 <code>GetComponent</code>로 찾아 직접 부른다.
+    </p>
+    <pre><code class="language-csharp">// EC: 데이터(velocity)와 행동(Update)이 한 컴포넌트에 있다
+class Mover : MonoBehaviour
+{
+    public Vector3 velocity;
+    void Update() =&gt; transform.position += velocity * Time.deltaTime;
+}</code></pre>
+    <p>
+      합성의 이점은 다 얻는다. 다만 몬스터 만 마리면 <code>Update</code> 호출이 만 번 흩어진 객체를 하나씩 찾아가며 일어난다. 객체마다 힙에 따로 있어 캐시도 잘 듣지 않는다.
+    </p>
+
+    <h3>ECS: 행동은 시스템으로 나간다</h3>
+    <p>
+      ECS는 세 가지로 나뉜다. <strong>엔티티</strong>는 고유한 번호, <strong>컴포넌트</strong>는 행동 없는 데이터 타입, <strong>시스템</strong>은 특정 컴포넌트 조합을 가진 엔티티를 모아 처리하는 함수다.
+    </p>
+    <pre><code class="language-csharp">// 컴포넌트: 행동 없는 데이터
+struct Position { public float X, Y; }
+struct Velocity { public float X, Y; }
+
+// 시스템: Position과 Velocity를 함께 가진 엔티티만 돈다
+// (World.Query는 설명을 위한 최소 형태다)
+sealed class MoveSystem
+{
+    public void Update(World world, float dt)
+    {
+        world.Query((ref Position p, ref Velocity v) =&gt;
+        {
+            p.X += v.X * dt;
+            p.Y += v.Y * dt;
+        });
+    }
+}</code></pre>
+    <p>
+      행동이 밖으로 나오면 같은 로직이 그 조합을 가진 모든 엔티티에 한 번에 적용된다. 속도를 붙이면 움직이고, 떼면 멈춘다. 엔티티 쪽 코드는 한 줄도 바뀌지 않는다.
+      대신 어떤 데이터가 어떤 로직에 쓰이는지가 타입 안에 적혀 있지 않다. <code>Position</code>을 누가 고치는지 알려면 시스템들의 쿼리를 따로 읽어야 한다.
+    </p>
+
+    <h3>엔티티는 번호와 세대다</h3>
+    <p>
+      엔티티가 번호 하나가 되면 결합이 더 느슨해진다. 엔티티는 자기가 어떤 컴포넌트를 가졌는지조차 모르고, 새 컴포넌트 종류를 더해도 엔티티 정의는 그대로다.
+    </p>
+    <p>
+      번호는 재사용된다. 죽은 몬스터의 번호를 새 몬스터가 받으면, 옛 번호를 들고 있던 쪽이 엉뚱한 대상을 건드린다. 그래서 대부분의 구현이 엔티티를 <span class="blank">(인덱스, 세대)</span> 쌍으로 둔다.
+      원리는 <a href="../data-structure/memory-layout.html">메모리 배치와 자료구조</a>의 세대 핸들과 같다. Unity Entities의 <code>Entity</code>도 <code>Index</code>와 <code>Version</code> 두 필드다.
+    </p>
+
+    <h3>쿼리가 시스템과 데이터를 잇는다</h3>
+    <p>
+      시스템은 "Position과 Velocity를 가지고 Frozen은 없는 엔티티"처럼 <strong>가져야 할 것과 없어야 할 것</strong>으로 대상을 고른다. 이것이 쿼리다.
+      컴포넌트 하나를 붙이고 떼는 것만으로 엔티티가 어느 시스템에 들어갈지 정해지므로, ECS에서는 "기절 상태" 같은 것도 컴포넌트 하나로 표현하곤 한다. 그 비용은 <a href="ecs-structural-change.html">구조 변경</a>에서 본다.
+    </p>
+    <p>
+      시스템은 정해진 순서로 돈다. 입력 → 이동 → 충돌 → 피해 순서가 바뀌면 결과도 바뀐다. 객체끼리 직접 부르던 결합이 사라진 대신 <strong>실행 순서</strong>가 새 결합이 된다.
+    </p>
+
+    <h3>데이터 지향 설계와 같은 말이 아니다</h3>
+    <p>
+      데이터 지향 설계는 데이터를 어떻게 놓고 어떻게 읽을지를 먼저 정하는 태도다. 근거는 <a href="../computer-architecture/locality.html">참조 지역성</a>이고, 대표적인 결과가 <a href="../data-structure/memory-layout.html">AoS와 SoA</a> 선택이다.
+      ECS는 엔티티·컴포넌트·시스템이라는 <strong>구조의 이름</strong>이다. ECS가 아닌 데이터 지향 코드도 있고, 컴포넌트를 힙 객체로 흩어 놓아 데이터 지향이 아닌 ECS도 있다.
+    </p>
+
+    <h2>비교</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구분</th><th>상속 계층</th><th>EC (컴포넌트 패턴)</th><th>ECS</th></tr></thead>
+        <tbody>
+          <tr><td>엔티티</td><td>클래스 인스턴스</td><td>컴포넌트를 담는 객체</td><td>번호(인덱스, 세대)</td></tr>
+          <tr><td>컴포넌트</td><td>없음, 필드와 메서드</td><td>데이터 + 행동</td><td>데이터만</td></tr>
+          <tr><td>행동이 있는 곳</td><td>클래스 메서드</td><td>컴포넌트 안</td><td>시스템</td></tr>
+          <tr><td>기능 조합</td><td>계층을 다시 짠다</td><td>컴포넌트를 붙인다</td><td>컴포넌트를 붙이면 쿼리에 걸린다</td></tr>
+          <tr><td>대량 순회</td><td>객체마다 가상 호출</td><td>컴포넌트마다 호출</td><td>배열을 한 번에 훑는다</td></tr>
+          <tr><td>코드 읽기</td><td>한 클래스에 모여 있다</td><td>컴포넌트 단위로 읽힌다</td><td>데이터와 로직이 떨어져 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>ECS가 이득인 곳은 같은 규칙을 대량으로 도는 시뮬레이션이다.</strong> 투사체 수천 개, 몹 무리의 이동, 물리, 대규모 전장처럼 매 <a href="../server/tick-loop.html">틱</a> 같은 계산을 많은 엔티티에 하는 곳이다.
+        Overwatch처럼 서버와 클라이언트 게임플레이를 모두 ECS로 짠 사례도 있다.
+      </li>
+      <li>
+        <strong>MMO 서버의 흔한 모양은 객체 + 컴포넌트다.</strong> 퀘스트, 거래, 인벤토리처럼 개체마다 분기가 많고 대량 순회가 드문 로직은 ECS로 옮겨도 얻는 것이 적다. 시뮬레이션이 무거운 부분만 ECS로 떼는 혼합 구조가 흔하다.
+      </li>
+      <li>
+        <strong>상태가 데이터 덩어리로 모여 있으면 스냅샷이 쉽다.</strong> 컴포넌트 배열을 그대로 직렬화하거나 바뀐 컴포넌트만 골라 보내기 좋다. 이것이 <a data-ref="game-patterns/state-sync">스냅샷과 상태 동기화</a>와 궁합이 맞는 이유다.
+      </li>
+      <li>
+        <strong>시스템 단위로 병렬화할 수 있다.</strong> 시스템마다 읽는 컴포넌트와 쓰는 컴포넌트를 선언하면, 쓰기가 겹치지 않는 시스템끼리 <a href="../operating-system/thread-pool.html">스레드 풀</a>에서 함께 돌릴 수 있다.
+        같은 컴포넌트를 두 시스템이 동시에 쓰면 <a href="../operating-system/sync-primitives.html">락</a> 없이 경합이 난다. 스케줄러가 이것을 막아 주는지 직접 확인한다.
+      </li>
+      <li>
+        <strong>C#에서는 컴포넌트를 <code>struct</code>로 둔다.</strong> 컴포넌트가 <code>class</code>면 배열에는 참조만 모이고 실제 데이터는 힙에 흩어져 <a href="../csharp/gc-basics.html">GC</a> 부담과 캐시 미스가 함께 온다(<a href="../csharp/struct-design.html">struct와 class 고르기</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>엔진이 컴포넌트라고 부르는 것이 다 ECS의 컴포넌트는 아니다.</strong> 안에 갱신 함수가 있고 자기 데이터를 고치면 EC다.</li>
+      <li><strong>ECS와 데이터 지향 설계를 같은 말로 쓰지 않는다.</strong> 하나는 구조, 하나는 태도다.</li>
+      <li><strong>시스템 실행 순서를 명시한다.</strong> 순서에 기대는 로직이 많아지는데 순서가 등록 순서 같은 우연에 맡겨져 있으면, 시스템 하나를 더하는 것만으로 결과가 바뀐다.</li>
+      <li><strong>엔티티 번호를 오래 들고 있으면 세대를 확인한다.</strong> 이미 사라진 엔티티의 번호로 컴포넌트를 읽으면 다른 엔티티의 값을 읽는다.</li>
+      <li><strong>디버깅 방식이 달라진다.</strong> "이 몬스터의 상태"가 한 객체에 있지 않고 여러 배열에 흩어진다. 엔티티 단위로 컴포넌트를 모아 보여 주는 도구를 먼저 갖춘다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

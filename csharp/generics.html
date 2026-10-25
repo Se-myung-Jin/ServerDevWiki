@@ -111,7 +111,7 @@ static T Sum&lt;T&gt;(ReadOnlySpan&lt;T&gt; values) where T : INumber&lt;T&gt;
         <strong>제네릭 정적 필드는 닫힌 타입마다 따로 있다.</strong> <code>class Pool&lt;T&gt; { static readonly Stack&lt;T&gt; items; }</code>는 <code>Pool&lt;Monster&gt;</code>와 <code>Pool&lt;Item&gt;</code>이 각자 스택을 갖는다. 타입별 <a data-ref="data-structure/memory-layout">객체 풀</a>이나 패킷 처리기 등록표를 사전 조회 없이 만드는 흔한 방법이다. 반대로 "모든 T가 공유하는 카운터"를 여기 두면 의도와 달리 타입마다 갈라진다.
       </li>
       <li>
-        <strong>값 형식 컴포넌트·이벤트는 제네릭으로 받는다.</strong> <code>Publish(IEvent e)</code>는 구조체 이벤트를 매번 박싱한다. <code>Publish&lt;T&gt;(in T e) where T : struct, IEvent</code>로 받으면 박싱이 없다. ECS의 컴포넌트 저장소도 같은 이유로 <code>ComponentArray&lt;T&gt; where T : unmanaged</code> 꼴이 된다(<a data-ref="game-patterns/ecs-storage">ECS 저장 구조</a>).
+        <strong>값 형식 컴포넌트·이벤트는 제네릭으로 받는다.</strong> <code>Publish(IEvent e)</code>는 구조체 이벤트를 매번 박싱한다. <code>Publish&lt;T&gt;(in T e) where T : struct, IEvent</code>로 받으면 박싱이 없다. <a data-ref="game-patterns/ecs-terms">ECS</a>의 컴포넌트 저장소도 같은 이유로 <code>ComponentArray&lt;T&gt; where T : unmanaged</code> 꼴이 된다(<a data-ref="game-patterns/ecs-storage">ECS 저장 구조</a>).
       </li>
       <li>
         <strong>AOT로 빌드하면 실행 중에 새 제네릭을 만들 수 없다.</strong> Native AOT와 IL2CPP는 빌드 때 쓰일 인스턴스를 모두 찾아 미리 컴파일한다. <code>MakeGenericType</code>이나 리플렉션으로 처음 보는 값 형식 조합을 만들면 해당 코드가 없어 실패한다. 직렬화기 같은 라이브러리가 <a data-ref="csharp/reflection-sourcegen">소스 생성기</a>로 옮겨 가는 이유다(<a href="jit-aot.html">JIT와 AOT</a>).

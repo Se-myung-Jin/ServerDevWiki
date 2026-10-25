@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>기획 데이터와 데이터 주도 설계 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/data-driven">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../csharp/immutability-null.html">불변과 null 다루기</a> · <a href="../csharp/volatile-interlocked.html">volatile과 Interlocked</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      데이터 주도 설계는 아이템 능력치, 몬스터 배치, 스킬 계수, 드롭 확률 같은 수치와 목록을 코드 밖의 테이블로 빼는 방식이다. 기획자는 코드를 고치지 않고 값을 바꾸고, 서버는 그 테이블을 읽어 규칙을 실행한다. 프로그래머가 맡는 일은 값을 받아들이는 통로다. <span class="blank">읽고, 검증하고, 바꿔 끼우는</span> 과정을 믿을 수 있게 만든다.
+    </p>
+    <p>
+      통로가 허술하면 데이터 한 줄이 서버를 죽인다. 없는 아이템을 가리키는 드롭 행, 합이 100%를 넘는 확률표, 음수 쿨타임은 컴파일러가 잡아 주지 않는다. 그래서 서버는 로드할 때 테이블 전체를 검증하고, 실패하면 시작하지 않는다. 운영 중에 바꿀 때는 새 테이블을 따로 만들어 검증을 통과한 뒤에만 참조 하나를 바꾼다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>시트에서 서버 메모리까지</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 270" role="img" aria-label="기획 시트를 내보내고 코드 생성으로 행 타입을 만든 뒤 서버가 로드하고 검증해 읽기 전용 테이블을 만든다. 운영 중에는 새 테이블을 따로 만들어 검증한 뒤 참조를 바꾼다">
+        <defs><marker id="dd-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-cell" x="20" y="40" width="120" height="44" rx="6"/>
+        <text class="f-text" x="80" y="67" text-anchor="middle">기획 시트</text>
+        <line class="f-line" x1="140" y1="62" x2="164" y2="62" marker-end="url(#dd-a)"/>
+        <rect class="f-cell" x="170" y="40" width="130" height="44" rx="6"/>
+        <text class="f-text" x="235" y="59" text-anchor="middle">내보내기</text>
+        <text class="f-sub" x="235" y="76" text-anchor="middle">JSON · 바이너리</text>
+        <line class="f-line" x1="300" y1="62" x2="324" y2="62" marker-end="url(#dd-a)"/>
+        <rect class="f-box" x="330" y="40" width="130" height="44" rx="6"/>
+        <text class="f-text" x="395" y="67" text-anchor="middle">로드와 검증</text>
+        <line class="f-line" x1="460" y1="62" x2="484" y2="62" marker-end="url(#dd-a)"/>
+        <rect class="f-hit" x="490" y="40" width="250" height="44" rx="6"/>
+        <text class="f-text" x="615" y="67" text-anchor="middle">테이블 v1 (읽기 전용)</text>
+
+        <line class="f-line f-dash" x1="235" y1="84" x2="235" y2="110" marker-end="url(#dd-a)"/>
+        <rect class="f-cell2" x="170" y="116" width="130" height="36" rx="6"/>
+        <text class="f-text" x="235" y="139" text-anchor="middle">코드 생성: 행 타입</text>
+        <line class="f-line f-dash" x1="300" y1="128" x2="384" y2="90" marker-end="url(#dd-a)"/>
+
+        <rect class="f-cell2" x="530" y="116" width="170" height="36" rx="6"/>
+        <text class="f-text" x="615" y="139" text-anchor="middle">현재 테이블 참조</text>
+        <line class="f-line" x1="615" y1="116" x2="615" y2="90" marker-end="url(#dd-a)"/>
+        <line class="f-line f-dash" x1="615" y1="152" x2="615" y2="178" marker-end="url(#dd-a)"/>
+        <text class="f-sub" x="520" y="139" text-anchor="end">원자적 교체</text>
+
+        <text class="f-sub" x="20" y="206">운영 중 수치 변경</text>
+        <line class="f-line" x1="130" y1="202" x2="324" y2="202" marker-end="url(#dd-a)"/>
+        <rect class="f-box" x="330" y="184" width="130" height="40" rx="6"/>
+        <text class="f-text" x="395" y="209" text-anchor="middle">다시 로드·검증</text>
+        <line class="f-line" x1="460" y1="204" x2="484" y2="204" marker-end="url(#dd-a)"/>
+        <rect class="f-box" x="490" y="184" width="250" height="40" rx="6"/>
+        <text class="f-text" x="615" y="209" text-anchor="middle">테이블 v2</text>
+        <text class="f-sub" x="20" y="254">검증에 실패하면 v1을 그대로 쓴다. 이미 진행 중이던 처리는 끝까지 v1을 본다</text>
+      </svg>
+      <figcaption>시트는 서버가 직접 읽지 않는다. 내보낸 파일과 생성된 타입이 서버로 간다. 서버는 로드할 때 전부 검증하고, 통과한 테이블만 읽기 전용으로 공유한다. 핫 리로드는 v2를 옆에 따로 만들고, 검증이 끝나면 "현재 테이블" 참조 하나만 바꾼다.</figcaption>
+    </figure>
+
+    <h3>무엇을 테이블로 빼나</h3>
+    <p>
+      테이블로 빼는 것은 자주 바뀌고 코드의 흐름을 바꾸지 않는 값이다. 능력치, 계수, 쿨타임, 보상 목록, 스폰 위치와 주기, 확률표가 여기에 든다. 이런 값이 코드 안에 있으면 수치 하나를 고칠 때마다 빌드와 배포가 필요하고, 기획자는 프로그래머를 기다린다. 값이 밖으로 나가면 바뀌는 속도가 기획의 속도가 된다.
+    </p>
+    <p>
+      비헤이비어 트리와 상태 기계도 같은 방식으로 에셋으로 뺄 수 있다. 서버가 트리 에셋을 읽어 실행하는 이야기는 <a href="behavior-tree.html">비헤이비어 트리</a>에서 다뤘다.
+    </p>
+
+    <h3>형식은 쓰는 자리에 따라 고른다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>형식</th><th>좋은 점</th><th>약한 점</th></tr></thead>
+        <tbody>
+          <tr><td>엑셀·스프레드시트 원본</td><td>기획자가 편집하기 쉽다. 수식과 서식을 쓴다</td><td>서버가 직접 읽으면 안 된다. 병합된 칸, 숨은 열, 셀 서식에 따라 값이 달라진다</td></tr>
+          <tr><td>CSV</td><td>단순하고, 버전 관리에서 줄 단위 차이가 잘 보인다</td><td>타입과 중첩이 없다. 쉼표와 줄바꿈이 든 값은 따옴표 규칙에 기댄다</td></tr>
+          <tr><td>JSON</td><td>중첩 구조와 목록을 담는다. 도구가 많다</td><td>크고, 파싱이 느리다. 숫자 정밀도는 파서마다 다르다</td></tr>
+          <tr><td>바이너리(<a data-ref="server/protocol-choice">MessagePack</a>, FlatBuffers 등)</td><td>작고 빠르다. FlatBuffers는 파싱 없이 바로 읽는다</td><td>사람이 읽을 수 없어, 원본과 내보내기 도구를 함께 관리해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      흔한 구성은 원본은 시트로 두고, 내보내기 도구가 검증 가능한 중간 형식이나 바이너리를 만드는 것이다. 버전 관리에는 원본과 함께 내보낸 결과도 남긴다. 그래야 어느 배포에 어떤 값이 나갔는지 되짚을 수 있다.
+    </p>
+
+    <h3>코드 생성으로 타입을 붙인다</h3>
+    <p>
+      시트의 머리 행에 열 이름과 타입을 적어 두면, 도구가 그것을 읽어 행 하나에 해당하는 C# 타입과 로더를 만든다. 코드는 <code>row["Damage"]</code> 같은 문자열 조회 대신 <code>row.Damage</code>를 쓰게 되고, 열 이름이 바뀌면 컴파일이 깨져 바로 드러난다. 런타임 리플렉션으로 열을 맞추는 방식보다 빠르고 Native <a data-ref="csharp/jit-aot">AOT</a>에서도 막히지 않는다(<a href="../csharp/reflection-sourcegen.html">리플렉션과 소스 생성기</a>).
+    </p>
+<pre><code class="language-csharp">// 도구가 만든 코드. 직접 고치지 않는다
+public sealed record ItemRow(int Id, string Name, int Damage, int DropGroupId);
+
+public sealed class GameData
+{
+    public required FrozenDictionary&lt;int, ItemRow&gt; Items { get; init; }
+    public required FrozenDictionary&lt;int, DropGroupRow&gt; DropGroups { get; init; }
+}</code></pre>
+    <p>
+      같은 생성기가 클라이언트 쪽 코드도 만들면, 두 쪽이 같은 스키마에서 나온 타입을 쓴다.
+    </p>
+
+    <h3>로드할 때 전부 검증하고, 실패하면 멈춘다</h3>
+    <p>
+      검증은 값 하나를 볼 때가 아니라 로드할 때 한꺼번에 한다. 런타임에 "이 아이템 ID가 있나"를 그때그때 확인하는 코드는 빠뜨리기 쉽고, 빠뜨린 곳은 특정 몬스터를 잡았을 때만 터진다.
+    </p>
+    <ul>
+      <li><strong>참조가 맞는지 본다.</strong> 드롭 그룹이 가리키는 아이템, 스킬이 가리키는 효과, 퀘스트가 가리키는 NPC가 모두 실제로 있어야 한다.</li>
+      <li><strong>범위를 본다.</strong> 확률은 0과 1 사이, 확률표의 합은 정해진 값, 쿨타임과 레벨은 음수가 아니어야 한다.</li>
+      <li><strong>키와 필수값을 본다.</strong> ID가 겹치지 않고, 빈 칸이 기본값 0으로 조용히 바뀌지 않아야 한다.</li>
+      <li><strong>관계를 본다.</strong> 진화 단계나 선행 퀘스트에 고리가 없어야 한다(<a href="../data-structure/graphs.html">그래프 표현과 탐색</a>).</li>
+    </ul>
+    <p>
+      하나라도 틀리면 서버는 시작하지 않는다. 오류는 처음 하나에서 멈추지 말고 전부 모아 파일 이름, 행, 열과 함께 출력한다. 잘못된 데이터로 떠서 플레이어의 아이템을 망가뜨리는 것보다 시작하지 못하는 편이 훨씬 싸다. 같은 검증을 빌드 파이프라인에서도 돌리면, 서버에 닿기 전에 걸러진다.
+    </p>
+
+    <h3>읽기 전용으로 공유한다</h3>
+    <p>
+      로드가 끝난 테이블은 아무도 고치지 않는다. 그러면 모든 존 스레드가 락 없이 같은 테이블을 읽을 수 있다. 행 타입은 <code>init</code> 속성이나 <code>record</code>로 두고, 컬렉션은 읽기 전용 형태로 내보낸다. .NET 8의 <code>FrozenDictionary</code>는 만들 때 시간을 더 쓰는 대신 조회를 빠르게 하는 읽기 전용 사전이라, 한 번 만들고 계속 읽는 기획 테이블에 맞는다(<a href="../csharp/immutability-null.html">불변과 null 다루기</a>).
+    </p>
+    <p>
+      테이블의 값을 게임 객체가 고쳐 쓰면 안 된다. 아이템 하나에 강화 수치를 더하려고 테이블의 행을 바꾸면, 같은 아이템을 가진 모든 플레이어가 바뀐다. 테이블은 원형이고, 플레이어마다 다른 값은 플레이어 쪽 객체에 따로 둔다.
+    </p>
+
+    <h3>핫 리로드는 참조 하나를 바꾼다</h3>
+<pre><code class="language-csharp">public static class Data
+{
+    static GameData _current = null!;
+    public static GameData Current =&gt; Volatile.Read(ref _current);
+
+    public static bool TryReload(string path, ILogger log)
+    {
+        var next = GameDataLoader.Load(path, out var errors);   // 옆에 새로 만든다
+        if (errors.Count &gt; 0) { log.LogError("reload rejected: {Errors}", errors); return false; }
+        Interlocked.Exchange(ref _current, next);              // 검증을 통과하면 한 번에 바꾼다
+        return true;
+    }
+}
+
+// 쓰는 쪽: 한 번의 처리 안에서는 처음 잡은 테이블만 본다
+var data = Data.Current;
+var item = data.Items[itemId];
+var group = data.DropGroups[item.DropGroupId];</code></pre>
+    <p>
+      기존 테이블을 그 자리에서 고치면, 읽던 스레드가 반쯤 바뀐 테이블을 본다. 새 테이블을 따로 다 만들고 검증한 뒤 참조 하나를 원자적으로 바꾸면, 읽는 쪽은 v1 전체나 v2 전체 중 하나만 본다(<a href="../csharp/volatile-interlocked.html">volatile과 Interlocked</a>). 쓰는 쪽은 처리 하나를 시작할 때 참조를 지역 변수로 한 번만 잡는다. 같은 처리 안에서 <code>Data.Current</code>를 두 번 읽으면 그 사이에 교체가 일어나 v1의 아이템과 v2의 드롭 그룹을 섞을 수 있다.
+    </p>
+    <p>
+      바꿔도 이미 진행 중인 것은 옛 값을 쓴다. 시전 중인 스킬, 이미 생성된 몬스터, 진행 중인 퀘스트는 생성할 때 읽은 값을 들고 있다. 이것을 즉시 바꿀지 다음 생성부터 반영할지 정해 두어야 한다. 행을 지우는 리로드는 특히 위험하다. 플레이어가 가진 아이템이 가리키는 ID가 사라지기 때문이다. 지우지 말고 사용 중지 표시를 붙이는 쪽이 안전하다. 서버 설정 값의 갱신은 <a href="../csharp/generic-host-di.html">Generic Host와 의존성 주입</a>의 <code>IOptionsMonitor</code>가 맡고, 기획 테이블처럼 서로 얽힌 큰 묶음은 위처럼 통째로 바꾼다.
+    </p>
+
+    <h3>클라이언트와 서버의 테이블이 다를 때</h3>
+    <p>
+      클라이언트도 같은 테이블을 들고 화면에 수치를 보여 준다. 패치 타이밍이 어긋나면 클라이언트는 공격력 100이라 보여 주고 서버는 120으로 계산한다. 판정은 언제나 서버 테이블이 기준이다. 접속할 때 테이블 버전이나 파일 해시를 주고받아 다르면 패치를 요구하거나 경고를 남긴다. 테이블 묶음마다 해시를 따로 두면 무엇이 어긋났는지 좁힐 수 있다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>바뀌는 것</th><th>둘 자리</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>수치, 목록, 확률, 배치</td><td>데이터</td><td>규칙은 같고 값만 바뀐다. 기획자가 직접 조정한다</td></tr>
+          <tr><td>몇 가지 정해진 동작 중 고르기</td><td>데이터의 열거값 + 코드의 구현</td><td>"효과 종류 = 회복"처럼 종류만 데이터가 고르고, 동작은 코드가 정한다</td></tr>
+          <tr><td>조건과 분기가 계속 늘어나는 규칙</td><td>코드</td><td>데이터 안에 조건식 언어를 만들기 시작하면 타입도 디버거도 테스트도 없는 스크립트가 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      데이터로 표현할 수 있는 범위를 넓힐수록 기획의 자유는 늘지만, 검증할 수 있는 범위는 좁아진다. 경계는 "검증기가 이 값을 보고 틀렸다고 말할 수 있는가"로 정한다. 말할 수 없으면 그 규칙은 코드로 둔다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>서버는 자기 테이블만 믿는다.</strong> 클라이언트가 보내는 값 가운데 테이블에서 나오는 것(가격, 대미지, 쿨타임)은 받지 않고 서버가 직접 찾는다. 클라이언트 테이블은 고칠 수 있다고 가정한다(<a data-ref="security/game-security">게임 보안</a>).
+      </li>
+      <li>
+        <strong>큰 테이블은 프로세스에 한 벌만 둔다.</strong> 존이 여럿이어도 테이블은 읽기 전용이라 함께 쓸 수 있다. 맵 높이 정보나 경로 그래프처럼 아주 큰 데이터는 바이너리로 내보내 메모리 맵으로 붙이면, 같은 머신의 여러 서버 프로세스가 물리 메모리를 함께 쓴다(<a href="../system-programming/memory-mapped-file.html">메모리 맵 파일</a>).
+      </li>
+      <li>
+        <strong>데이터 배포를 코드 배포와 나눈다.</strong> 수치 조정은 서버 바이너리를 다시 빌드하지 않고 데이터 묶음만 배포한다. 묶음에 버전을 붙여 어느 서버가 어떤 데이터를 쓰는지 보이게 하고, 문제가 생기면 이전 묶음으로 되돌린다(<a data-ref="operations/deploy-pipeline">배포 파이프라인</a>).
+      </li>
+      <li>
+        <strong>리로드는 모든 서버에 같이 일어나게 한다.</strong> 서버마다 다른 시점에 바뀌면, 존을 옮긴 플레이어가 다른 값을 겪는다. 리로드 명령과 결과(성공, 실패, 쓰는 버전)를 모아서 확인한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>빈 칸을 0으로 읽지 않는다.</strong> 파서가 빈 값을 조용히 기본값으로 바꾸면 쿨타임 0의 스킬이 생긴다. 필수 열이 비면 오류로 처리한다.</li>
+      <li><strong>부동소수 값은 내보낼 때 형식을 고정한다.</strong> 문화권 설정에 따라 소수점이 쉼표로 읽히는 일이 있다. 파싱은 <code>CultureInfo.InvariantCulture</code>로 한다.</li>
+      <li><strong>ID를 재사용하지 않는다.</strong> 지운 아이템의 ID를 새 아이템에 주면, DB에 남아 있던 옛 아이템이 새 아이템으로 바뀐다.</li>
+      <li><strong>테이블 객체를 고쳐 쓰지 않는다.</strong> 원형을 바꾸면 그 행을 쓰는 모든 것이 바뀐다. 플레이어별 값은 따로 둔다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

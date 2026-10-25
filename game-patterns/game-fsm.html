@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>게임 FSM · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/game-fsm">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/tick-loop.html">서버 틱 루프</a> · <a href="../csharp/interface-abstract.html">인터페이스와 추상 클래스</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      유한 상태 기계(FSM)는 정해 둔 상태 가운데 <span class="blank">한 번에 하나에만</span> 있고, 들어온 입력과 지금 상태가 다음 상태를 정하는 구조다. 몬스터의 행동을 <code>isChasing</code>, <code>isAttacking</code> 같은 참·거짓 필드 여러 개로 적으면 "쫓으면서 귀환 중"처럼 성립하지 않는 조합까지 표현된다. 상태를 값 하나로 두면 그런 조합은 담을 자리가 없다.
+    </p>
+    <p>
+      구현은 <code>enum</code>과 <code>switch</code>로 시작한다. 한 상태를 다루는 코드가 여러 함수의 <code>case</code>에 흩어질 만큼 길어지면, 상태마다 클래스를 두는 State 패턴으로 옮긴다. 이전 상태로 되돌아가야 하면 상태를 스택에 쌓는 푸시다운 오토마타로 넓히고, 상태가 곱으로 불어나면 <a href="state-explosion.html">계층형·동시성 FSM</a>이나 <a href="behavior-tree.html">비헤이비어 트리</a>로 넘어간다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>한 번에 한 상태에 있고 입력이 전이를 고른다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="몬스터 FSM. 대기에서 플레이어를 보면 추적, 사거리 안이면 공격, 너무 멀어지면 귀환, 귀환이 끝나면 대기로 돌아간다">
+        <defs><marker id="fsm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="40" y="96" width="110" height="46" rx="23"/>
+        <text class="f-text" x="95" y="124" text-anchor="middle">대기</text>
+        <rect class="f-miss" x="260" y="96" width="110" height="46" rx="23"/>
+        <text class="f-on" x="315" y="124" text-anchor="middle">추적</text>
+        <rect class="f-box" x="480" y="96" width="110" height="46" rx="23"/>
+        <text class="f-text" x="535" y="124" text-anchor="middle">공격</text>
+        <rect class="f-box" x="260" y="196" width="110" height="40" rx="20"/>
+        <text class="f-text" x="315" y="221" text-anchor="middle">귀환</text>
+        <line class="f-line" x1="150" y1="110" x2="254" y2="110" marker-end="url(#fsm-a)"/>
+        <text class="f-sub" x="202" y="100" text-anchor="middle">플레이어 발견</text>
+        <line class="f-line" x1="370" y1="110" x2="474" y2="110" marker-end="url(#fsm-a)"/>
+        <text class="f-sub" x="422" y="100" text-anchor="middle">사거리 안</text>
+        <line class="f-line" x1="480" y1="130" x2="376" y2="130" marker-end="url(#fsm-a)"/>
+        <text class="f-sub" x="428" y="148" text-anchor="middle">사거리 밖</text>
+        <line class="f-line" x1="315" y1="142" x2="315" y2="190" marker-end="url(#fsm-a)"/>
+        <text class="f-sub" x="322" y="172">스폰 지점에서 너무 멀다</text>
+        <path class="f-line" d="M260,216 C140,216 95,190 95,148" marker-end="url(#fsm-a)"/>
+        <text class="f-sub" x="150" y="240">제자리 도착</text>
+        <text class="f-strong" x="40" y="40">칠한 상자가 지금 상태다. 칠한 상자는 언제나 하나다</text>
+        <text class="f-sub" x="40" y="62">화살표에 붙은 것이 전이 조건이다. 같은 "플레이어 발견"도 귀환 중에는 무시하게 적을 수 있다</text>
+        <text class="f-sub" x="620" y="114">사망은 어느 상태에서든</text>
+        <text class="f-sub" x="620" y="132">갈 수 있는 전이다</text>
+      </svg>
+      <figcaption>필드 몬스터의 행동을 상태 넷으로 적었다. 전이는 상태마다 따로 적어 두므로 "플레이어 발견"이 대기 중에는 추적을 시작하고, 귀환 중에는 아무 일도 일으키지 않게 할 수 있다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>요소</th><th>무엇인가</th><th>몬스터 예</th></tr></thead>
+        <tbody>
+          <tr><td>상태</td><td>미리 정한 유한한 집합. 그중 하나만 현재 값이다</td><td>대기, 추적, 공격, 귀환</td></tr>
+          <tr><td>입력</td><td>밖에서 들어오는 이벤트나 매 틱 검사하는 조건</td><td>플레이어 발견, 피격, 사거리 판정</td></tr>
+          <tr><td>전이</td><td>"이 상태에서 이 입력이면 저 상태로"를 적은 규칙</td><td>추적 중 사거리 안 → 공격</td></tr>
+          <tr><td>진입·종료 동작</td><td>상태에 들어갈 때, 나올 때 한 번 하는 일</td><td>추적 진입 시 경로 요청, 귀환 진입 시 체력 회복 시작</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      같은 입력이 상태마다 다른 결과를 낸다는 점이 핵심이다. 전이 규칙을 상태별로 적어 두기 때문에, 행동을 바꾸고 싶으면 "어느 상태에서"를 먼저 정하고 그 상태의 규칙만 고치면 된다. 진입·종료 동작은 개념 설명에서 빠지기 쉽지만, 실제 코드에서는 전이마다 할 일을 흩어 적지 않게 해 주는 가장 쓸모 있는 장치다.
+    </p>
+
+    <h3>참·거짓 필드를 늘리면 성립하지 않는 조합까지 표현된다</h3>
+<pre><code class="language-csharp">// 필드 넷이면 2^4 = 16가지 조합이 표현된다. 실제로 성립하는 것은 넷뿐이다
+class Monster
+{
+    bool isChasing, isAttacking, isReturning, isDead;
+}
+
+// 값 하나면 담을 수 있는 것이 정해 둔 상태뿐이다
+enum MonsterState { Idle, Chase, Attack, Return, Dead }</code></pre>
+    <p>
+      필드가 하나 늘 때마다 조합은 두 배가 되지만 늘어난 조합 대부분은 의미가 없다. 그런데 <code>isChasing = true</code>와 <code>isReturning = true</code>가 동시에 켜져도 컴파일러는 막지 않는다. 한쪽을 끄는 것을 잊은 코드가 한 곳만 있어도 몬스터는 잘못된 조합을 들고 몇 분을 돌다가 엉뚱한 곳에서 이상하게 움직인다. 상태를 <code>enum</code> 값 하나로 두면 잘못된 조합을 넣을 자리 자체가 없다.
+    </p>
+
+    <h3>enum과 switch에서 시작한다</h3>
+<pre><code class="language-csharp">void Tick(Monster m)
+{
+    switch (m.State)
+    {
+        case MonsterState.Idle:
+            if (m.FindTarget() is { } t) { m.Target = t; m.State = MonsterState.Chase; }
+            break;
+        case MonsterState.Chase:
+            if (m.TooFarFromSpawn()) m.State = MonsterState.Return;
+            else if (m.InAttackRange()) m.State = MonsterState.Attack;
+            else m.MoveToward(m.Target);
+            break;
+        // Attack, Return, Dead ...
+    }
+}</code></pre>
+    <p>
+      상태가 몇 개 안 되고 상태마다 하는 일이 몇 줄이면 이 모양이 가장 읽기 쉽다. 문제는 처리 함수가 늘 때다. <code>Tick</code>에 이어 피격 처리 <code>OnDamaged</code>, 패킷으로 보낼 상태 표시 <code>GetAnimation</code>이 같은 <code>switch</code>를 가지면, 추적 상태 하나의 코드가 세 함수에 나뉘어 놓인다. 진입·종료 동작을 넣으려면 <code>m.State = ...</code>를 쓰는 모든 자리를 찾아 고쳐야 한다.
+    </p>
+
+    <h3>상태별 코드가 길어지면 클래스로 모은다</h3>
+<pre><code class="language-csharp">interface IMonsterState
+{
+    void Enter(Monster m);
+    IMonsterState? Tick(Monster m);      // 바뀔 상태를 돌려준다. null이면 그대로
+    IMonsterState? OnDamaged(Monster m, Unit attacker);
+    void Exit(Monster m);
+}
+
+sealed class ChaseState : IMonsterState
+{
+    public static readonly ChaseState Instance = new();   // 상태 객체에는 데이터를 두지 않는다
+
+    public void Enter(Monster m) =&gt; m.RequestPath(m.Target);
+    public IMonsterState? Tick(Monster m) =&gt;
+        m.TooFarFromSpawn() ? ReturnState.Instance :
+        m.InAttackRange()   ? AttackState.Instance : null;
+    public IMonsterState? OnDamaged(Monster m, Unit a) =&gt; null;
+    public void Exit(Monster m) =&gt; m.StopMoving();
+}
+
+void ChangeState(Monster m, IMonsterState next)
+{
+    m.Current.Exit(m);      // 나올 때 할 일
+    m.Current = next;
+    next.Enter(m);          // 들어갈 때 할 일. 전이는 이 한 곳으로만 일어난다
+}</code></pre>
+    <p>
+      State 패턴은 상태마다 클래스를 두고, 상태가 받을 수 있는 모든 입력을 인터페이스 메서드로 받는다. 추적 상태에 관한 코드가 <code>ChaseState</code> 하나에 모이고, 전이는 <code>ChangeState</code> 한 곳에서만 일어나므로 진입·종료 동작이 빠질 일이 없다. 가상 호출 비용은 상태 하나당 메서드 한 번이라 틱 예산에서 문제가 되는 일은 드물다(<a href="../csharp/interface-abstract.html">인터페이스와 추상 클래스</a>).
+    </p>
+    <p>
+      상태 객체를 몬스터마다 만들지, 모두가 하나를 나눠 쓸지는 상태가 데이터를 가지느냐로 정한다. 위처럼 데이터를 몬스터 쪽에 두고 상태 객체는 행동만 가지면 수천 마리가 <code>Instance</code> 하나를 공유해도 되고 할당도 없다. 공격 쿨다운 같은 값을 상태 객체 필드에 넣고 공유하면 모든 몬스터가 같은 쿨다운을 쓰는 버그가 된다.
+    </p>
+
+    <h3>돌아갈 곳이 필요하면 스택을 쓴다</h3>
+    <p>
+      스턴에 걸렸다가 풀리면 스턴 직전 상태로 돌아가야 한다. 상태 값 하나만 있으면 "직전이 무엇이었는지"를 따로 저장해야 하고, 스턴 중에 또 다른 끼어들기가 오면 그 저장도 덮인다. <strong>푸시다운 오토마타</strong>는 현재 상태 대신 상태의 스택을 둔다. 끼어드는 상태는 위에 밀어 넣고(push), 끝나면 꺼내면(pop) 아래에 있던 상태로 저절로 돌아간다. 다만 아래 상태가 멈춘 동안 세상이 바뀌었을 수 있으므로, 다시 위로 올라온 상태는 진입 동작에서 대상이 아직 살아 있는지부터 확인해야 한다.
+    </p>
+
+    <h3>FSM이 감당하지 못하는 것</h3>
+    <p>
+      FSM은 상태와 전이를 사람이 모두 적는 방식이다. 상태가 늘면 적어야 할 전이가 함께 늘고, 서로 상관없는 축(행동과 들고 있는 무기 같은)을 한 기계에 넣으면 상태 수가 곱으로 늘어난다(<a href="state-explosion.html">상태 폭발과 계층형 FSM</a>). 행동이 수십 가지이고 우선순위가 상황마다 바뀌는 AI는 <a href="behavior-tree.html">비헤이비어 트리</a>나 <a href="ai-approaches.html">GOAP와 유틸리티 AI</a>로 옮겨 간다. 그래도 그 구조들의 맨 아래, 이동·애니메이션 재생처럼 "지금 무엇을 실행 중인가"는 대개 작은 FSM으로 남는다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>구현</th><th>맞는 경우</th><th>한계</th></tr></thead>
+        <tbody>
+          <tr><td><code>enum</code> + <code>switch</code></td><td>상태가 너덧 개, 처리 함수가 한두 개</td><td>한 상태의 코드가 여러 함수에 흩어진다. 진입·종료 동작을 넣기 어렵다</td></tr>
+          <tr><td>State 패턴(상태마다 클래스)</td><td>상태마다 처리 함수가 여럿이고 진입·종료 동작이 있다</td><td>파일과 타입이 는다. 전이를 한눈에 보기 어렵다</td></tr>
+          <tr><td>전이 표(데이터)</td><td>기획자가 전이를 고치거나 몬스터 종류마다 전이가 다르다</td><td>조건이 복잡하면 표로 다 적을 수 없어 코드 조건과 섞인다</td></tr>
+          <tr><td>푸시다운 오토마타</td><td>끼어들었다가 원래 하던 일로 돌아가는 상태가 있다(스턴, 대화, 컷신)</td><td>스택 아래 상태가 오래 멈춰 있으면 그사이 바뀐 세상을 다시 확인해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      옮기는 시점은 상태 개수보다 <strong>상태 하나에 딸린 코드가 몇 군데에 흩어졌느냐</strong>로 잡는다. 상태가 열 개라도 각각 두세 줄이면 <code>switch</code>가 낫고, 상태가 셋이라도 상태마다 진입·종료·피격·틱 처리가 따로 있으면 클래스가 낫다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>몬스터 FSM은 서버 틱 안에서 돈다.</strong> 몬스터의 판단은 클라이언트가 아니라 서버가 내리고, 그 판단은 틱마다 존이나 월드의 <a data-ref="server/threading-model">로직 스레드</a>에서 차례로 실행된다(<a href="../server/tick-loop.html">서버 틱 루프</a>). 그래서 FSM 코드는 그 스레드를 막지 않아야 한다. 경로 탐색이나 DB 조회처럼 오래 걸리는 일은 진입 동작에서 요청만 보내고, 결과는 다음 틱 이후 입력으로 받는다.
+      </li>
+      <li>
+        <strong>수천 마리를 매 틱 다 돌리지 않는다.</strong> 대기 상태 몬스터는 플레이어가 근처에 올 때까지 판정할 일이 거의 없다. 관심 영역에 플레이어가 없는 칸의 몬스터는 재우고, 칸에 플레이어가 들어오면 깨운다(<a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a>). 깨어 있는 몬스터도 판정 주기를 상태마다 달리 둔다. 공격 중은 매 틱, 대기는 몇 틱에 한 번이면 충분하다.
+      </li>
+      <li>
+        <strong>상태 안의 시간은 남은 틱이 아니라 끝나는 시각으로 적는다.</strong> "3초 뒤 귀환"을 매 틱 1씩 빼는 카운터로 두면 재운 동안 시간이 멈춘다. 진입할 때 끝나는 시각을 적어 두고 판정할 때 지금 시각과 비교하면 몇 틱을 건너뛰어도 맞다. 많으면 타이머 자료구조에 맡긴다(<a href="../data-structure/timer-structures.html">타이머 자료구조</a>).
+      </li>
+      <li>
+        <strong>저장할 상태와 버릴 상태를 나눈다.</strong> 퀘스트 진행이나 NPC 상점처럼 세션을 넘어 남는 FSM은 상태 값을 DB에 저장한다. 이때 <code>enum</code>의 정수값을 그대로 저장하면, 나중에 중간에 상태를 끼워 넣는 순간 저장된 값의 뜻이 바뀐다. 값을 명시해서 고정하거나 문자열 이름으로 저장한다. 반대로 전투 중 몬스터의 공격 상태 같은 것은 저장하지 않는다. 서버를 다시 띄우면 대기에서 시작하는 것이 맞다.
+      </li>
+      <li>
+        <strong>전이를 로그로 남긴다.</strong> "몬스터가 귀환하다 멈췄다" 같은 제보는 재현이 어렵다. 전이가 <code>ChangeState</code> 한 곳에서만 일어나게 해 두면 그 자리에 몬스터 ID, 이전·다음 상태, 원인 입력을 남기는 것만으로 대부분 추적된다. 클라이언트에 보낼 애니메이션 상태도 같은 자리에서 정해 보낸다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>C# 컴파일러가 만드는 상태 기계와는 다른 것이다.</strong> <code>async</code> 메서드와 반복자가 바뀐 결과도 상태 기계라고 부르지만, 그쪽은 "어디서 멈췄다가 이어 갈지"를 기억하는 장치다(<a href="../csharp/async-basics.html">async와 await의 실체</a>). 여기서 말하는 FSM은 게임 안의 행동을 무엇으로 적을지 정하는 설계 구조다.</li>
+      <li><strong>진입 동작 안에서 바로 다른 상태로 전이하지 않는다.</strong> <code>Enter</code>가 <code>ChangeState</code>를 부르면 앞 상태의 <code>Enter</code>가 끝나기 전에 다음 상태의 <code>Exit</code>가 불리는 식으로 순서가 꼬인다. 전이 요청을 변수에 담아 두고 <code>Tick</code> 끝에서 한 번 반영한다.</li>
+      <li><strong>공유하는 상태 객체에 몬스터별 값을 넣지 않는다.</strong> 상태 객체를 싱글턴으로 공유하는 순간 그 필드는 모든 몬스터의 값이 된다.</li>
+      <li><strong>상태가 많다고 바로 FSM을 버리지 않는다.</strong> 상태 수가 많은 것과 서로 무관한 축이 곱해져 많은 것은 다르다. 뒤쪽은 기계를 나눠서 줄일 수 있다(<a href="state-explosion.html">상태 폭발과 계층형 FSM</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

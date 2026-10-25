@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GOAP와 유틸리티 AI · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/ai-approaches">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="behavior-tree.html">비헤이비어 트리</a> · <a href="../algorithm/graph-algorithms.html">그래프 알고리즘</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      GOAP(Goal-Oriented Action Planning)는 캐릭터에게 목표와 행동 목록만 주고, 행동을 어떤 순서로 이을지는 실행 중에 <span class="blank">탐색으로 찾게</span> 한다. 행동마다 선행 조건, 효과, 비용을 붙여 두면 "장전해야 쏠 수 있다" 같은 순서가 저절로 이어진다. F.E.A.R.(2005)가 이 방식을 게임에 들여온 대표 사례다.
+    </p>
+    <p>
+      유틸리티 AI는 순서를 찾지 않는다. 지금 할 수 있는 행동 전부에 점수를 매기고 가장 높은 것을 고른다. 점수는 여러 고려 요소(체력, 거리, 탄약)를 0~1 사이 값으로 바꿔 곱하거나 합쳐서 낸다. 두 방식은 BT를 밀어내는 다음 세대가 아니다. 사람이 미리 적어 두는 것을 줄이고 실행 중에 정해지는 것을 늘리는 쪽으로 한 칸 더 간 선택지이고, 적어 둘 것이 몇 개 안 되는 문제에서는 얻을 것이 없다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>FSM은 어떻게 할지를 적고, 계획 수립은 무엇을 할 수 있는지를 적는다</h3>
+    <p>
+      <a href="game-fsm.html">게임 FSM</a>과 <a href="behavior-tree.html">비헤이비어 트리</a>는 모든 상황에서 무엇을 할지를 사람이 적는다. 그래서 절차적이다. GOAP는 "이런 행동들이 있고, 각각 이런 조건에서 쓸 수 있고, 쓰면 세계가 이렇게 바뀐다"만 적는다. 목표를 채우도록 행동을 잇는 일은 계획기(planner)가 실행 중에 한다. 그래서 선언적이다.
+    </p>
+    <p>
+      F.E.A.R.의 FSM에는 이동(Goto), 애니메이션 재생(Animate), 스마트 오브젝트 사용(UseSmartObject) 세 상태만 남았다. 어느 상태로 언제 가고 무엇을 인자로 줄지는 계획기가 정한다. 계획 수립이 FSM을 없앤 것이 아니라 FSM에서 판단을 떼어 간 것이다.
+    </p>
+
+    <h3>선행 조건과 효과가 맞물려 행동이 이어진다</h3>
+<pre><code class="language-csharp">// 세계 상태는 사실(fact)들의 집합이다
+// 목표: TargetDead = true
+var actions = new[]
+{
+    new Action("Attack",  pre: new() { ["WeaponLoaded"] = true, ["InRange"] = true },
+                          eff: new() { ["TargetDead"] = true },   cost: 1),
+    new Action("Reload",  pre: new() { ["HasAmmo"] = true },
+                          eff: new() { ["WeaponLoaded"] = true }, cost: 2),
+    new Action("MoveTo",  pre: new(),
+                          eff: new() { ["InRange"] = true },      cost: 3),
+    new Action("Grenade", pre: new() { ["InRange"] = true, ["HasGrenade"] = true },
+                          eff: new() { ["TargetDead"] = true },   cost: 5),   // 아껴 쓰라고 비용을 높였다
+};</code></pre>
+    <p>
+      이 모델은 학계의 STRIPS 계획 수립을 바탕으로 한다. 목표는 도달하고 싶은 세계 상태이고, 행동은 선행 조건과 효과로 정의된다. 선행 조건이 모두 맞아야 실행할 수 있고, 실행하면 효과만큼 세계 상태가 바뀐다. 공격의 선행 조건 "장전됨"과 재장전의 효과 "장전됨"이 같은 사실이므로, 계획기는 둘을 이을 수 있다는 것을 기계적으로 찾는다. 사람이 "공격 전에 장전 확인"이라는 전이를 적을 필요가 없다.
+    </p>
+
+    <h3>비용을 붙이면 A*로 가장 싼 계획을 찾는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="목표 상태에서 거꾸로 탐색한다. 적이 죽음을 만족하는 공격과 수류탄이 후보이고, 공격의 선행 조건을 채우는 재장전과 이동을 이어 비용 6의 계획을 고른다">
+        <defs><marker id="ai-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="96" width="140" height="48" rx="8"/>
+        <text class="f-text" x="90" y="116" text-anchor="middle">현재 세계</text>
+        <text class="f-sub" x="90" y="134" text-anchor="middle">멀다, 장전 안 됨</text>
+        <rect class="f-hit" x="210" y="40" width="110" height="40" rx="6"/>
+        <text class="f-text" x="265" y="65" text-anchor="middle">이동 (3)</text>
+        <rect class="f-hit" x="370" y="40" width="110" height="40" rx="6"/>
+        <text class="f-text" x="425" y="65" text-anchor="middle">재장전 (2)</text>
+        <rect class="f-hit" x="530" y="40" width="110" height="40" rx="6"/>
+        <text class="f-text" x="585" y="65" text-anchor="middle">공격 (1)</text>
+        <rect class="f-cell2" x="370" y="160" width="110" height="40" rx="6"/>
+        <text class="f-sub" x="425" y="185" text-anchor="middle">수류탄 (5)</text>
+        <rect class="f-cell2" x="210" y="160" width="110" height="40" rx="6"/>
+        <text class="f-sub" x="265" y="185" text-anchor="middle">이동 (3)</text>
+        <rect class="f-miss" x="660" y="96" width="90" height="48" rx="8"/>
+        <text class="f-on" x="705" y="125" text-anchor="middle">적이 죽음</text>
+        <line class="f-line" x1="160" y1="110" x2="206" y2="66" marker-end="url(#ai-a)"/>
+        <line class="f-line" x1="320" y1="60" x2="366" y2="60" marker-end="url(#ai-a)"/>
+        <line class="f-line" x1="480" y1="60" x2="526" y2="60" marker-end="url(#ai-a)"/>
+        <line class="f-line" x1="640" y1="64" x2="680" y2="94" marker-end="url(#ai-a)"/>
+        <line class="f-line f-dash" x1="160" y1="130" x2="206" y2="176" marker-end="url(#ai-a)"/>
+        <line class="f-line f-dash" x1="320" y1="180" x2="366" y2="180" marker-end="url(#ai-a)"/>
+        <line class="f-line f-dash" x1="480" y1="176" x2="680" y2="140" marker-end="url(#ai-a)"/>
+        <text class="f-strong" x="210" y="26">고른 계획: 이동 → 재장전 → 공격 = 비용 6</text>
+        <text class="f-sub" x="210" y="226">수류탄 계획: 이동 → 수류탄 = 비용 8. 더 비싸서 버린다</text>
+      </svg>
+      <figcaption>상자는 행동이고 괄호 안이 비용이다. 행동 하나를 지날 때마다 세계 상태가 바뀐다. 세계 상태를 노드로, 행동을 간선으로 보면 계획기는 길찾기와 같은 A*로 가장 싼 경로를 찾는 셈이다. 행동의 비용을 바꾸면 같은 목표를 다른 순서로 푸는 캐릭터가 나온다.</figcaption>
+    </figure>
+    <p>
+      행동마다 비용을 두면 계획 수립은 그래프의 최단 경로 문제가 된다. 길찾기에서는 내비게이션 메시의 면이 노드이고 인접한 면이 간선인데, 계획 수립에서는 세계 상태가 노드이고 그 상태를 바꾸는 행동이 간선이다. 같은 <a href="../algorithm/graph-algorithms.html">A* 탐색</a>을 다른 그래프에 쓰는 셈이다. 휴리스틱으로는 "목표 조건 중 아직 맞지 않는 사실의 수"를 흔히 쓴다.
+    </p>
+    <p>
+      F.E.A.R.의 계획기는 목표에서 거꾸로 탐색했다. 목표를 만족하는 효과를 가진 행동을 고르고, 그 행동의 선행 조건을 새 목표로 삼아 현재 세계에 닿을 때까지 거슬러 올라간다. 앞에서부터 찾으면 지금 할 수 있는 모든 행동이 후보가 되지만, 뒤에서부터 찾으면 목표와 상관있는 행동만 후보가 되어 탐색이 좁아진다.
+    </p>
+    <p>
+      실행 중에 계획이 어긋나면 그 자리에서 다시 계획한다. 문을 열려다 막히면 "문이 열린다"는 사실이 실패한 것으로 세계 상태에 남고, 다음 계획은 문을 걷어차거나 창문으로 넘어가는 행동을 고른다. 사람이 이런 대안을 미리 분기로 적지 않아도 된다.
+    </p>
+
+    <h3>유틸리티 AI는 가능한 행동 전부를 채점한다</h3>
+<pre><code class="language-csharp">// 고려 요소마다 0~1 점수를 내고 곱한다. 하나라도 0이면 그 행동은 0이다
+float ScoreHeal(Npc n) =&gt;
+      Curve.InverseQuadratic(n.Hp / n.MaxHp)       // 체력이 낮을수록 높다
+    * Curve.Step(n.Potions, threshold: 1)          // 물약이 없으면 0
+    * Curve.Linear(1 - n.ThreatNearby);            // 위협이 가까우면 낮다
+
+float ScoreAttack(Npc n) =&gt;
+      Curve.Linear(n.Target is null ? 0 : 1)
+    * Curve.Logistic(n.DistanceToTarget, mid: 8f);  // 가까울수록 높다</code></pre>
+    <p>
+      유틸리티는 "이 상황에서 이 행동이 얼마나 바람직한가"를 하나의 수로 나타낸 것이다. 서로 견줘야 하므로 모든 행동이 같은 눈금(대개 0~1)을 써야 한다. 고려 요소마다 원래 값(체력 비율, 거리)을 응답 곡선으로 0~1 점수로 바꾸고, 그것들을 곱해 행동의 점수를 낸다. 곱하므로 필수 조건이 하나라도 0이면 그 행동은 뽑히지 않는다. 고려 요소가 많을수록 곱이 작아지는 문제가 있어, Dave Mark의 IAUS(Infinite Axis Utility System)처럼 요소 수에 따라 보정하는 방식을 쓴다.
+    </p>
+    <p>
+      결과가 확실하지 않으면 결과별 점수에 일어날 확률을 곱해 더한 기대 효용을 쓴다. 그리고 유틸리티는 게임 안의 값 그 자체가 아니다. 같은 체력 30이라도 겁 많은 캐릭터에게는 도망칠 이유가 되고 광전사에게는 아니다. 응답 곡선이 바로 그 "얼마나 원하는가"를 정하는 자리이고, 곡선을 바꾸면 같은 코드로 성격이 다른 캐릭터가 나온다.
+    </p>
+
+    <h3>가장 높은 것만 고르면 기계처럼 보인다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>문제</th><th>보완</th></tr></thead>
+        <tbody>
+          <tr><td>같은 상황에서 언제나 같은 행동을 해 기계처럼 보인다</td><td>점수 상위 몇 개만 후보로 남기고 그 안에서 점수를 가중치 삼아 무작위로 고른다</td></tr>
+          <tr><td>모든 행동에서 가중 무작위로 고르면 가끔 엉뚱한 행동이 나온다</td><td>후보를 상위 몇 개나 최고 점수의 일정 비율 이상으로 제한한다</td></tr>
+          <tr><td>점수가 비슷한 두 행동 사이를 매 틱 오간다</td><td>지금 하는 행동에 가산점(관성)을 주거나, 고른 뒤 일정 시간 다시 고르지 않는다</td></tr>
+          <tr><td>전투 중에 한가한 행동이 끼어든다</td><td>행동을 묶음으로 나눠 묶음 우선순위를 둔다. 전투 묶음이 하나라도 유효하면 한가한 묶음은 채점하지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>사람이 적는 것</th><th>실행 중에 정해지는 것</th><th>맞는 문제</th></tr></thead>
+        <tbody>
+          <tr><td>게임 FSM</td><td>상태와 모든 전이</td><td>없다</td><td>상태가 적고 전이가 뻔하다</td></tr>
+          <tr><td>비헤이비어 트리</td><td>트리 모양과 자식 순서</td><td>어느 가지까지 실행되는지</td><td>우선순위가 분명한 행동 수십 개</td></tr>
+          <tr><td>GOAP</td><td>목표, 행동의 선행 조건·효과·비용</td><td>행동을 잇는 순서</td><td>같은 목표를 캐릭터마다 다른 수단으로 풀어야 한다</td></tr>
+          <tr><td>유틸리티 AI</td><td>고려 요소와 응답 곡선, 가중치</td><td>지금 가장 점수가 높은 행동</td><td>고려할 것이 많고 상황마다 순위가 바뀐다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      아래로 갈수록 사람이 적는 것이 줄고 실행 중에 정해지는 것이 는다. 그만큼 기획자가 결과를 예측하기 어려워진다. GOAP가 빛나는 것은 행동 집합만 바꿔서 다른 캐릭터를 만들 때다. 같은 목표를 받은 병사와 쥐가 있을 때, 쥐는 공격 행동이 없어 "적 제거" 계획을 세우지 못하고 순찰 목표로 내려간다. 개발 후반에 새 적을 넣을 때도 행동 몇 개를 붙이면 되고 전이를 고칠 곳이 없다. 유틸리티가 빛나는 것은 판단 하나가 여러 요소에 걸쳐 있을 때다. 이것을 BT 조건으로 적으면 조건 조합이 끝없이 늘어난다.
+    </p>
+    <p>
+      실제로는 섞어 쓴다. BT의 셀렉터 자리에 유틸리티로 자식을 고르는 노드를 두거나, GOAP 계획의 각 행동을 작은 FSM이 실행하는 식이다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>계획은 비싸므로 필요할 때만 세운다.</strong> GOAP 계획 한 번은 A* 탐색 한 번이다. 몬스터 수천 마리가 매 틱 계획을 세우면 서버 틱이 버티지 못한다(<a href="../server/tick-loop.html">서버 틱 루프</a>). 목표가 바뀌었거나 계획이 실패했을 때만 다시 세우고, 탐색 노드 수에 상한을 둬서 한 번의 계획이 틱 예산을 넘지 않게 한다. 같은 종류 몬스터가 같은 상황이면 계획을 재사용한다.
+      </li>
+      <li>
+        <strong>MMO의 일반 몬스터는 대부분 FSM과 BT다.</strong> 서버가 동시에 돌리는 개체 수가 많고, 기획자가 행동을 정확히 예측할 수 있어야 밸런스를 잡을 수 있기 때문이다. GOAP나 유틸리티는 보스, 동료 NPC, 적은 수의 정예 몬스터처럼 행동이 다양해야 하고 수가 적은 곳에 쓴다.
+      </li>
+      <li>
+        <strong>유틸리티 채점도 주기를 둔다.</strong> 비용은 행동 수 × 고려 요소 수다. 매 틱이 아니라 수백 ms마다, 또는 하던 행동이 끝날 때 다시 채점한다. 플레이어가 없는 구역의 개체는 채점을 멈춘다(<a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a>).
+      </li>
+      <li>
+        <strong>무작위 선택은 서버의 난수로 한다.</strong> 가중 무작위나 동점 처리에 쓰는 난수를 개체별 시드에서 뽑으면, 버그 제보가 왔을 때 같은 결정을 재현할 수 있다(<a href="../algorithm/random.html">난수 생성</a>).
+      </li>
+      <li>
+        <strong>왜 그 행동을 했는지를 남긴다.</strong> 유틸리티 AI는 "왜 힐을 안 했나"에 답하기 가장 어려운 방식이다. 개체를 골라 각 행동의 점수와 요소별 값을 로그로 볼 수 있게 해 둔다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>계획 수립이 FSM을 대신하지 않는다.</strong> F.E.A.R.도 계획이 정해지면 FSM이 그 계획을 차례로 실행했다. 판단 층과 실행 층이 나뉠 뿐이다.</li>
+      <li><strong>게임 수치를 그대로 점수로 쓰지 않는다.</strong> 체력 30이나 거리 8은 값이고, 얼마나 원하는지는 응답 곡선을 거쳐야 나온다. 눈금이 다른 값을 그대로 더하면 큰 단위의 값이 결정을 독차지한다.</li>
+      <li><strong>세계 상태를 너무 잘게 나누지 않는다.</strong> GOAP의 사실 수가 늘면 탐색할 상태 공간이 지수로 는다. 계획에 영향을 주는 사실만 남긴다.</li>
+      <li><strong>예측하기 어렵다는 것은 비용이다.</strong> 기획자가 "이 상황에서 이 몬스터는 이걸 한다"를 보장받고 싶다면 FSM이나 BT가 맞다. 실행 중에 정해지는 부분이 클수록 테스트할 상황도 는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>비헤이비어 트리 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/behavior-tree">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="game-fsm.html">게임 FSM</a> · <a href="state-explosion.html">상태 폭발과 계층형 FSM</a> · <a href="../data-structure/trees.html">트리와 이진 탐색 트리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      비헤이비어 트리(BT)는 할 일을 트리에 놓고, 노드가 돌려주는 결과로 다음에 실행할 가지를 고르는 구조다. 노드는 <span class="blank">성공(Success), 실패(Failure), 실행 중(Running)</span> 셋 중 하나를 돌려준다. 셀렉터는 자식 하나가 성공하면 멈추고, 시퀀스는 자식 하나가 실패하면 멈춘다. 자식은 왼쪽부터 보므로 <strong>왼쪽에 놓은 것이 높은 우선순위</strong>다.
+    </p>
+    <p>
+      FSM과 가장 큰 차이는 전이를 적지 않는다는 점이다. 상태마다 "어디로 갈 수 있는지"를 적는 대신 부모 노드가 자식의 결과를 보고 다음을 고르므로, 행동을 더할 때 가지 하나를 알맞은 자리에 붙이면 된다. 판단에 쓰는 값은 AI마다 하나씩 가진 키-값 저장소인 블랙보드에 둔다. 교과서 모델은 매 틱 루트부터 다시 내려가지만, Unreal 같은 실전 구현은 실행 중인 노드를 기억해 두고 블랙보드 값이 바뀌는 이벤트가 왔을 때만 필요한 가지를 중단시킨다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>노드는 셋 중 하나를 돌려준다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>예</th><th>하는 일</th></tr></thead>
+        <tbody>
+          <tr><td>컴포짓</td><td>셀렉터, 시퀀스, 병렬</td><td>자식을 정한 순서로 실행하고 그 결과로 자기 결과를 정한다</td></tr>
+          <tr><td>데코레이터</td><td>조건 검사, 반전, 반복, 쿨다운, 시간 제한</td><td>자식 하나를 감싸 들어갈지 정하거나 결과를 바꾼다</td></tr>
+          <tr><td>말단(리프)</td><td>이동, 공격, 대기, 조건 검사</td><td>실제 일을 한다. 한 틱에 끝나지 않으면 실행 중을 돌려준다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>실행 중</strong>이 있어야 BT가 시간이 걸리는 일을 다룬다. "목표 지점까지 이동"은 여러 틱이 걸린다. 이동 노드는 도착할 때까지 실행 중을 돌려주고, 부모도 그것을 그대로 위로 올린다. 다음 틱에는 트리가 이 노드를 다시 이어서 실행한다. 성공과 실패만으로 설명하면 왜 트리가 "지금 실행 중인 노드"를 기억해야 하는지를 설명할 수 없다.
+    </p>
+
+    <h3>셀렉터는 성공에서 멈추고 시퀀스는 실패에서 멈춘다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 290" role="img" aria-label="루트 셀렉터 아래 도망 시퀀스, 공격 시퀀스, 순찰이 있다. 도망 시퀀스는 체력이 낮은가 검사에서 실패해 멈추고, 공격 시퀀스의 적이 보이는가는 성공, 사거리로 이동은 실행 중이다">
+        <defs><marker id="bt-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-miss" x="320" y="20" width="120" height="36" rx="6"/>
+        <text class="f-on" x="380" y="43" text-anchor="middle">? 셀렉터</text>
+        <line class="f-line" x1="350" y1="56" x2="140" y2="98"/>
+        <line class="f-line" x1="380" y1="56" x2="380" y2="98"/>
+        <line class="f-line" x1="410" y1="56" x2="620" y2="98"/>
+        <rect class="f-hit" x="80" y="98" width="120" height="36" rx="6"/>
+        <text class="f-text" x="140" y="121" text-anchor="middle">→ 도망</text>
+        <rect class="f-hit" x="320" y="98" width="120" height="36" rx="6"/>
+        <text class="f-text" x="380" y="121" text-anchor="middle">→ 공격</text>
+        <rect class="f-cell2" x="560" y="98" width="120" height="36" rx="6"/>
+        <text class="f-sub" x="620" y="121" text-anchor="middle">순찰</text>
+        <line class="f-line" x1="120" y1="134" x2="80" y2="176"/>
+        <line class="f-line" x1="160" y1="134" x2="200" y2="176"/>
+        <rect class="f-hit" x="20" y="176" width="120" height="36" rx="6"/>
+        <text class="f-text" x="80" y="199" text-anchor="middle">체력 &lt; 20%?</text>
+        <rect class="f-cell2" x="150" y="176" width="110" height="36" rx="6"/>
+        <text class="f-sub" x="205" y="199" text-anchor="middle">거리 벌리기</text>
+        <text class="f-strong" x="80" y="232" text-anchor="middle">실패</text>
+        <line class="f-line" x1="350" y1="134" x2="330" y2="176"/>
+        <line class="f-line" x1="380" y1="134" x2="460" y2="176"/>
+        <line class="f-line" x1="410" y1="134" x2="590" y2="176"/>
+        <rect class="f-hit" x="275" y="176" width="110" height="36" rx="6"/>
+        <text class="f-text" x="330" y="199" text-anchor="middle">적이 보이나?</text>
+        <rect class="f-miss" x="400" y="176" width="120" height="36" rx="6"/>
+        <text class="f-on" x="460" y="199" text-anchor="middle">사거리로 이동</text>
+        <rect class="f-cell2" x="535" y="176" width="110" height="36" rx="6"/>
+        <text class="f-sub" x="590" y="199" text-anchor="middle">공격</text>
+        <text class="f-strong" x="330" y="232" text-anchor="middle">성공</text>
+        <text class="f-strong" x="460" y="232" text-anchor="middle">실행 중</text>
+        <text class="f-sub" x="20" y="264">도망 시퀀스는 첫 조건이 실패해 멈추고 실패를 올린다. 셀렉터는 다음 자식인 공격으로 간다</text>
+        <text class="f-sub" x="20" y="282">공격 시퀀스는 이동이 실행 중이라 실행 중을 올리고, 셀렉터도 실행 중이 된다. 순찰은 차례가 오지 않는다</text>
+      </svg>
+      <figcaption>?는 셀렉터, →는 시퀀스다. 칠한 노드가 이번 틱에 실제로 실행됐고, 짙게 칠한 것이 지금 실행 중인 노드다. 회색 노드는 앞 형제의 결과 때문에 차례가 오지 않았다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>노드</th><th>자식이 성공하면</th><th>자식이 실패하면</th><th>자식이 실행 중이면</th></tr></thead>
+        <tbody>
+          <tr><td>셀렉터(Selector, Fallback)</td><td>멈추고 성공</td><td>다음 자식으로. 모두 실패면 실패</td><td>멈추고 실행 중</td></tr>
+          <tr><td>시퀀스(Sequence)</td><td>다음 자식으로. 모두 성공이면 성공</td><td>멈추고 실패</td><td>멈추고 실행 중</td></tr>
+          <tr><td>병렬(Parallel)</td><td colspan="3">자식을 함께 돌린다. 몇 개가 성공·실패해야 끝나는지는 구현마다 정책이 다르다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      셀렉터는 "되는 것을 찾을 때까지 후보를 차례로 시도"하는 자리에, 시퀀스는 "앞 단계가 되어야 다음 단계로 가는 절차"에 쓴다. 루트를 셀렉터로 두고 위험한 상황 대응(도망)을 왼쪽에, 평소 행동(순찰)을 오른쪽 끝에 두는 것이 가장 흔한 모양이다. 조건이 맞지 않는 가지는 실패를 올려 다음 후보에게 차례를 넘긴다.
+    </p>
+
+    <h3>최소 구현</h3>
+<pre><code class="language-csharp">enum Status { Success, Failure, Running }
+
+abstract class Node
+{
+    public abstract Status Tick(Npc npc, Blackboard bb);
+}
+
+sealed class Sequence : Node
+{
+    readonly Node[] children;
+    public Sequence(params Node[] c) =&gt; children = c;
+
+    public override Status Tick(Npc npc, Blackboard bb)
+    {
+        int i = bb.GetCursor(this);              // 실행 중이던 자식 위치. 트리가 아니라 블랙보드에 둔다
+        for (; i &lt; children.Length; i++)
+        {
+            var s = children[i].Tick(npc, bb);
+            if (s == Status.Running) { bb.SetCursor(this, i); return Status.Running; }
+            if (s == Status.Failure) { bb.SetCursor(this, 0); return Status.Failure; }
+        }
+        bb.SetCursor(this, 0);
+        return Status.Success;
+    }
+}</code></pre>
+    <p>
+      노드 객체에는 진행 위치를 넣지 않았다. 트리는 몬스터 종류마다 하나만 만들어 모든 개체가 공유하고, 개체마다 다른 값(어디까지 실행했는지, 목표가 누구인지)은 블랙보드에 둔다. <a href="game-fsm.html">게임 FSM</a>에서 상태 객체를 공유할 때와 같은 규칙이다. 노드에 진행 위치를 두면 같은 트리를 쓰는 다른 몬스터가 그 위치를 덮어쓴다.
+    </p>
+    <p>
+      위 시퀀스는 실행 중이던 자식부터 이어 가므로 앞쪽 조건(적이 보이나?)을 다시 보지 않는다. 이것을 기억하는(memory) 시퀀스라고 한다. 매 틱 처음부터 다시 검사하는 반응형(reactive) 시퀀스도 있다. 반응형은 조건이 깨지면 바로 알아채지만 조건 검사를 매 틱 되풀이한다. 다음에 볼 데코레이터 중단이 이 둘 사이를 메운다.
+    </p>
+
+    <h3>블랙보드는 판단에 쓰는 값을 모은다</h3>
+    <p>
+      블랙보드는 AI 개체마다 하나씩 있는 키-값 저장소다. "현재 목표", "마지막으로 본 적의 위치", "귀환 지점" 같은 값을 노드끼리 주고받는 자리다. 조건 노드는 블랙보드를 읽고, 서비스나 감지 시스템이 블랙보드를 쓴다. 노드끼리 직접 참조하지 않으므로 가지를 옮기거나 바꿔 끼워도 다른 노드를 고칠 일이 없다. 대신 어떤 노드가 어떤 키를 쓰는지가 트리 모양에서 보이지 않으므로, 키 목록과 쓰는 쪽을 정해 두지 않으면 아무도 안 쓰는 키를 기다리는 조건이 생긴다.
+    </p>
+
+    <h3>데코레이터는 들어갈지 정하고, 도중에 중단시킨다</h3>
+    <p>
+      조건 데코레이터는 가지에 들어가기 전에 조건을 검사한다. 조건이 거짓이면 자식을 실행하지 않고 실패를 돌려준다. 여기까지는 조건 노드와 같다. 차이는 <strong>관찰자 중단(observer aborts)</strong>이다. Unreal의 조건 데코레이터는 자기가 보는 블랙보드 키를 구독해 두고, 값이 바뀌면 실행 중인 가지를 중단시킬 수 있다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Unreal 설정</th><th>언제 중단하나</th><th>쓰는 자리</th></tr></thead>
+        <tbody>
+          <tr><td>None</td><td>중단하지 않는다. 들어갈 때 한 번만 검사한다</td><td>한번 시작하면 끝까지 해야 하는 행동</td></tr>
+          <tr><td>Self</td><td>자기 가지가 실행 중일 때 조건이 거짓이 되면 자기 가지를 중단한다</td><td>"적이 보이는 동안 추적"에서 적을 놓치면 추적을 멈춘다</td></tr>
+          <tr><td>Lower Priority</td><td>자기보다 오른쪽(낮은 우선순위) 가지가 실행 중일 때 조건이 참이 되면 그쪽을 중단하고 자기 가지로 들어온다</td><td>순찰 중에 적을 발견하면 순찰을 끊고 공격으로</td></tr>
+          <tr><td>Both</td><td>위의 두 경우 모두</td><td>대부분의 전투 조건</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      이 구조 덕에 매 틱 루트부터 모든 조건을 다시 검사하지 않아도, 높은 우선순위 가지가 낮은 쪽을 끊고 들어올 수 있다. 중단된 노드는 정리할 기회(이동 취소, 예약한 스킬 해제)를 받아야 한다. 구현할 때 노드에 <code>Abort</code> 같은 정리 메서드를 두는 이유다.
+    </p>
+    <p>
+      서비스는 Unreal의 개념으로, 노드에 붙어 그 가지가 실행되는 동안 정한 간격마다 돈다. "가장 가까운 적을 다시 골라 블랙보드에 쓴다"처럼 매 틱 할 필요는 없지만 가지가 실행 중인 동안 계속 갱신해야 하는 일을 맡는다. 서비스가 쓴 값이 바뀌면 그 키를 보는 데코레이터가 중단을 일으키는 식으로 둘이 맞물린다.
+    </p>
+
+    <h3>실전 엔진은 매 틱 루트부터 다시 돌지 않는다</h3>
+    <p>
+      교과서의 BT는 매 틱 루트에서 시작해 조건을 모두 다시 판정하며 내려간다. 단순하고 반응이 빠르지만, 몬스터가 많으면 같은 조건을 매 틱 수백만 번 다시 계산하게 된다. Unreal의 BT는 이벤트 기반으로 동작한다. 실행 중인 태스크가 끝나거나, 관찰 중인 블랙보드 값이 바뀌어 데코레이터가 중단을 요청할 때만 트리를 다시 평가한다. 그사이의 틱에는 실행 중인 태스크만 돈다.
+    </p>
+    <p>
+      서버에서 직접 구현할 때도 같은 방향이 유리하다. 실행 중인 노드를 블랙보드에 기억하고, 틱에는 그 노드만 진행시키고, 루트부터의 재평가는 "태스크가 끝났다", "감지 결과가 바뀌었다", "정한 주기가 지났다" 같은 때로 제한한다.
+    </p>
+
+    <h3>FSM과 무엇이 다른가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇을 보나</th><th>FSM</th><th>비헤이비어 트리</th></tr></thead>
+        <tbody>
+          <tr><td>다음 행동을 정하는 곳</td><td>현재 상태에 적힌 전이</td><td>부모 노드가 자식의 결과를 보고 정한다</td></tr>
+          <tr><td>행동을 더할 때</td><td>새 상태로 오가는 전이를 관련된 상태마다 적는다</td><td>알맞은 자리에 가지를 붙인다</td></tr>
+          <tr><td>우선순위</td><td>전이 조건을 검사하는 순서</td><td>자식을 놓은 왼쪽·오른쪽 순서</td></tr>
+          <tr><td>가지의 재사용</td><td>상태는 기계 안의 한 자리에만 있다</td><td>"엄폐물로 이동" 같은 하위 트리를 여러 트리에 끼워 쓴다</td></tr>
+          <tr><td>디버깅</td><td>현재 상태 하나만 보면 된다</td><td>이번 틱에 어느 경로로 내려왔는지를 봐야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>트리는 데이터로 받아 서버가 로드한다.</strong> 기획자가 에디터에서 만든 트리 에셋(JSON 같은 형식)을 서버가 시작할 때 읽어 노드 객체로 만든다. 몬스터 종류마다 트리 하나를 공유하고, 개체는 블랙보드와 실행 중인 노드 정보만 가진다. 수천 마리가 있어도 트리는 종류 수만큼만 메모리에 있다. 로드할 때 없는 노드 이름이나 쓰는 쪽이 없는 블랙보드 키를 검사해 서버 시작을 막는 편이 런타임 중에 몬스터가 멈추는 것보다 낫다.
+       로드 시 검증과 교체는 다른 기획 데이터와 같은 방식으로 한다(<a href="data-driven.html">기획 데이터와 데이터 주도 설계</a>).</li>
+      <li>
+        <strong>판정 횟수를 줄이는 것이 성능의 대부분이다.</strong> BT 평가는 서버 틱 안에서 <a data-ref="server/threading-model">로직 스레드</a>가 돌린다(<a href="../server/tick-loop.html">서버 틱 루프</a>). 실행 중인 노드만 진행시키고 재평가는 이벤트나 주기로 묶는다. 몬스터를 여러 무리로 나눠 틱마다 한 무리씩 재평가하는 시간 분할(time slicing)을 쓰면 한 틱에 몰리지 않는다. 플레이어가 없는 칸의 몬스터는 트리를 아예 멈춘다(<a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a>).
+      </li>
+      <li>
+        <strong>오래 걸리는 일은 실행 중으로 기다린다.</strong> 경로 탐색을 다른 스레드에 맡겼다면 이동 노드는 결과가 올 때까지 실행 중을 돌려준다. 노드 안에서 결과를 기다리며 스레드를 막지 않는다.
+      </li>
+      <li>
+        <strong>트리를 <a data-ref="game-patterns/data-driven">핫 리로드</a>할 때는 실행 중인 개체를 처리해야 한다.</strong> 새 트리로 바꾸면 블랙보드에 기억한 "실행 중인 노드"가 새 트리에 없을 수 있다. 바꾸는 순간 모든 개체의 실행 중 노드를 중단시키고 루트부터 다시 시작하게 한다.
+      </li>
+      <li>
+        <strong>디버깅용으로 평가 경로를 남긴다.</strong> "이 몬스터가 왜 공격하지 않았나"는 그 틱에 어느 노드가 무엇을 돌려줬는지를 봐야 답이 나온다. 특정 개체만 골라 평가 경로를 로그로 남기는 스위치를 서버에 둔다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"매 틱 루트부터 다시 돈다"는 개념 모델이다.</strong> 실제 엔진이 그렇게 도는 것으로 알고 비용을 계산하면 틀린다. 반대로 직접 만든 BT가 정말 매 틱 루트부터 돈다면 그것이 서버 CPU의 큰 몫을 차지할 수 있다.</li>
+      <li><strong>중단된 노드를 정리하지 않으면 흔적이 남는다.</strong> 이동 요청, 예약한 공격, 잡아 둔 엄폐물 자리가 해제되지 않은 채 다른 가지로 넘어가면, 몬스터가 두 가지 일을 동시에 하는 것처럼 보인다.</li>
+      <li><strong>병렬 노드의 의미는 엔진마다 다르다.</strong> 모두 성공해야 끝나는지, 하나만 끝나면 나머지를 중단하는지가 다르다. Unreal의 Simple Parallel은 주 태스크 하나와 배경 하위 트리 하나만 가진다. 다른 엔진의 트리를 옮길 때 이 차이를 확인한다.</li>
+      <li><strong>이름이 같아도 같은 구조가 아닐 수 있다.</strong> Halo 2의 AI는 BT의 원조로 자주 소개되지만, 발표자는 그 구조를 행동 DAG라고 불렀다. 한 행동이 그래프의 여러 자리에 나올 수 있는 구조였다. Unity의 Behavior 패키지도 가지가 다시 합쳐지는 그래프를 허용한다. 순수한 트리를 생각하고 읽으면 어긋난다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

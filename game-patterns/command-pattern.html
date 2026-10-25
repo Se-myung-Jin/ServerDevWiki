@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>커맨드 패턴과 리플레이 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/command-pattern">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/tick-loop.html">서버 틱 루프</a> · <a href="../csharp/delegates-events.html">대리자와 이벤트</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      커맨드 패턴은 <span class="blank">메서드 호출을 객체로 만드는 것</span>이다. "누가, 무엇을, 어떤 값으로" 할지를 객체 하나에 담아 두면 그 호출을 큐에 넣고, 나중에 실행하고, 기록해 두고, 거꾸로 되돌릴 수 있다. 바로 부르는 호출로는 할 수 없는 일들이다.
+    </p>
+    <p>
+      기록한 커맨드를 처음 상태 위에서 다시 실행하면 리플레이가 된다. 상태를 프레임마다 통째로 적는 것보다 훨씬 적게 저장한다. 다만 리플레이는 <strong>같은 처음 상태와 같은 입력에서 비트 단위로 같은 결과가 나올 때(결정론)</strong>만 성립한다. 결정론이 하나라도 깨지면 재생은 몇 틱 뒤부터 원래와 다른 게임이 된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>호출이 객체가 되면 실행 시점과 대상을 나중에 정한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="입력과 AI가 같은 커맨드를 만들어 큐에 넣고, 틱이 꺼내 실행하며 기록에도 남긴다">
+        <defs><marker id="cm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="130" height="44" rx="6"/>
+        <text class="f-text" x="85" y="57" text-anchor="middle">클라이언트 패킷</text>
+        <rect class="f-box" x="20" y="100" width="130" height="44" rx="6"/>
+        <text class="f-text" x="85" y="127" text-anchor="middle">NPC AI</text>
+        <rect class="f-box" x="20" y="170" width="130" height="44" rx="6"/>
+        <text class="f-text" x="85" y="197" text-anchor="middle">GM 도구</text>
+        <line class="f-line" x1="150" y1="52" x2="222" y2="110" marker-end="url(#cm-a)"/>
+        <line class="f-line" x1="150" y1="122" x2="222" y2="122" marker-end="url(#cm-a)"/>
+        <line class="f-line" x1="150" y1="192" x2="222" y2="134" marker-end="url(#cm-a)"/>
+        <text class="f-strong" x="230" y="86">커맨드 큐</text>
+        <rect class="f-hit" x="230" y="100" width="56" height="44" rx="4"/>
+        <text class="f-text" x="258" y="127" text-anchor="middle">Move</text>
+        <rect class="f-hit" x="290" y="100" width="56" height="44" rx="4"/>
+        <text class="f-text" x="318" y="127" text-anchor="middle">Cast</text>
+        <rect class="f-hit" x="350" y="100" width="56" height="44" rx="4"/>
+        <text class="f-text" x="378" y="127" text-anchor="middle">Use</text>
+        <line class="f-line" x1="410" y1="122" x2="478" y2="122" marker-end="url(#cm-a)"/>
+        <rect class="f-box" x="484" y="96" width="120" height="52" rx="6"/>
+        <text class="f-text" x="544" y="118" text-anchor="middle">틱 N</text>
+        <text class="f-sub" x="544" y="136" text-anchor="middle">검증 후 실행</text>
+        <line class="f-line" x1="604" y1="112" x2="652" y2="70" marker-end="url(#cm-a)"/>
+        <line class="f-line" x1="604" y1="132" x2="652" y2="176" marker-end="url(#cm-a)"/>
+        <rect class="f-cell2" x="656" y="46" width="94" height="44" rx="4"/>
+        <text class="f-text" x="703" y="73" text-anchor="middle">월드 상태</text>
+        <rect class="f-cell2" x="656" y="154" width="94" height="44" rx="4"/>
+        <text class="f-text" x="703" y="181" text-anchor="middle">입력 기록</text>
+        <text class="f-sub" x="230" y="170">만드는 쪽과 실행하는 쪽 사이에</text>
+        <text class="f-sub" x="230" y="188">객체가 놓인다</text>
+      </svg>
+      <figcaption>사람의 입력, AI의 결정, 운영 도구의 지시가 모두 같은 커맨드 모양이 된다. 실행은 틱이 정한 시점에 한 스레드에서만 하고, 실행한 것을 그대로 기록에 남긴다.</figcaption>
+    </figure>
+    <p>
+      바로 <code>player.Move(dir)</code>를 부르면 호출은 그 자리에서 끝난다. <code>new MoveCommand(playerId, dir)</code>를 만들면 그 호출은 값이 되어 다른 곳으로 넘길 수 있다. 네트워크 스레드가 받은 요청을 커맨드로 만들어 큐에 넣고, 로직 스레드가 틱마다 꺼내 실행하는 구조가 그대로 이것이다. 만드는 쪽은 언제 실행될지 모르고, 실행하는 쪽은 누가 만들었는지 몰라도 된다.
+    </p>
+    <p>
+      실행 메서드가 대상을 인자로 받게 하면 같은 커맨드를 어떤 캐릭터에도 쓸 수 있다. 플레이어 입력과 AI가 만드는 지시가 같은 모양이 되므로, 자리를 비운 플레이어의 캐릭터에 AI를 붙이거나 봇으로 부하 시험을 돌리는 일이 커맨드를 만드는 쪽만 바꿔서 된다.
+    </p>
+<pre><code class="language-csharp">public interface ICommand
+{
+    int ActorId { get; }
+    bool Validate(World world);   // 서버가 먼저 판정한다
+    void Execute(World world);
+}
+
+public sealed record MoveCommand(int ActorId, Vector2 Dir) : ICommand
+{
+    public bool Validate(World w) =&gt; w.TryGet(ActorId, out var a) &amp;&amp; a.IsAlive &amp;&amp; Dir.LengthSquared() &lt;= 1.0001f;
+    public void Execute(World w) =&gt; w.Get(ActorId).Velocity = Dir * w.Get(ActorId).Speed;
+}
+
+// 로직 스레드의 틱
+while (queue.TryDequeue(out var cmd))
+{
+    if (!cmd.Validate(world)) { metrics.Rejected++; continue; }
+    cmd.Execute(world);
+    recorder.Write(world.Tick, cmd);
+}</code></pre>
+
+    <h3>되돌리려면 바뀐 것만 기억해 둔다</h3>
+    <p>
+      커맨드에 <code>Undo</code>를 붙이면 되돌리기가 된다. 유닛을 옮기는 커맨드라면 실행할 때 옮기기 전 위치를 자기 안에 담아 두었다가, 되돌릴 때 그 값으로 돌려놓는다. 객체 상태를 통째로 복사해 두지 않는다. 커맨드는 대개 상태의 작은 부분만 고치므로, 바꾼 값만 담는 편이 훨씬 싸다.
+    </p>
+    <p>
+      여러 단계를 되돌리려면 실행한 커맨드를 목록에 쌓고 현재 위치를 함께 둔다. 되돌리기는 현재 위치의 커맨드를 되돌리고 위치를 한 칸 뒤로 옮긴다. 다시 하기는 위치를 앞으로 옮기고 그 커맨드를 다시 실행한다. 되돌린 상태에서 새 커맨드를 실행하면 위치 뒤에 남은 것은 버린다.
+    </p>
+    <p>
+      여기서 커맨드는 두 종류로 갈린다. 버튼에 걸어 두는 커맨드는 "무엇을 할 수 있는가"를 나타내므로 하나를 만들어 두고 계속 쓴다. 되돌리기용 커맨드는 "그때 일어난 한 번의 동작"이므로 실행할 때마다 새로 만들고 그 안에 되돌릴 값을 담는다.
+    </p>
+
+    <h3>리플레이는 상태 대신 커맨드를 적는다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇을 적나</th><th>저장량</th><th>되살리는 법</th><th>깨지는 조건</th></tr></thead>
+        <tbody>
+          <tr><td>틱마다 상태 전체</td><td>엔티티 수 × 틱 수. 길어질수록 크게 는다</td><td>원하는 틱의 상태를 바로 읽는다</td><td>거의 없다. 저장 공간이 문제다</td></tr>
+          <tr><td>처음 상태 + 틱별 커맨드</td><td>입력 수만큼. 상태보다 몇 자릿수 작다</td><td>처음부터 시뮬레이션을 다시 돌린다</td><td>결정론이 하나라도 어긋나면 갈라진다</td></tr>
+          <tr><td>주기적 상태 + 사이의 커맨드</td><td>둘 사이</td><td>가까운 상태에서 시작해 커맨드를 돌린다</td><td>갈라져도 다음 상태 지점에서 다시 맞춰진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      재생은 특별한 경로가 아니다. 평소 시뮬레이션을 돌리면서 네트워크 대신 기록에서 커맨드를 꺼내 같은 틱에 넣는 것뿐이다. 그래서 재생이 원래와 똑같이 흐르는지가 곧 시뮬레이션이 결정론적인지를 확인하는 시험이 된다. 셋째 방식처럼 상태를 가끔 함께 적으면 중간부터 볼 수 있고, 원래 상태의 해시와 재생 중 상태의 해시를 비교해 어느 틱에서 갈라졌는지 찾을 수 있다.
+    </p>
+
+    <h3>결정론을 깨는 것들</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>원인</th><th>왜 갈라지나</th><th>막는 법</th></tr></thead>
+        <tbody>
+          <tr><td>가변 시간 간격</td><td><code>dt</code>가 매번 다르면 같은 입력이라도 적분 결과가 달라진다</td><td>고정 틱으로 시뮬레이션한다(<a href="../server/tick-loop.html">서버 틱 루프</a>)</td></tr>
+          <tr><td>난수</td><td>시드나 뽑는 순서가 다르면 다른 값이 나온다</td><td>시드를 기록하고, 시스템마다 난수 생성기를 따로 둔다(<a href="../algorithm/random.html">난수 생성</a>)</td></tr>
+          <tr><td>부동소수점</td><td>연산 순서, FMA 사용, CPU·컴파일러·<a data-ref="csharp/jit-aot">JIT</a>에 따라 마지막 비트가 다를 수 있다</td><td>같은 바이너리·같은 플랫폼에서만 재생하거나 고정소수점을 쓴다(<a href="../computer-architecture/number-representation.html">수의 표현</a>)</td></tr>
+          <tr><td>컬렉션 순회 순서</td><td><code>Dictionary</code>·<code>HashSet</code> 순서는 삽입·삭제 이력에 따라 달라지고 보장되지 않는다</td><td>순서가 결과에 닿으면 ID로 정렬해 돈다</td></tr>
+          <tr><td>현재 시각, 스레드 경쟁</td><td><a data-ref="operating-system/clocks-timers">벽시계</a> 값이나 먼저 끝난 스레드가 결과에 들어간다</td><td>시각은 틱 번호로, 병렬 결과는 정해진 순서로 합친다</td></tr>
+          <tr><td>외부 입력</td><td>DB 조회 결과, 다른 서버 응답이 기록에 없다</td><td>외부에서 들어온 값도 커맨드처럼 기록한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>결정론을 맞출 수 있고 기록을 오래 남긴다</td><td>처음 상태 + 커맨드</td><td>가장 작다. RTS·격투 게임 리플레이가 이 방식이다</td></tr>
+          <tr><td>결정론을 장담할 수 없다(물리 엔진, 여러 플랫폼)</td><td>상태 스냅샷, 또는 스냅샷 + 커맨드</td><td>갈라져도 스냅샷에서 다시 맞춰진다</td></tr>
+          <tr><td>버그 재현이 목적이다</td><td>틱 단위 커맨드 + 주기적 상태 해시</td><td>갈라진 첫 틱을 찾을 수 있다</td></tr>
+          <tr><td>호출을 미룰 필요도 기록할 필요도 없다</td><td>그냥 메서드 호출</td><td>객체 할당과 간접 호출만 늘어난다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>요청은 커맨드로 받아 틱에서 실행한다.</strong> I/O 스레드가 패킷을 파싱해 커맨드를 만들고 존의 큐에 넣는다. 월드 상태는 로직 스레드만 고치므로 락이 필요 없다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>). 큐가 길어지면 받는 쪽을 늦추는 장치도 커맨드 큐 앞에 둔다(<a href="../server/backpressure.html">백프레셔</a>).
+      </li>
+      <li>
+        <strong>실행 전에 서버가 검증한다.</strong> 커맨드는 "하겠다"는 요청이지 결과가 아니다. 쿨다운, 사거리, 자원, 생존 여부를 서버 상태로 다시 확인하고 통과한 것만 실행한다. 기록은 무슨 일이 있었는지를 남길 뿐, 그 일이 유효했는지를 정하지 않는다(<a data-ref="security/game-security">게임 보안</a>).
+      </li>
+      <li>
+        <strong>입력 로그 재생으로 버그를 다시 일으킨다.</strong> 문제가 난 존의 시작 상태와 그 뒤 커맨드를 남겨 두면 개발 장비에서 같은 틱을 다시 돌려 볼 수 있다. 드물게 나는 크래시나 아이템 복제처럼 재현이 어려운 버그에 특히 쓸모가 있다. 시각이나 외부 응답 같은 값까지 커맨드로 기록해야 재생이 맞는다.
+      </li>
+      <li>
+        <strong>C#에서는 할당을 줄인다.</strong> 커맨드마다 클래스를 <code>new</code>하면 초당 수만 개가 GC로 간다(<a href="../csharp/gc-basics.html">GC 기초</a>). 자주 오는 커맨드는 구조체로 만들어 종류 번호와 함께 <a data-ref="data-structure/stack-queue">링 버퍼</a>에 담거나, 풀에서 꺼내 쓴다(<a href="../csharp/struct-design.html">struct 설계</a>).
+      </li>
+      <li>
+        <strong>결정론적 락스텝은 커맨드만 주고받는다.</strong> 모든 참가자가 같은 커맨드로 같은 시뮬레이션을 돌리면 상태를 보낼 필요가 없다. 대신 결정론이 깨지면 바로 갈라진다. 서버가 상태를 보내는 방식과의 비교는 <a href="state-sync.html">스냅샷과 상태 동기화</a>에서 다룬다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>되돌리기를 서버 롤백으로 착각하지 않는다.</strong> 커맨드의 <code>Undo</code>는 편집기나 턴제 게임의 되돌리기에 쓴다. 다른 플레이어에게 이미 보인 결과, DB에 쓴 결과, 다른 서버에 보낸 메시지는 <code>Undo</code>로 되돌아오지 않는다.</li>
+      <li><strong>커맨드 안에 객체 참조를 담지 않는다.</strong> 큐에서 기다리는 동안 대상이 죽거나 다른 존으로 갈 수 있다. ID를 담고 실행할 때 다시 찾는다. 기록도 ID여야 다른 프로세스에서 재생된다.</li>
+      <li><strong>기록 형식에 버전을 붙인다.</strong> 커맨드의 필드나 실행 규칙이 바뀌면 예전 기록은 새 코드에서 다르게 재생된다. 재생하려면 기록을 만든 빌드가 필요하다는 점을 전제로 둔다.</li>
+      <li><strong>모든 호출을 커맨드로 만들지 않는다.</strong> 미루거나, 기록하거나, 되돌릴 필요가 없는 호출을 커맨드로 감싸면 코드만 길어진다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

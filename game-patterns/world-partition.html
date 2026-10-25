@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>월드 분할: 존·채널·인스턴스 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/world-partition">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/threading-model.html">게임 서버 스레딩 모델</a> · <a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      서버 한 대가 감당할 수 있는 플레이어 수에는 한계가 있다. 그래서 월드를 조각으로 나눠 여러 서버나 여러 로직 스레드에 맡긴다. 나누는 축은 둘이다. <strong>공간을 자르는 것</strong>(존, 심리스 셀)과 <strong>같은 공간을 여러 벌 띄우는 것</strong>(채널, 인스턴스)이다.
+    </p>
+    <p>
+      어떻게 나누든 조각 사이를 오가는 순간이 생긴다. 이때 캐릭터의 상태를 한 서버에서 다른 서버로 넘겨야 하고, <span class="blank">넘기는 동안 두 서버가 같은 캐릭터를 동시에 갖지 않게</span> 하는 것이 핵심이다. 이 인계가 어긋나면 캐릭터가 사라지거나 아이템이 복제된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>공간을 자르거나, 복사본을 띄운다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="존 분할은 맵마다 서버를 두고 로딩으로 넘어가고, 심리스는 한 월드를 여러 서버가 경계 띠를 겹쳐 나누고, 채널은 같은 맵을 여러 벌 띄우고, 인스턴스는 파티마다 새로 만든다">
+        <defs><marker id="wp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+
+        <text class="f-strong" x="20" y="30">존 분할</text>
+        <rect class="f-cell2" x="20" y="60" width="70" height="90" rx="6"/>
+        <text class="f-text" x="55" y="102" text-anchor="middle">맵 A</text>
+        <text class="f-sub" x="55" y="122" text-anchor="middle">서버 1</text>
+        <rect class="f-cell2" x="115" y="60" width="70" height="90" rx="6"/>
+        <text class="f-text" x="150" y="102" text-anchor="middle">맵 B</text>
+        <text class="f-sub" x="150" y="122" text-anchor="middle">서버 2</text>
+        <line class="f-line f-dash" x1="90" y1="105" x2="113" y2="105" marker-end="url(#wp-a)"/>
+        <text class="f-sub" x="102" y="52" text-anchor="middle">로딩</text>
+        <text class="f-sub" x="20" y="200">맵마다 서버를 둔다</text>
+        <text class="f-sub" x="20" y="218">넘어갈 때 로딩한다</text>
+
+        <text class="f-strong" x="215" y="30">심리스</text>
+        <rect class="f-cell2" x="215" y="60" width="160" height="90" rx="6"/>
+        <rect class="f-hit" x="280" y="60" width="30" height="90"/>
+        <line class="f-line" x1="295" y1="60" x2="295" y2="150"/>
+        <text class="f-sub" x="247" y="110" text-anchor="middle">서버 1</text>
+        <text class="f-sub" x="343" y="110" text-anchor="middle">서버 2</text>
+        <text class="f-sub" x="295" y="170" text-anchor="middle">경계 띠</text>
+        <text class="f-sub" x="215" y="200">한 월드를 여러 서버가</text>
+        <text class="f-sub" x="215" y="218">경계 띠는 양쪽이 안다</text>
+
+        <text class="f-strong" x="405" y="30">채널</text>
+        <rect class="f-cell2" x="435" y="56" width="130" height="70" rx="6"/>
+        <rect class="f-cell2" x="420" y="68" width="130" height="70" rx="6"/>
+        <rect class="f-hit" x="405" y="80" width="130" height="70" rx="6"/>
+        <text class="f-text" x="470" y="120" text-anchor="middle">맵 A · 채널 1</text>
+        <text class="f-sub" x="557" y="72" text-anchor="middle">3</text>
+        <text class="f-sub" x="542" y="84" text-anchor="middle">2</text>
+        <text class="f-sub" x="405" y="200">같은 맵을 여러 벌</text>
+        <text class="f-sub" x="405" y="218">채널끼리는 안 만난다</text>
+
+        <text class="f-strong" x="590" y="30">인스턴스</text>
+        <rect class="f-cell2" x="590" y="60" width="70" height="90" rx="6"/>
+        <text class="f-text" x="625" y="102" text-anchor="middle">필드</text>
+        <text class="f-sub" x="625" y="122" text-anchor="middle">입구</text>
+        <rect class="f-hit" x="685" y="56" width="60" height="26" rx="4"/>
+        <text class="f-sub" x="715" y="74" text-anchor="middle">#81</text>
+        <rect class="f-hit" x="685" y="94" width="60" height="26" rx="4"/>
+        <text class="f-sub" x="715" y="112" text-anchor="middle">#82</text>
+        <rect class="f-hit" x="685" y="132" width="60" height="26" rx="4"/>
+        <text class="f-sub" x="715" y="150" text-anchor="middle">#83</text>
+        <line class="f-line f-dash" x1="660" y1="105" x2="683" y2="70" marker-end="url(#wp-a)"/>
+        <line class="f-line f-dash" x1="660" y1="107" x2="683" y2="107" marker-end="url(#wp-a)"/>
+        <line class="f-line f-dash" x1="660" y1="109" x2="683" y2="144" marker-end="url(#wp-a)"/>
+        <text class="f-sub" x="590" y="200">파티마다 새로 만들고</text>
+        <text class="f-sub" x="590" y="218">끝나면 지운다</text>
+      </svg>
+      <figcaption>왼쪽 둘은 공간을 자른다. 오른쪽 둘은 같은 공간의 복사본을 띄운다. 실제 게임은 이 넷을 섞는다. 필드는 존이나 심리스로 나누고, 붐비는 마을은 채널로 복사하고, 던전은 인스턴스로 만든다.</figcaption>
+    </figure>
+
+    <h3>존 분할은 넘어가는 순간에 로딩을 둔다</h3>
+    <p>
+      가장 오래된 방식이다. 맵 하나, 또는 맵 몇 개를 한 서버(또는 한 로직 스레드)가 맡는다. 서버 경계가 곧 맵 경계라서, 한 존 안의 판정은 그 존의 서버 혼자 끝낼 수 있다. 존마다 로직 스레드 하나가 상태를 고치면 존 안에서는 락이 필요 없다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).
+    </p>
+    <p>
+      맵 사이를 넘어갈 때는 포털이나 로딩 화면이 있다. 이 로딩 시간이 캐릭터를 다른 서버로 넘길 시간을 벌어 준다. 대신 존의 인기 차이가 그대로 서버 부하 차이가 된다. 사냥터가 좋은 존 하나에 사람이 몰리면 그 서버만 바쁘다.
+    </p>
+
+    <h3>심리스는 경계 처리를 서버가 떠안는다</h3>
+    <p>
+      로딩 없이 이어지는 월드는 공간을 격자 셀로 나누고, 셀 묶음을 서버마다 맡긴다. 경계 근처의 대상은 이웃 서버에 읽기 전용 사본(고스트, 프록시)으로 복제하고, 경계를 넘는 순간 소유권을 넘긴다. 이 복제와 인계는 <a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a>에서 다뤘다. 여기서 더할 것은 비용이다. 경계 근처에서 벌어지는 전투는 두 서버가 서로의 판정 결과를 기다려야 하고, 셀 크기를 잘못 잡으면 경계를 넘는 이동이 잦아진다.
+    </p>
+
+    <h3>채널은 같은 맵을 여러 벌 띄운다</h3>
+    <p>
+      채널은 공간을 자르지 않는다. 같은 맵을 여러 벌 띄우고, 한 벌의 인원이 상한에 닿으면 새 플레이어를 다른 채널로 보낸다. 채널끼리는 만나지 않으므로 경계 처리가 없다. 서버를 늘리면 채널 수가 늘어날 뿐이라 확장이 가장 쉽다.
+    </p>
+    <p>
+      치르는 것은 경험이다. 친구와 다른 채널에 들어가면 같은 마을에 있어도 서로 보이지 않는다. 그래서 채널 이동 기능과 "파티원이 있는 채널로 가기"가 함께 붙는다. 채널을 너무 잘게 나누면 월드가 텅 비어 보인다. 인원이 붐빌 때만 자동으로 복사본을 늘리는 방식은 흔히 레이어라고 부른다. 퀘스트 진행에 따라 같은 장소의 다른 버전을 보여 주는 것은 페이징(phasing)이라고 부르는데, 메모리 페이징과는 상관없는 말이다.
+    </p>
+
+    <h3>인스턴스는 필요할 때 만들고 끝나면 지운다</h3>
+    <p>
+      던전, 전장, 배틀로얄 한 판처럼 정해진 사람들끼리만 쓰는 공간은 요청이 올 때 새로 만든다. 수명은 대략 이렇게 흐른다.
+    </p>
+    <ol>
+      <li><strong>생성:</strong> 파티장이 입장을 요청하면 인스턴스 관리자가 부하가 낮은 서버를 골라 새 인스턴스를 만든다. 지형과 기획 데이터는 서버 안에서 공유하고, 몬스터와 진행 상태만 새로 만든다.</li>
+      <li><strong>입장과 진행:</strong> 파티원들을 그 인스턴스로 넘긴다. 이 순간도 아래의 존 이동 인계와 같은 절차를 밟는다.</li>
+      <li><strong>종료 조건:</strong> 보스 처치, 제한 시간 초과, 전원 퇴장 중 하나가 오면 끝낼 준비를 한다.</li>
+      <li><strong>유예와 회수:</strong> 전원이 나가도 바로 지우지 않고 몇 분 기다린다. 접속이 끊겼던 파티원이 재접속해 돌아올 수 있어야 하기 때문이다. 유예가 지나면 메모리를 돌려준다. 자주 만들고 지우는 인스턴스 객체는 풀로 돌려 다시 쓰기도 한다(<a href="object-pool.html">오브젝트 풀</a>).</li>
+    </ol>
+    <p>
+      재접속 복귀를 위해 캐릭터 저장 데이터에 "들어가 있던 인스턴스 ID와 그 인스턴스의 만료 시각"을 함께 적는다. 로그인할 때 그 인스턴스가 아직 살아 있으면 그리로 보내고, 없으면 입구나 마지막 필드 위치로 보낸다.
+    </p>
+
+    <h3>존 이동 인계: 한 순간에 주인은 하나</h3>
+    <p>
+      캐릭터를 다른 존 서버로 넘기는 일은 단순한 복사가 아니다. 넘기는 사이 어느 순간에도 두 서버가 같은 캐릭터에 쓰기를 하면 안 되고, 어느 서버도 갖지 않은 채로 끝나서도 안 된다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 360" role="img" aria-label="원래 존이 캐릭터를 잠그고 버전을 올려 저장한 뒤 대상 존에 자리를 예약하고, 클라이언트가 토큰을 들고 대상 존에 접속하면 대상 존이 그 버전을 읽어 소유권을 가져가고 원래 존은 캐릭터를 내린다">
+        <defs><marker id="wp-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-cell2" x="30" y="12" width="120" height="30" rx="6"/>
+        <text class="f-text" x="90" y="32" text-anchor="middle">클라이언트</text>
+        <rect class="f-hit" x="230" y="12" width="120" height="30" rx="6"/>
+        <text class="f-text" x="290" y="32" text-anchor="middle">원래 존</text>
+        <rect class="f-cell2" x="430" y="12" width="120" height="30" rx="6"/>
+        <text class="f-text" x="490" y="32" text-anchor="middle">대상 존</text>
+        <rect class="f-cell2" x="620" y="12" width="120" height="30" rx="6"/>
+        <text class="f-text" x="680" y="32" text-anchor="middle">저장소</text>
+        <line class="f-grid" x1="90" y1="42" x2="90" y2="325"/>
+        <line class="f-grid" x1="290" y1="42" x2="290" y2="325"/>
+        <line class="f-grid" x1="490" y1="42" x2="490" y2="325"/>
+        <line class="f-grid" x1="680" y1="42" x2="680" y2="325"/>
+
+        <text class="f-sub" x="100" y="64">① 포털 진입</text>
+        <line class="f-line" x1="90" y1="70" x2="288" y2="70" marker-end="url(#wp-b)"/>
+        <text class="f-strong" x="300" y="100">② 잠금, 입력 처리 멈춤</text>
+        <text class="f-sub" x="300" y="124">③ 상태 저장 (버전 8)</text>
+        <line class="f-line" x1="290" y1="130" x2="678" y2="130" marker-end="url(#wp-b)"/>
+        <text class="f-sub" x="300" y="154">④ 자리 예약</text>
+        <line class="f-line" x1="290" y1="160" x2="488" y2="160" marker-end="url(#wp-b)"/>
+        <text class="f-sub" x="480" y="184" text-anchor="end">⑤ 입장 토큰</text>
+        <line class="f-line" x1="490" y1="190" x2="292" y2="190" marker-end="url(#wp-b)"/>
+        <text class="f-sub" x="280" y="214" text-anchor="end">⑥ 주소 + 토큰</text>
+        <line class="f-line" x1="290" y1="220" x2="92" y2="220" marker-end="url(#wp-b)"/>
+        <text class="f-sub" x="100" y="244">⑦ 접속 + 토큰</text>
+        <line class="f-line" x1="90" y1="250" x2="488" y2="250" marker-end="url(#wp-b)"/>
+        <text class="f-sub" x="500" y="274">⑧ 버전 8로 소유권</text>
+        <line class="f-line" x1="490" y1="280" x2="678" y2="280" marker-end="url(#wp-b)"/>
+        <text class="f-strong" x="300" y="310">⑨ 메모리에서 내림</text>
+        <text class="f-sub" x="30" y="350">②부터 ⑧까지 캐릭터는 어느 서버에서도 움직이지 않는다. 이 구간이 로딩 화면 뒤에 숨는다</text>
+      </svg>
+      <figcaption>원래 존은 캐릭터를 잠근 뒤 저장하고, 저장한 버전을 대상 존에 알린다. 대상 존은 저장소의 버전이 그 번호와 같을 때만 소유권을 가져간다. 원래 존이 그 뒤에 늦게 저장을 시도해도 버전이 맞지 않아 거부된다.</figcaption>
+    </figure>
+    <p>
+      이 절차가 막는 사고는 둘이다. 하나는 <strong>복제</strong>다. 원래 존이 캐릭터를 넘긴 뒤에도 거래나 우편 처리를 계속하고 나중에 저장하면, 대상 존이 가진 캐릭터와 다른 상태가 저장소에 덮어써진다. 잠금으로 그 사이의 변경을 막고, 버전 비교로 늦게 도착한 옛 저장을 거부한다. 다른 하나는 <strong>유실</strong>이다. 클라이언트가 대상 존에 끝내 오지 않으면 예약은 시간이 지나 사라지고, 캐릭터는 저장된 상태 그대로 다음 로그인 때 원래 존이나 대상 존 입구로 들어간다. 원래 존이 저장 직후 죽어도 저장소에 "이동 중, 대상 존, 버전"이 남아 있어 같은 방식으로 복구한다.
+    </p>
+    <p>
+      여러 서버에 걸친 단계를 하나씩 확정하고 실패하면 되돌리는 방식은 분산 트랜잭션의 일반 문제와 같다(<a data-ref="architecture/saga">사가</a>). 어떤 상태를 서버 메모리에만 두고 어떤 상태를 저장소로 보내는지는 <a data-ref="architecture/session-vs-persistent">세션 상태와 영속 상태</a>에서 다룬다.
+    </p>
+
+    <h3>한곳에 몰리면</h3>
+    <p>
+      공성전, 월드 보스, 이벤트 NPC 앞처럼 사람이 한 지점에 몰리는 곳을 핫스팟이라 부른다. 나누는 방식이 무엇이든 핫스팟은 조각 하나에 부하를 몰아넣는다. 관심 영역 안의 인원이 늘면 브로드캐스트가 인원의 제곱으로 늘기 때문에, 사람 수가 두 배면 부하는 네 배에 가깝다.
+    </p>
+    <ul>
+      <li><strong>들어오는 사람을 제한한다.</strong> 존이나 인스턴스에 인원 상한을 두고 넘으면 대기열이나 다른 채널로 보낸다. 가장 확실한 방법이다.</li>
+      <li><strong>복사본을 늘린다.</strong> 레이어나 채널을 자동으로 하나 더 띄운다. 모두가 한자리에 모여야 하는 콘텐츠에는 쓸 수 없다.</li>
+      <li><strong>나눈 경계를 옮긴다.</strong> 심리스 월드에서 바쁜 셀을 쪼개 다른 서버에 넘긴다. 다시 나누는 것 자체가 많은 엔티티의 인계라서 자주 할 수는 없다.</li>
+      <li><strong>할 일을 줄인다.</strong> 관심 영역 반경과 전송 빈도를 줄이고, 그래도 모자라면 시뮬레이션 자체를 늦춘다. EVE Online은 붐비는 성계의 게임 시간을 느리게 흘려(time dilation) 서버가 밀리지 않게 한다.</li>
+      <li><strong>예정된 핫스팟은 미리 자리를 잡는다.</strong> 공성전처럼 시간과 장소를 아는 이벤트는 그 존을 여유 있는 전용 서버로 미리 옮겨 둔다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>얻는 것</th><th>치르는 것</th><th>맞는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>서버 하나에 월드 하나</td><td>모두가 만나고 구현이 단순하다</td><td>서버 한 대의 한계가 곧 월드 인원 상한이다</td><td>소규모 월드, 방 단위 세션 게임</td></tr>
+          <tr><td>존 분할</td><td>판정이 존 안에서 끝난다</td><td>이동 때 로딩, 인기 존에 부하가 쏠린다</td><td>전통적인 MMO 필드</td></tr>
+          <tr><td>심리스</td><td>끊김 없는 이동</td><td>경계 복제와 인계, 경계 전투의 판정 비용</td><td>오픈 월드 MMO</td></tr>
+          <tr><td>채널</td><td>확장이 쉽고 경계 처리가 없다</td><td>친구와 갈라지고 월드가 덜 붐벼 보인다</td><td>마을, 인기 사냥터</td></tr>
+          <tr><td>인스턴스</td><td>정해진 사람끼리의 콘텐츠, 끝나면 자원을 돌려받는다</td><td>생성·회수 관리, 재접속 복귀 처리</td><td>던전, 전장, 매치 한 판</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      서버를 몇 대 띄우고 어떤 조각을 어느 프로세스에 둘지는 이 위에서 정한다. 서버를 늘리는 일반 원칙은 <a href="../architecture/scaling.html">확장과 샤딩</a>에서, 로그인·월드·존 서버 같은 프로세스 배치는 <a data-ref="architecture/server-topology">서버 토폴로지</a>에서 다룬다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>장르가 기본 구조를 정한다.</strong> MMO는 필드를 존이나 심리스로 나누고, 마을과 인기 사냥터에 채널을 더하고, 던전을 인스턴스로 만든다. 배틀로얄과 대전 게임은 매치 한 판이 인스턴스 하나다. 로비에서 매칭한 뒤 전용 서버 프로세스나 그 안의 방 하나를 배정한다. 로비와 인스턴스만 있는 MO(멀티플레이 온라인) 구조는 월드 전체가 인스턴스의 모음이다.
+      </li>
+      <li>
+        <strong>존 하나는 로직 스레드 하나에 묶는다.</strong> 서버 프로세스 하나에 존 여러 개를 두더라도 각 존의 틱은 한 스레드가 돌린다. 존 이동은 같은 프로세스 안이어도 다른 스레드의 큐로 넘기는 메시지가 된다(<a href="../server/tick-loop.html">서버 틱 루프</a>).
+      </li>
+      <li>
+        <strong>채널 수는 운영 중에 조절한다.</strong> 접속자가 늘면 채널을 열고, 줄면 빈 채널부터 닫는다. 닫을 때는 새 입장을 막고 남은 사람에게 이동을 권한 뒤 비면 내린다.
+      </li>
+      <li>
+        <strong>빈 인스턴스를 회수하는 일이 빠지면 메모리가 샌다.</strong> 비정상 종료나 예외로 종료 조건 처리가 건너뛰어진 인스턴스는 아무도 없는데 계속 틱을 돈다. 주기적으로 "사람 없음 + 유예 시간 지남"을 검사해 강제로 회수하고, 인스턴스 수와 평균 수명을 지표로 남긴다.
+      </li>
+      <li>
+        <strong>인계 경로에 지표와 로그를 단다.</strong> 존 이동이 몇 초 걸렸는지, 몇 번 시간 초과로 되돌아갔는지를 남긴다. 복제 사고는 대개 이 경로의 드문 실패에서 생기므로, 캐릭터 ID와 버전 번호를 단계마다 로그에 적어 둔다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>인계 중인 캐릭터에 대한 거래, 우편, 경매 처리를 막는다.</strong> 잠금 없이 열어 두면 복제의 가장 흔한 통로가 된다.</li>
+      <li><strong>저장은 버전을 비교해서 한다.</strong> 소유권을 넘긴 서버가 늦게 보낸 저장이 새 주인의 상태를 덮지 않게 한다.</li>
+      <li><strong>인스턴스는 전원 퇴장 즉시 지우지 않는다.</strong> 재접속 유예를 두지 않으면 잠깐 끊긴 플레이어가 진행을 통째로 잃는다.</li>
+      <li><strong>채널과 인스턴스를 넘는 기능을 따로 설계한다.</strong> 파티, 길드 채팅, 친구 위치는 조각 밖에 있는 서버가 맡아야 한다. 존 서버 안에 두면 조각을 넘는 순간 끊긴다.</li>
+      <li><strong>인원 상한은 측정해서 정한다.</strong> 같은 인원이라도 한곳에 몰렸을 때와 흩어졌을 때 부하가 크게 다르다. 핫스팟 상황을 재현한 부하 시험으로 상한을 잡는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

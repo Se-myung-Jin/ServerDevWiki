@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이벤트 버스와 메시지 전달 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="game-patterns/event-bus">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../csharp/delegates-events.html">대리자와 이벤트</a> · <a href="command-pattern.html">커맨드 패턴과 리플레이</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      이벤트 버스는 보내는 쪽과 받는 쪽 사이에 통로를 두어 서로를 모르게 하는 장치다. 무엇을 떼어 놓느냐에 따라 두 가지로 갈린다. <strong>즉시 디스패치</strong>는 받는 쪽이 누구인지만 감춘다. 보내는 순간 구독자가 같은 호출 스택에서 모두 불린다. <strong>큐 방식</strong>은 <span class="blank">언제 처리할지까지</span> 떼어 놓는다. 보낸 메시지는 큐에 쌓였다가 나중에 정해진 자리에서 처리된다.
+    </p>
+    <p>
+      시점을 떼어 놓으면 얻는 것이 있다. 보낸 쪽이 바로 돌아오고, 처리를 한 자리에 모아 순서를 정할 수 있고, 다른 스레드나 다른 서버로 넘길 수 있다. 대신 <strong>받는 순간의 세계는 보낸 순간의 세계와 다르다.</strong> 그 사이에 대상이 죽었거나 값이 바뀌었을 수 있다. 어느 쪽을 쓸지는 이 맞바꿈으로 고른다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>즉시 디스패치는 받는 쪽만 감춘다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="즉시 디스패치는 보내는 호출 안에서 구독자가 불리고, 큐 방식은 큐에 쌓였다가 틱의 정해진 자리에서 처리된다">
+        <defs><marker id="eb-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="28">즉시 디스패치</text>
+        <rect class="f-box" x="20" y="40" width="130" height="40" rx="6"/>
+        <text class="f-text" x="85" y="65" text-anchor="middle">전투: 처치</text>
+        <line class="f-line" x1="150" y1="60" x2="208" y2="60" marker-end="url(#eb-a)"/>
+        <rect class="f-hit" x="214" y="40" width="100" height="40" rx="6"/>
+        <text class="f-text" x="264" y="65" text-anchor="middle">버스</text>
+        <line class="f-line" x1="314" y1="60" x2="372" y2="60" marker-end="url(#eb-a)"/>
+        <rect class="f-cell2" x="378" y="40" width="110" height="40" rx="4"/>
+        <text class="f-text" x="433" y="65" text-anchor="middle">퀘스트</text>
+        <rect class="f-cell2" x="494" y="40" width="110" height="40" rx="4"/>
+        <text class="f-text" x="549" y="65" text-anchor="middle">업적</text>
+        <rect class="f-cell2" x="610" y="40" width="130" height="40" rx="4"/>
+        <text class="f-text" x="675" y="65" text-anchor="middle">드롭</text>
+        <text class="f-sub" x="20" y="102">보내는 호출이 끝나기 전에 모든 구독자가 같은 스택에서 불린다</text>
+
+        <text class="f-strong" x="20" y="146">큐 방식</text>
+        <rect class="f-box" x="20" y="158" width="130" height="40" rx="6"/>
+        <text class="f-text" x="85" y="183" text-anchor="middle">전투: 처치</text>
+        <line class="f-line" x1="150" y1="178" x2="208" y2="178" marker-end="url(#eb-a)"/>
+        <rect class="f-hit" x="214" y="158" width="40" height="40" rx="4"/>
+        <rect class="f-hit" x="258" y="158" width="40" height="40" rx="4"/>
+        <rect class="f-hit" x="302" y="158" width="40" height="40" rx="4"/>
+        <text class="f-sub" x="278" y="216" text-anchor="middle">큐</text>
+        <line class="f-line f-dash" x1="342" y1="178" x2="452" y2="178" marker-end="url(#eb-a)"/>
+        <text class="f-sub" x="397" y="168" text-anchor="middle">시간이 흐른다</text>
+        <rect class="f-box" x="458" y="158" width="282" height="40" rx="6"/>
+        <text class="f-text" x="599" y="183" text-anchor="middle">틱 끝: 쌓인 메시지를 차례로 처리</text>
+        <text class="f-sub" x="20" y="240">보낸 쪽은 바로 돌아오고, 받는 쪽은 그 사이에 바뀐 세계에서 처리한다</text>
+      </svg>
+      <figcaption>즉시 디스패치는 관찰자 패턴에 이름표를 붙인 것이다. 큐 방식은 보내는 시점과 처리하는 시점 사이에 버퍼를 둔다. 같은 "이벤트 버스"라는 이름으로 불려도 둘의 성질은 크게 다르다.</figcaption>
+    </figure>
+    <p>
+      즉시 디스패치는 C#의 <code>event</code>와 같다(<a href="../csharp/delegates-events.html">대리자와 이벤트</a>). 보낸 쪽은 받는 쪽의 타입을 몰라도 되지만, 호출은 여전히 동기다. 처리기가 오래 걸리면 보낸 쪽이 그만큼 기다리고, 처리기가 던진 예외는 보낸 쪽으로 올라온다. 처리기 안에서 보낸 쪽의 상태를 다시 건드리면 보낸 쪽은 자기 메서드 한가운데에서 상태가 바뀌는 재진입을 겪는다.
+    </p>
+    <p>
+      즉시 디스패치가 느리다는 말은 큐 방식과 섞인 오해다. 할당도 큐도 없고, 비용은 구독자마다 간접 호출 한 번이다. 느려지는 것은 메시지마다 객체를 할당하거나 큐를 거치는 구현이다.
+    </p>
+
+    <h3>큐에 넣으면 처리 시점이 떨어진다</h3>
+<pre><code class="language-csharp">public sealed class ZoneEventQueue
+{
+    readonly Queue&lt;IZoneEvent&gt; _pending = new();
+    public void Post(IZoneEvent e) =&gt; _pending.Enqueue(e);   // 보낸 쪽은 바로 돌아온다
+
+    // 틱의 정해진 자리에서 한 번 부른다
+    public void Drain(Zone zone, int budget)
+    {
+        int n = Math.Min(_pending.Count, budget);           // 이번 틱에 들어 있던 것까지만
+        for (int i = 0; i &lt; n; i++)
+            Dispatch(zone, _pending.Dequeue());              // 처리 중에 새로 넣은 것은 다음 틱으로
+    }
+}</code></pre>
+    <p>
+      큐 방식에서 처리하는 자리는 틱 안의 정해진 위치다. 전투 시스템이 돌면서 처치 메시지를 쌓고, 모든 시스템이 끝난 뒤 한꺼번에 퀘스트와 업적이 처리된다. 보낸 쪽은 받는 쪽의 처리 시간에 묶이지 않고, 처리 순서는 큐 순서라 예측할 수 있다. 같은 대상에게 온 메시지를 모아 한 번에 처리하거나, 중복을 합치는 일도 이 자리에서 할 수 있다.
+    </p>
+
+    <h3>받는 시점의 세계는 보낼 때와 다르다</h3>
+    <p>
+      몬스터 A가 "B를 공격"이라는 메시지를 보냈는데, 처리하기 전에 B가 다른 공격으로 죽고 사라졌다고 하자. 처리기가 B의 참조를 그대로 쓰면 이미 정리된 객체를 건드린다. 메시지에는 참조 대신 ID를 담고, 처리할 때 대상이 아직 있는지 다시 찾는다. 위치나 체력 같은 값도 보낼 때의 값이 아니라 처리할 때의 값으로 다시 판단할지, 보낼 때의 값을 그대로 믿을지를 메시지마다 정해 둔다.
+    </p>
+
+    <h3>고리가 생기면 큐에서는 바로 드러나지 않는다</h3>
+    <p>
+      A의 처리기가 B를 보내고 B의 처리기가 다시 A를 보내면 고리가 생긴다. 즉시 디스패치에서는 호출이 끝없이 깊어지다 스택이 넘쳐 바로 드러난다(<a href="../system-programming/call-stack.html">호출 스택</a>). 큐에서는 스택이 쌓이지 않으니 메시지가 계속 돌기만 하고, 증상은 큐 길이가 줄지 않거나 CPU가 이유 없이 높아지는 것으로만 보인다. 위 코드처럼 한 번에 처리할 개수를 처음 들어 있던 수로 묶고, 메시지에 몇 단계를 거쳐 왔는지 세는 값을 담아 한도를 넘으면 버리고 기록한다.
+    </p>
+
+    <h3>구독을 끊지 않으면 받는 쪽이 살아 있다</h3>
+    <p>
+      버스는 대개 존이나 서버만큼 오래 산다. 세션이나 NPC가 구독해 놓고 해제하지 않으면 버스가 그 객체를 붙잡고 있어 회수되지 않고, 이미 떠난 객체의 처리기가 계속 불린다. 원리와 찾는 법은 <a href="../csharp/memory-leaks.html">GC 언어의 메모리 누수</a>에서 다뤘다. 구독할 때 해제 토큰을 돌려받고 객체의 정리 경로에서 반드시 놓게 한다.
+    </p>
+
+    <h3>순서는 무엇이 보장하나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>범위</th><th>보장되는 순서</th><th>보장되지 않는 것</th></tr></thead>
+        <tbody>
+          <tr><td>한 스레드의 큐</td><td>넣은 순서대로 처리된다</td><td>처리 중에 새로 넣은 것이 언제 처리될지는 구현이 정한다</td></tr>
+          <tr><td>여러 스레드가 넣는 큐</td><td>한 스레드가 넣은 것끼리의 순서</td><td>서로 다른 스레드가 넣은 것 사이의 순서</td></tr>
+          <tr><td>한 메시지의 구독자들</td><td>구현이 정한 순서(대개 등록 순서)</td><td>설계로 기대어도 되는 순서는 아니다</td></tr>
+          <tr><td>서버 사이 메시지 큐</td><td>파티션이나 키 하나 안의 순서</td><td>전체 순서, 정확히 한 번 전달</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>보낸 쪽이 결과를 받아 다음 일을 정한다</td><td>직접 호출이나 즉시 디스패치</td><td>큐에 넣으면 답이 같은 흐름 안에 돌아오지 않는다</td></tr>
+          <tr><td>처리를 틱 끝으로 미루거나 모아야 한다</td><td>큐</td><td>시스템 순회 도중에 다른 시스템의 상태를 고치지 않는다</td></tr>
+          <tr><td>보낸 쪽이 처리 시간에 묶이면 안 된다</td><td>큐</td><td>무거운 처리기가 전투 루프를 멈추지 않는다</td></tr>
+          <tr><td>다른 스레드나 다른 서버로 넘긴다</td><td>큐(스레드 안전 큐, 메시지 브로커)</td><td>스레드나 프로세스 경계를 넘으려면 어차피 버퍼가 필요하다</td></tr>
+          <tr><td>순서가 결과를 바꾼다</td><td>이벤트가 아니라 명시적 호출 순서</td><td>구독자 순서는 흔들리기 쉽다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>존 안의 버스는 존 스레드에서 돈다.</strong> 한 존의 이벤트는 그 존을 맡은 로직 스레드가 틱 안에서 보내고 처리한다. 그러면 처리기는 락 없이 존 상태를 만질 수 있다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>). 다른 스레드에서 오는 메시지는 스레드 안전 큐로 받아 틱의 정해진 자리에서 꺼낸다(<a href="../data-structure/concurrent-structures.html">동시성 자료구조</a>).
+      </li>
+      <li>
+        <strong>서버 사이 전달은 메시지 큐의 규칙을 따른다.</strong> 길드 채팅, 우편, 경매장 알림처럼 서버를 넘는 메시지는 브로커를 거친다. 이때는 중복과 유실, 순서를 따로 다뤄야 하고, 같은 메시지가 두 번 와도 결과가 같게 처리기를 만든다(<a data-ref="architecture/message-models">메시지 모델</a>, <a data-ref="architecture/delivery-guarantees">전달 보장</a>).
+      </li>
+      <li>
+        <strong>이벤트는 드물고 느슨한 곳에 쓴다.</strong> 이동 → 충돌 → 피격처럼 매 틱 도는 핵심 흐름은 시스템을 차례로 부르는 편이 빠르고 읽기 쉽다. 퀘스트 진행, 업적, 통계, 로그처럼 붙였다 떼는 기능이 이벤트에 맞는다.
+      </li>
+      <li>
+        <strong>틱마다 큐 길이를 지표로 남긴다.</strong> 처리하는 양보다 쌓이는 양이 많으면 큐가 계속 길어진다. 고리, 폭주하는 보낸 쪽, 너무 무거운 처리기 가운데 무엇인지 큐 길이와 메시지 종류별 수로 가려낸다(<a href="../server/backpressure.html">백프레셔</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>중앙 버스 하나는 전역 변수다.</strong> 아무 데서나 보내고 아무 데서나 받으면 누가 누구에게 기대는지 코드에 보이지 않는다. 존 버스, UI 버스처럼 범위를 좁혀 나눈다. 전역 접근의 문제는 <a href="service-locator.html">서비스 로케이터</a>에서 다룬다.</li>
+      <li><strong>메시지에 참조 대신 ID를 담는다.</strong> 큐에서 기다리는 사이 대상이 사라지거나 다른 존으로 옮겨 갈 수 있다.</li>
+      <li><strong>처리 중에 보낸 메시지를 같은 순회에서 처리하지 않는다.</strong> 순회하던 컬렉션이 바뀌고, 고리가 끝나지 않는다. 다음 순회나 다음 틱으로 넘긴다.</li>
+      <li><strong>메시지마다 객체를 할당하지 않는다.</strong> 초당 수만 건이 오가면 <a data-ref="csharp/gc-basics">GC</a> 부담이 된다. 구조체 메시지를 종류별 버퍼에 담거나 풀을 쓴다(<a href="../csharp/struct-design.html">struct 설계</a>, <a href="object-pool.html">오브젝트 풀</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

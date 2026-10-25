@@ -154,7 +154,7 @@ await host.RunAsync();   // 시작하고, 종료 신호가 올 때까지 기다�
         <tbody>
           <tr><td><code>IOptions&lt;T&gt;</code></td><td>처음 읽을 때 한 번. 이후 바뀌지 않는다</td><td>서버가 도는 동안 바뀌지 않는 값</td></tr>
           <tr><td><code>IOptionsSnapshot&lt;T&gt;</code></td><td>범위마다 다시 읽는다. Scoped</td><td>요청마다 최신 값이 필요한 웹 코드</td></tr>
-          <tr><td><code>IOptionsMonitor&lt;T&gt;</code></td><td>설정 파일이 바뀌면 갱신되고 <code>OnChange</code>로 알린다. Singleton</td><td>오래 사는 서비스가 핫 리로드 값을 볼 때</td></tr>
+          <tr><td><code>IOptionsMonitor&lt;T&gt;</code></td><td>설정 파일이 바뀌면 갱신되고 <code>OnChange</code>로 알린다. Singleton</td><td>오래 사는 서비스가 <a data-ref="game-patterns/data-driven">핫 리로드</a> 값을 볼 때</td></tr>
         </tbody>
       </table>
     </div>
@@ -194,7 +194,7 @@ await host.RunAsync();   // 시작하고, 종료 신호가 올 때까지 기다�
     <h2>주의 사항</h2>
     <ul>
       <li><strong>생성자에서 오래 걸리는 일을 하지 않는다.</strong> 컨테이너는 생성자를 동기로 부른다. 생성자에서 DB를 읽으면 그 서비스를 처음 요청한 쪽이 통째로 기다린다. 무거운 준비는 호스팅 서비스의 시작 단계에서 비동기로 한다.</li>
-      <li><strong>서비스 로케이터로 쓰지 않는다.</strong> 아무 데서나 <code>IServiceProvider</code>를 받아 필요한 것을 꺼내면 의존성이 생성자에 드러나지 않는다. 범위를 만드는 곳(팩토리, 디스패처) 말고는 생성자로 받는다.</li>
+      <li><strong><a data-ref="game-patterns/service-locator">서비스 로케이터</a>로 쓰지 않는다.</strong> 아무 데서나 <code>IServiceProvider</code>를 받아 필요한 것을 꺼내면 의존성이 생성자에 드러나지 않는다. 범위를 만드는 곳(팩토리, 디스패처) 말고는 생성자로 받는다.</li>
       <li><strong>ValidateScopes와 ValidateOnBuild를 개발 환경에서 켜 둔다.</strong> 수명 함정과 등록 누락을 시작할 때 잡는다. 운영에서는 시작 비용 때문에 기본이 꺼져 있다.</li>
       <li><strong>종료 시한을 넘기는 정리는 잘린다.</strong> 저장이 오래 걸리면 시한과 컨테이너 쪽 유예 시간을 함께 늘린다. 둘이 어긋나면 정리 도중에 강제로 끝난다(<a href="../system-programming/signals.html">시그널과 프로세스 종료</a>).</li>
     </ul>

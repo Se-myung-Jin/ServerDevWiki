@@ -130,7 +130,7 @@
     <h2>게임 서버에서는</h2>
     <ul>
       <li>
-        <strong>기획 데이터 표는 불변으로 두고 통째로 바꾼다.</strong> 아이템·몬스터 표를 <code>FrozenDictionary</code>로 만들어 두면 조회가 빠르고, 여러 스레드가 락 없이 읽어도 안전하다. 핫 리로드할 때는 새 표를 다 만든 뒤 참조 하나를 바꿔 끼운다. 읽던 스레드는 옛 표를 끝까지 읽고, 다음 조회부터 새 표를 본다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).
+        <strong>기획 데이터 표는 불변으로 두고 통째로 바꾼다.</strong> 아이템·몬스터 표를 <code>FrozenDictionary</code>로 만들어 두면 조회가 빠르고, 여러 스레드가 락 없이 읽어도 안전하다. <a data-ref="game-patterns/data-driven">핫 리로드</a>할 때는 새 표를 다 만든 뒤 참조 하나를 바꿔 끼운다. 읽던 스레드는 옛 표를 끝까지 읽고, 다음 조회부터 새 표를 본다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).
       </li>
       <li>
         <strong>패킷 버전과 프로토콜 번호를 const로 공유하지 않는다.</strong> 공용 어셈블리에 <code>const int ProtocolVersion</code>을 두면, 그 어셈블리만 갱신한 서버 모듈은 옛 번호를 계속 보낸다. 바뀔 수 있는 번호는 <code>static readonly</code>로 두거나 공용 코드를 함께 다시 빌드한다.
