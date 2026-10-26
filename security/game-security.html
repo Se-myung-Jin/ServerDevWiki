@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>게임 보안과 치트 대응 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="security/game-security">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../game-patterns/state-sync.html">스냅샷과 상태 동기화</a>, <a href="cipher-modes.html">운용 모드와 인증 암호</a>, <a href="auth-session.html">인증과 세션 토큰</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      클라이언트는 공격자 손에 있다. 메모리를 고치고, 패킷을 바꾸고, 클라이언트를 통째로 다시 만들어 붙일 수 있다. 그래서 원칙이 하나로 모인다. <strong>결과에 닿는 것은 서버가 정한다.</strong> 클라이언트가 보내는 것은 "하고 싶은 일"이지 "일어난 일"이 아니다.
+    </p>
+    <p>
+      암호화와 난독화는 이 원칙을 대신하지 못한다. 암호화는 경로 위의 제3자를 막고, 난독화와 무결성 검사는 분석을 늦출 뿐이다. 그 위에 서버 검증과 사후 탐지가 있어야 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>신뢰 경계는 서버 입구에 있다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="클라이언트는 입력과 요청만 보내고, 서버가 검증하고 판정해 결과를 내려준다. 신뢰 경계는 서버 입구다">
+        <defs><marker id="gs-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="230" height="150" rx="8"/>
+        <text class="f-strong" x="135" y="56" text-anchor="middle">클라이언트</text>
+        <text class="f-sub" x="135" y="78" text-anchor="middle">공격자가 고칠 수 있다</text>
+        <text class="f-text" x="135" y="112" text-anchor="middle">"앞으로 간다"</text>
+        <text class="f-text" x="135" y="136" text-anchor="middle">"3번 스킬, 대상 #812"</text>
+        <text class="f-sub" x="135" y="164" text-anchor="middle">화면 설정은 마음대로</text>
+        <line class="f-barrier" x1="380" y1="20" x2="380" y2="190"/>
+        <text class="f-sub" x="380" y="206" text-anchor="middle">신뢰 경계</text>
+        <line class="f-line" x1="250" y1="100" x2="508" y2="100" marker-end="url(#gs-a)"/>
+        <text class="f-sub" x="300" y="92">입력·요청</text>
+        <rect class="f-miss" x="510" y="30" width="230" height="150" rx="8"/>
+        <text class="f-on" x="625" y="56" text-anchor="middle">서버</text>
+        <text class="f-on" x="625" y="90" text-anchor="middle">이동 가능 거리 확인</text>
+        <text class="f-on" x="625" y="112" text-anchor="middle">쿨다운·사거리·자원 확인</text>
+        <text class="f-on" x="625" y="134" text-anchor="middle">판정·지급·위치 결정</text>
+        <line class="f-line" x1="508" y1="150" x2="252" y2="150" marker-end="url(#gs-a)"/>
+        <text class="f-sub" x="300" y="170">결과</text>
+      </svg>
+      <figcaption>클라이언트 쪽 검사는 쓰는 사람을 편하게 하려고 둔 것이다. 서버는 넘어온 값을 처음 보는 값처럼 다시 검사한다.</figcaption>
+    </figure>
+    <div class="table-scroll"><table>
+      <thead><tr><th>클라이언트가 보내는 것</th><th>서버가 하는 일</th></tr></thead>
+      <tbody>
+        <tr><td>이동 입력, 목표 지점</td><td>지난 위치와 경과 시간으로 갈 수 있는 거리인지, 지형을 뚫지 않는지 본다</td></tr>
+        <tr><td>스킬 사용</td><td>쿨다운, 자원, 사거리, 시야를 서버가 가진 값으로 다시 구한다</td></tr>
+        <tr><td>"맞혔다", "주웠다", "깼다"</td><td>받지 않는다. 판정과 지급은 서버가 한다</td></tr>
+        <tr><td>상점 구매 요청</td><td>가격과 재고는 서버 테이블에서 읽는다(<a href="../game-patterns/data-driven.html">기획 데이터</a>). 클라이언트가 보낸 가격은 무시한다</td></tr>
+        <tr><td>화면·소리 설정</td><td>그대로 받는다. 결과에 닿지 않는다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      위치와 판정을 서버가 정하는 구조, 클라이언트 예측과 서버 재조정은 <a href="../game-patterns/state-sync.html">스냅샷과 상태 동기화</a>에서 다룬다. 여기서는 그 위에서 무엇을 더 막는지를 본다.
+    </p>
+
+    <h3>암호화가 막는 것과 못 막는 것</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>공격</th><th>패킷 암호화로 막히나</th><th>막는 장치</th></tr></thead>
+      <tbody>
+        <tr><td>경로 위에서 엿보기</td><td>막힌다</td><td>기밀성</td></tr>
+        <tr><td>경로 위에서 바꾸기</td><td>인증 태그가 있으면 막힌다</td><td>AEAD(AES-GCM, ChaCha20-Poly1305)</td></tr>
+        <tr><td>가로챈 패킷 다시 보내기</td><td>순번이 있어야 막힌다</td><td>패킷 순번을 nonce와 검증에 넣는다</td></tr>
+        <tr><td>클라이언트 메모리 조작</td><td>못 막는다</td><td>서버 검증</td></tr>
+        <tr><td>고친 클라이언트가 만든 패킷</td><td>못 막는다</td><td>서버 검증, 사후 탐지</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      패킷을 만들려면 키가 클라이언트 메모리에 있어야 한다. 그래서 클라이언트를 통제하는 사람은 키를 꺼내거나 암호화 직전의 값을 고친다. 그래도 암호화는 필요하다. 공용 와이파이에서 세션을 훔치거나 패킷을 바꿔치기하는 공격은 치트와 별개로 막아야 한다. 키는 하드코딩하지 않고 로그인 때 TLS 위에서 세션마다 받는다(<a href="signature-tls.html">서명과 TLS</a>).
+    </p>
+
+    <h3>보내지 않은 정보는 훔칠 수 없다</h3>
+    <p>
+      월핵, 레이더, ESP 같은 정보 치트는 클라이언트가 이미 받은 데이터를 보여 줄 뿐이다. 서버가 막을 수 있는 방법은 <strong>보이지 않는 것을 보내지 않는 것</strong>이다. 관심 영역 밖, 벽 뒤, 은신 상태의 적은 보내지 않는다(<a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a>). 경쟁 FPS에서는 서버가 시야를 계산해 보낼지 정하기도 하는데, 지연 때문에 모서리에서 갑자기 나타나지 않도록 조금 일찍 보내는 여유를 둔다. 드롭 테이블, 다음 보스 패턴, 상자 내용물처럼 미리 알면 이득인 것도 결과가 정해진 뒤에 보낸다.
+    </p>
+
+    <h3>난수는 서버에서, 예측할 수 없게</h3>
+    <p>
+      드롭, 강화 성공, 크리티컬처럼 결과에 닿는 난수는 서버에서 굴린다. 빠른 난수 생성기는 출력을 얼마간 모으면 내부 상태가 복원되고, 그 뒤 값이 전부 계산된다. 시각으로 시드를 잡으면 시드 자체가 추측된다. 결과에 닿는 자리는 예측하기 어려운 생성기를 쓰고, 뽑기처럼 분쟁이 날 수 있는 결과는 기록을 남긴다. 생성기의 종류와 <a data-ref="game-patterns/command-pattern">결정론</a>적 재현은 <a href="../algorithm/random.html">난수 생성</a>에서 다룬다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <p>
+      모든 것을 매 틱 완벽하게 검증하면 서버 비용이 감당되지 않는다. 되돌릴 수 없는 정도에 따라 검증 강도를 나눈다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>대상</th><th>검증 방식</th></tr></thead>
+      <tbody>
+        <tr><td>재화, 아이템, 거래, 경쟁 결과</td><td>예외 없이 서버가 판정한다. 트랜잭션과 로그를 남긴다</td></tr>
+        <tr><td>전투 판정</td><td>서버가 판정한다. 지연 보상을 쓰면 되감기 허용 폭에 상한을 둔다</td></tr>
+        <tr><td>이동</td><td>속도 상한과 지형 충돌을 확인하고, 벗어나면 서버 위치로 되돌린다</td></tr>
+        <tr><td>요청 빈도</td><td>패킷 종류별 상한(<a href="../architecture/rate-limiting.html">레이트 리밋</a>)</td></tr>
+        <tr><td>손해가 작은 것(감정 표현, 꾸미기)</td><td>범위만 본다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      그래도 남는 것은 <strong>사후 탐지</strong>로 잡는다. 실시간 검증이 "있을 수 없는 일"을 막는다면, 사후 탐지는 "있을 수는 있지만 사람 같지 않은 일"을 찾는다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>봇과 매크로는 통계로 찾는다.</strong> 입력 간격의 분산, 하루 접속 시간, 같은 경로 반복, 사냥 효율, 거래 상대 관계를 본다. 리밋에 자주 걸리는 것도 신호다. 한 지표로 단정하지 않고 여러 지표를 묶어 점수를 매긴다.</li>
+      <li><strong>경제 공격이 피해가 가장 크다.</strong> 아이템 복제는 대개 동시 요청과 재접속 타이밍을 노린다(<a href="../database/concurrency-control.html">동시성 제어와 데드락</a>). 아이템마다 고유 ID를 두면 같은 ID가 두 곳에 나타나는 것으로 복제를 찾는다(<a href="../database/distributed-id.html">분산 ID 생성</a>). 재화 원장과 잔액을 대조해 설명되지 않는 증가를 찾는다.</li>
+      <li><strong>결제는 영수증을 서버가 검증한다.</strong> 앱 마켓 영수증을 클라이언트가 "결제했다"며 보내면, 서버가 마켓 API로 확인하고 영수증 ID를 한 번만 쓰게 기록한다. 환불 알림을 받아 회수하는 흐름도 둔다. 스토어별 검증과 환불 추적은 <a href="payment-verification.html">결제와 영수증 검증</a>에서 다룬다.</li>
+      <li><strong>밴은 바로 하지 않을 때가 많다.</strong> 탐지 즉시 밴하면 치트 제작자가 무엇에 걸렸는지 바로 알고 고친다. 확실한 경제 피해는 즉시 막고, 치트 프로그램 사용은 모아 두었다가 한 번에 처리하는 방식(밴 웨이브)을 섞는다.</li>
+      <li><strong>안티치트는 시간 벌기다.</strong> 클라이언트 무결성 검사, 난독화, 커널 수준 안티치트는 치트 제작 비용을 올린다. 커널 수준은 탐지력이 높은 대신 시스템 안정성과 개인 정보 부담이 크다. 어느 것도 서버 검증을 대체하지 않는다.</li>
+      <li><strong>감사 로그를 남긴다.</strong> 재화·아이템 변화, 거래, GM 명령, 결제는 누가, 언제, 어디서, 무엇을 했는지 남긴다. 탐지, 복구, 분쟁 대응이 모두 이 로그에서 시작한다(<a href="../database/backup-recovery.html">백업과 복구</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>"클라이언트를 믿지 않는다"의 범위는 "결과에 닿는가"로 정한다. 닿으면 서버가 정한다.</li>
+      <li>서버 검증에 걸린 요청은 조용히 버리고 기록한다. 실패 이유를 자세히 돌려주면 치트 제작자에게 경계값을 알려 준다.</li>
+      <li>정상 플레이어도 지연 때문에 이상하게 보일 수 있다. 순간 이동 판정은 지연 폭을 감안하고, 의심만으로 처벌하지 않는다.</li>
+      <li>패킷 구조를 바꾸거나 암호화를 강화하는 것은 치트 대응이 아니라 지연 작전이다. 판정 구조가 클라이언트 신뢰에 기대고 있으면 그것부터 고친다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

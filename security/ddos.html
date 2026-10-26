@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DDoS 대응 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="security/ddos">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../network/tcp-connection.html">TCP 연결</a>, <a href="../network/nat-traversal.html">NAT 통과</a>, <a href="../architecture/rate-limiting.html">레이트 리밋과 입장 대기열</a>, <a href="cipher-modes.html">운용 모드와 인증 암호</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">DDoS</span>는 여러 곳에서 동시에 요청을 쏟아 서비스가 정상 요청을 받지 못하게 하는 공격이다. 무엇을 채우느냐에 따라 막는 자리가 다르다. 회선 대역폭을 채우는 공격은 서버에 닿기 전에 이미 이겼다. 서버가 아무리 빨리 버려도 들어오는 길이 막혀 있기 때문이다. 그래서 큰 공격은 서버가 아니라 <strong>앞단</strong>에서 걸러야 한다.
+    </p>
+    <p>
+      게임 서버는 표적이 되기 쉽고 막기도 어렵다. 실시간 UDP라 웹용 방어 장비가 그대로 맞지 않고, 몇 초만 끊겨도 판이 망가진다. 기본 전략은 게임 서버의 실제 주소를 숨기고, 인증되지 않은 패킷을 아주 싸게 버리는 것이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>무엇을 채우느냐로 세 갈래가 나뉜다</h3>
+    <table>
+      <thead><tr><th>갈래</th><th>채우는 것</th><th>예</th><th>막는 자리</th></tr></thead>
+      <tbody>
+        <tr><td>용량 공격(L3/L4)</td><td>회선 대역폭</td><td>UDP 플러드, 반사·증폭 공격</td><td>업스트림 스크러빙, 애니캐스트 분산</td></tr>
+        <tr><td>프로토콜 공격(L4)</td><td>연결 상태 표, 방화벽·로드 밸런서의 세션 표</td><td>SYN 플러드, 상태 표를 채우는 UDP 세션 폭주</td><td>SYN 쿠키, 상태를 늦게 만드는 핸드셰이크</td></tr>
+        <tr><td>애플리케이션 공격(L7)</td><td>CPU, DB, 외부 API 호출</td><td>로그인, 검색, 랭킹 조회처럼 비싼 요청 반복</td><td>레이트 리밋, 캐시, 입장 대기열</td></tr>
+      </tbody>
+    </table>
+    <p>
+      L7 공격은 요청 수가 적어도 효과가 크다. 로그인 한 번이 느린 해시 계산과 DB 조회를 부르니, 초당 수천 건이면 서버가 먼저 무너진다. 이쪽은 <a href="../architecture/rate-limiting.html">레이트 리밋과 입장 대기열</a>과 캐시로 대응한다. SYN 플러드와 SYN 쿠키는 <a href="../network/tcp-connection.html">TCP 연결</a>에서 다룬다.
+    </p>
+
+    <h3>반사·증폭: 남의 서버가 대신 쏜다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 220" role="img" aria-label="공격자가 출발 주소를 피해자로 위조해 작은 요청을 반사기에 보내면, 반사기들이 큰 응답을 피해자에게 보낸다">
+        <defs><marker id="dd-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker>
+        <marker id="dd-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto"><path class="f-head-accent" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="88" width="130" height="46" rx="6"/>
+        <text class="f-text" x="85" y="110" text-anchor="middle">공격자</text>
+        <text class="f-sub" x="85" y="126" text-anchor="middle">봇넷</text>
+        <rect class="f-cell" x="300" y="20" width="140" height="40" rx="6"/>
+        <text class="f-text" x="370" y="45" text-anchor="middle">열린 DNS</text>
+        <rect class="f-cell" x="300" y="90" width="140" height="40" rx="6"/>
+        <text class="f-text" x="370" y="115" text-anchor="middle">열린 NTP</text>
+        <rect class="f-cell" x="300" y="160" width="140" height="40" rx="6"/>
+        <text class="f-text" x="370" y="185" text-anchor="middle">열린 memcached</text>
+        <line class="f-line" x1="150" y1="100" x2="298" y2="42" marker-end="url(#dd-a)"/>
+        <line class="f-line" x1="150" y1="111" x2="298" y2="110" marker-end="url(#dd-a)"/>
+        <line class="f-line" x1="150" y1="122" x2="298" y2="178" marker-end="url(#dd-a)"/>
+        <text class="f-sub" x="150" y="76">작은 요청</text>
+        <text class="f-sub" x="85" y="154" text-anchor="middle">출발지 = 피해자로 위조</text>
+        <rect class="f-miss" x="600" y="88" width="140" height="46" rx="6"/>
+        <text class="f-on" x="670" y="116" text-anchor="middle">게임 서버</text>
+        <line class="f-line" style="stroke-width:5" x1="440" y1="40" x2="590" y2="100" marker-end="url(#dd-b)"/>
+        <line class="f-line" style="stroke-width:5" x1="440" y1="110" x2="590" y2="111" marker-end="url(#dd-b)"/>
+        <line class="f-line" style="stroke-width:5" x1="440" y1="180" x2="590" y2="122" marker-end="url(#dd-b)"/>
+        <text class="f-sub" x="520" y="60" text-anchor="middle">큰 응답</text>
+      </svg>
+      <figcaption>UDP는 출발 주소를 확인하지 않으므로 위조할 수 있다. 응답이 요청보다 몇십 배에서 몇만 배 크게 나오는 서비스를 고르면, 공격자는 적은 대역폭으로 피해자 회선을 채운다. 피해자가 보는 출발지는 공격자가 아니라 정상 서버들이다.</figcaption>
+    </figure>
+    <p>
+      증폭 배수는 서비스마다 다르다. 공개 경보에 보고된 대략치로 <a data-ref="network/dns-resolution">DNS</a>는 수십 배, 예전 NTP의 상태 조회 명령은 수백 배, 인터넷에 열린 memcached는 수만 배까지 나왔다. 2018년 GitHub이 받은 1 Tbps 이상의 공격이 memcached 증폭이었다.
+    </p>
+    <p>
+      반대로 <strong>내 서버가 반사기가 되지 않게</strong> 하는 것도 의무다. 주소를 확인하기 전에는 받은 것보다 크게 응답하지 않는다. <a data-ref="network/http-versions">QUIC</a>은 이것을 규칙으로 정해, 주소를 확인하기 전에는 받은 양의 세 배까지만 보낸다. 게임의 접속 요청 패킷은 응답보다 크게(패딩을 붙여) 만들고, 큰 응답은 핸드셰이크가 끝난 뒤에만 보낸다.
+    </p>
+
+    <h3>앞단에서 거르고, 주소를 숨긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="플레이어는 애니캐스트 주소의 스크러빙·릴레이 층에 접속하고, 걸러진 트래픽만 사설망의 게임 서버로 간다. 게임 서버 실제 주소는 공개되지 않는다">
+        <defs><marker id="dd-c" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="120" height="40" rx="6"/>
+        <text class="f-text" x="80" y="55" text-anchor="middle">플레이어</text>
+        <rect class="f-box" x="20" y="130" width="120" height="40" rx="6"/>
+        <text class="f-text" x="80" y="155" text-anchor="middle">공격 트래픽</text>
+        <rect class="f-hit" x="240" y="40" width="200" height="120" rx="8"/>
+        <text class="f-text" x="340" y="70" text-anchor="middle">스크러빙·릴레이 층</text>
+        <text class="f-sub" x="340" y="92" text-anchor="middle">애니캐스트로 여러 곳에 분산</text>
+        <text class="f-sub" x="340" y="112" text-anchor="middle">토큰 없는 패킷은 여기서 버림</text>
+        <text class="f-sub" x="340" y="132" text-anchor="middle">IP별·세션별 속도 제한</text>
+        <line class="f-line" x1="140" y1="50" x2="238" y2="80" marker-end="url(#dd-c)"/>
+        <line class="f-line" x1="140" y1="150" x2="238" y2="130" marker-end="url(#dd-c)"/>
+        <text class="f-x" x="210" y="152">✕</text>
+        <rect class="f-miss" x="560" y="70" width="170" height="60" rx="6"/>
+        <text class="f-on" x="645" y="96" text-anchor="middle">게임 서버</text>
+        <text class="f-on" x="645" y="116" text-anchor="middle">주소 비공개</text>
+        <line class="f-line" x1="440" y1="100" x2="558" y2="100" marker-end="url(#dd-c)"/>
+        <text class="f-sub" x="500" y="90" text-anchor="middle">사설망</text>
+      </svg>
+      <figcaption>플레이어가 아는 주소는 앞단의 것뿐이다. 앞단은 여러 지역에 같은 주소로 떠 있어(애니캐스트) 공격 트래픽도 나뉘어 들어온다. 게임 서버 주소를 모르면 공격자는 앞단을 넘어서 직접 칠 수 없다.</figcaption>
+    </figure>
+    <ul>
+      <li><strong>업스트림 스크러빙.</strong> 회선 사업자나 클라우드의 DDoS 보호, 전문 업체가 큰 망에서 트래픽을 받아 걸러 깨끗한 것만 넘긴다. 용량 공격은 이것 말고는 답이 없다.</li>
+      <li><strong>릴레이·프록시.</strong> 플레이어와 게임 서버 사이에 릴레이를 두면 서버 주소가 클라이언트에 드러나지 않는다. Valve의 Steam Datagram Relay처럼 플랫폼이 이 층을 제공하기도 한다. 지연이 조금 늘지만, 좋은 릴레이망은 일반 인터넷 경로보다 오히려 빠를 때도 있다.</li>
+      <li><strong>주소가 새는 곳을 막는다.</strong> 서버 목록 API, 관전·재접속 정보, 오류 메시지, DNS 기록에 실제 주소가 나오지 않는지 본다. 한 번 새면 주소를 바꾸는 수밖에 없다.</li>
+    </ul>
+
+    <h3>인증 안 된 패킷은 가장 싸게 버린다</h3>
+    <p>
+      게임 서버가 처음 보는 주소에서 온 UDP 패킷마다 세션 객체를 만들면, 공격자는 상태 표를 채우는 것만으로 서버를 쓰러뜨린다. 그래서 상태를 만들기 전에 두 가지를 확인한다.
+    </p>
+    <ul>
+      <li><strong>연결 토큰.</strong> 로그인 서버가 HTTPS로 클라이언트에게 토큰을 준다. 토큰에는 접속할 서버, 만료 시각, 클라이언트 식별자가 들어 있고, 백엔드와 게임 서버만 아는 키로 암호화·서명돼 있다. 게임 서버는 첫 패킷의 토큰을 검증하고, 실패하면 아무 응답 없이 버린다. 검증은 대칭 키 연산 한 번이라 싸다(<a href="cipher-modes.html">운용 모드와 인증 암호</a>).</li>
+      <li><strong>주소 확인.</strong> 토큰이 맞아도 출발 주소가 위조일 수 있다. 서버가 작은 도전 값을 그 주소로 보내고, 그 값을 되돌려 받은 뒤에야 세션을 만든다. SYN 쿠키와 같은 생각이다.</li>
+    </ul>
+    <p>
+      이 검사를 커널 우회 경로나 앞단에서 하면 더 많이 버틴다. 핵심은 "버리는 비용이 받는 비용보다 훨씬 작아야 한다"는 것이다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <table>
+      <thead><tr><th>상황</th><th>먼저 할 일</th></tr></thead>
+      <tbody>
+        <tr><td>회선이 차서 정상 트래픽도 못 들어온다</td><td>업스트림 보호를 켠다. 서버 쪽 조치로는 해결되지 않는다</td></tr>
+        <tr><td>회선은 여유인데 서버 CPU·메모리가 찬다</td><td>인증 전 상태를 만들지 않게 하고, 토큰 검사를 앞으로 옮긴다</td></tr>
+        <tr><td>특정 API만 느려진다</td><td>그 API에 레이트 리밋, 캐시, 대기열을 건다</td></tr>
+        <tr><td>특정 플레이어만 끊긴다</td><td>그 플레이어 회선이 공격받는 경우다. 릴레이로 상대에게 IP가 보이지 않게 한다</td></tr>
+        <tr><td>공격 중 자동 확장이 계속 늘어난다</td><td>상한을 둔다. 비용 공격이 될 수 있다</td></tr>
+      </tbody>
+    </table>
+    <p>
+      자동 확장은 L7 공격을 흡수하는 데 쓸 수 있지만, 상한이 없으면 공격자가 청구서를 키우는 공격이 된다. 확장 상한과 비용 경보를 함께 둔다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>웹용 방어가 그대로 맞지 않는다.</strong> 웹 방화벽(WAF)과 CDN은 HTTP를 이해하고 걸러 준다. 게임의 자체 UDP 프로토콜은 내용을 모르므로 속도와 주소 수준에서만 거른다. 그래서 프로토콜 쪽에 토큰과 주소 확인을 넣어 두는 것이 중요하다.</li>
+      <li><strong>개별 플레이어도 표적이 된다.</strong> P2P 방식이면 상대의 공인 IP가 보이고, 경쟁 게임에서 상대 회선을 끊는 데 쓰인다. 방송하는 플레이어는 더 자주 노린다. 릴레이로 서로의 IP를 감춘다(<a href="../network/nat-traversal.html">NAT 통과</a>).</li>
+      <li><strong>매치 서버를 노리는 공격도 있다.</strong> 지고 있는 쪽이 판을 무효로 만들려고 그 판의 서버를 친다. 판 중간에 서버가 끊기면 결과를 어떻게 처리할지(무효, 승패 유지) 정책을 미리 정해 두고, 그 정책이 공격의 이득을 없애게 한다.</li>
+      <li><strong>로그인과 대기열이 L7 공격의 첫 표적이다.</strong> 점검 직후처럼 원래 몰리는 시점에 섞여 들어온다. 로그인 앞단의 비용을 낮추고(캐시, 비싼 해시는 레이트 리밋 뒤에), 입장 대기열로 서버를 보호한다.</li>
+      <li><strong>공격 중에도 지표를 본다.</strong> 회선 사용률, 인증 실패 패킷 비율, 새 세션 생성 속도, 지역별 접속 수를 평소 값과 비교해 공격을 빨리 알아챈다. 대응 순서는 런북으로 적어 둔다(<a href="../operations/diagnosis.html">느린 서버 진단</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>공격받는 중에 서버 IP를 공지·포럼·오류 화면으로 알리지 않는다. 우회 주소도 금방 새 표적이 된다.</li>
+      <li>인증 실패 패킷에 응답하지 않는다. 오류 응답도 반사에 쓰일 수 있다.</li>
+      <li>보호 서비스는 평소에 켜 두고 시험한다. 공격이 시작된 뒤 처음 붙이면 경로 전환에 시간이 걸리고 설정 실수가 난다.</li>
+      <li>DDoS는 다른 공격을 가리는 연막으로 쓰이기도 한다. 공격 중에도 로그인 실패 급증, 결제 이상 같은 다른 신호를 놓치지 않는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

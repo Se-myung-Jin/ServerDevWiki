@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>서명과 TLS · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="security/signature-tls">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="cipher-kinds.html">대칭 암호와 비대칭 암호</a> · <a href="hashing.html">해시와 비밀번호 저장</a> · <a href="../network/http-versions.html">HTTP와 그 변천</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">디지털 서명</span>은 개인 키를 가진 쪽만 만들 수 있고, 공개 키를 가진 누구나 확인할 수 있는 값이다. 서명이 맞으면 내용이 바뀌지 않았고, 그 개인 키의 주인이 만들었다는 것이 보장된다. 서명은 내용을 감추지 않는다.
+    </p>
+    <p>
+      <span class="blank">TLS</span>는 서명과 키 합의를 엮어 안전한 통신로를 만든다. 서버는 인증서로 "이 공개 키는 이 도메인의 것"임을 보이고, 그 키로 핸드셰이크에 서명한다. 양쪽은 임시 키 합의로 세션 키를 만들고, 본문은 AEAD로 암호화한다. TLS 1.3은 이 과정을 한 번의 왕복으로 끝낸다.
+    </p>
+    <p>
+      인증서 검증을 건너뛰면 이 구조 전체가 무너진다. 암호화는 되지만 누구와 암호화하는지 모르게 된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>서명은 "개인 키로 암호화"가 아니다</h3>
+    <p>
+      서명을 "개인 키로 암호화하고 공개 키로 복호화한다"고 설명하는 경우가 많다. 교과서식 RSA에서는 수식 모양이 비슷해 그렇게 보이지만, 실제 RSA 서명은 패딩 방식이 암호화와 다르다. ECDSA와 Ed25519에는 아예 암호화 연산이 없다. 정확한 설명은 "개인 키로 서명값을 <strong>만들고</strong>, 공개 키로 서명이 맞는지 <strong>확인한다</strong>"이다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 220" role="img" aria-label="서명은 메시지의 해시에 내 개인 키로 서명값을 만들고, 받는 쪽은 내 공개 키로 메시지와 서명이 맞는지 확인한다. 암호화는 상대의 공개 키로 잠그고 상대의 개인 키로 푼다">
+        <defs><marker id="st-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="26">서명 · 내가 만들었음을 누구에게나 증명한다</text>
+        <rect class="f-cell" x="20" y="40" width="110" height="40" rx="6"/><text class="f-text" x="75" y="65" text-anchor="middle">메시지</text>
+        <rect class="f-cell" x="170" y="40" width="110" height="40" rx="6"/><text class="f-text" x="225" y="65" text-anchor="middle">해시</text>
+        <rect class="f-miss" x="320" y="40" width="130" height="40" rx="6"/><text class="f-on" x="385" y="65" text-anchor="middle">서명값</text>
+        <rect class="f-hit" x="530" y="40" width="200" height="40" rx="6"/><text class="f-text" x="630" y="58" text-anchor="middle">확인: 맞다 / 틀리다</text><text class="f-sub" x="630" y="74" text-anchor="middle">메시지 + 서명값 + 공개 키</text>
+        <line class="f-line" x1="130" y1="60" x2="168" y2="60" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="280" y1="60" x2="318" y2="60" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="450" y1="60" x2="528" y2="60" marker-end="url(#st-a)"/>
+        <text class="f-sub" x="300" y="100" text-anchor="middle">내 개인 키로 만든다</text>
+        <text class="f-sub" x="490" y="100" text-anchor="middle">내 공개 키로 누구나</text>
+
+        <line class="f-grid" x1="20" y1="118" x2="740" y2="118"/>
+
+        <text class="f-strong" x="20" y="146">암호화 · 상대만 읽게 한다</text>
+        <rect class="f-cell" x="20" y="160" width="110" height="40" rx="6"/><text class="f-text" x="75" y="185" text-anchor="middle">본문</text>
+        <rect class="f-hit" x="320" y="160" width="130" height="40" rx="6"/><text class="f-text" x="385" y="185" text-anchor="middle">암호문</text>
+        <rect class="f-cell" x="530" y="160" width="200" height="40" rx="6"/><text class="f-text" x="630" y="185" text-anchor="middle">본문</text>
+        <line class="f-line" x1="130" y1="180" x2="318" y2="180" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="450" y1="180" x2="528" y2="180" marker-end="url(#st-a)"/>
+        <text class="f-sub" x="225" y="214" text-anchor="middle">상대의 공개 키로 잠근다</text>
+        <text class="f-sub" x="490" y="214" text-anchor="middle">상대의 개인 키로만 푼다</text>
+      </svg>
+      <figcaption>두 줄에서 개인 키를 쓰는 자리가 다르다. 서명은 만드는 쪽이 하나뿐이고 확인은 누구나 한다. 암호화는 잠그는 쪽이 누구나이고 푸는 쪽이 하나뿐이다.</figcaption>
+    </figure>
+    <p>
+      서명은 메시지 전체가 아니라 해시에 붙는다. 비대칭 연산이 느리기 때문이다. 그래서 해시가 약해지면 서명도 같이 약해진다. 충돌하는 두 문서를 만들 수 있으면 한쪽에 받은 서명을 다른 쪽에 그대로 옮길 수 있다(<a href="hashing.html">해시와 비밀번호 저장</a>).
+    </p>
+    <p>
+      서명은 HMAC과 달리 <strong>부인 방지</strong>가 된다. HMAC 키는 양쪽이 같이 갖고 있어 어느 쪽이 만들었는지 가릴 수 없다. 개인 키는 한쪽만 갖고 있으므로 서명이 맞으면 그쪽이 만든 것이다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>서명 방식</th><th>특징</th><th>주의</th></tr></thead>
+      <tbody>
+        <tr><td>RSA-PSS</td><td>오래 쓰였고 호환성이 넓다</td><td>3072비트 이상이어야 128비트 수준. 서명이 크다</td></tr>
+        <tr><td>ECDSA(P-256)</td><td>짧고 빠르다. TLS 인증서에 흔하다</td><td>서명마다 쓰는 난수가 겹치거나 예측되면 개인 키가 계산된다</td></tr>
+        <tr><td>Ed25519</td><td>짧고 빠르다. 난수를 메시지에서 결정적으로 만든다</td><td>ECDSA의 난수 실수가 생길 자리가 없다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>인증서는 공개 키에 붙은 보증서다</h3>
+    <p>
+      공개 키만 받아서는 그것이 진짜 서버의 키인지 모른다. <strong>인증서</strong>는 인증 기관(CA)이 "이 공개 키는 example.com의 것"이라고 서명해 준 문서다. 클라이언트는 다음을 모두 확인한다.
+    </p>
+    <ul>
+      <li>서명을 따라 올라가면 중간 CA를 거쳐 OS나 브라우저가 미리 믿기로 한 <strong>루트 CA</strong>에 닿는가</li>
+      <li>인증서의 이름(SAN)이 접속한 도메인과 맞는가</li>
+      <li>유효 기간 안인가, 폐기되지 않았는가</li>
+      <li>서버가 그 인증서의 개인 키를 실제로 가졌는가(핸드셰이크 서명으로 확인)</li>
+    </ul>
+    <p>
+      인증서 수명은 점점 짧아지고 있다. Let's Encrypt 인증서는 90일이고, CA/브라우저 포럼은 2025년에 공개 인증서의 최대 유효 기간을 몇 년에 걸쳐 47일까지 줄이기로 정했다. 손으로 갱신하는 운영은 더는 버티지 못한다. 갱신을 자동화하고 만료를 감시한다.
+    </p>
+
+    <h3>TLS 1.3은 한 번의 왕복으로 연결을 맺는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 310" role="img" aria-label="클라이언트가 ClientHello와 키 공유 값을 보내면 서버가 ServerHello와 키 공유 값, 암호화된 인증서와 서명과 Finished를 보낸다. 클라이언트는 확인 후 Finished와 함께 바로 요청을 보낸다">
+        <defs><marker id="st-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="16" width="140" height="36" rx="6"/><text class="f-text" x="90" y="39" text-anchor="middle">클라이언트</text>
+        <rect class="f-box" x="600" y="16" width="140" height="36" rx="6"/><text class="f-text" x="670" y="39" text-anchor="middle">서버</text>
+        <line class="f-grid" x1="90" y1="52" x2="90" y2="300"/>
+        <line class="f-grid" x1="670" y1="52" x2="670" y2="300"/>
+
+        <text class="f-text" x="380" y="82" text-anchor="middle">① ClientHello + 키 공유 값</text>
+        <line class="f-line" x1="90" y1="92" x2="668" y2="92" marker-end="url(#st-b)"/>
+        <text class="f-sub" x="380" y="110" text-anchor="middle">지원하는 암호 목록, 접속할 이름(SNI)</text>
+
+        <text class="f-text" x="380" y="142" text-anchor="middle">② ServerHello + 키 공유 값</text>
+        <line class="f-line" x1="670" y1="152" x2="92" y2="152" marker-end="url(#st-b)"/>
+        <rect class="f-hit" x="220" y="162" width="320" height="30" rx="6"/>
+        <text class="f-text" x="380" y="182" text-anchor="middle">암호화됨: 인증서 · 핸드셰이크 서명 · Finished</text>
+
+        <rect class="f-cell" x="20" y="202" width="150" height="40" rx="6"/>
+        <text class="f-sub" x="95" y="219" text-anchor="middle">인증서·서명 확인</text>
+        <text class="f-sub" x="95" y="234" text-anchor="middle">세션 키 계산</text>
+
+        <rect class="f-miss" x="240" y="226" width="280" height="30" rx="6"/>
+        <text class="f-on" x="380" y="246" text-anchor="middle">③ Finished + 첫 요청</text>
+        <line class="f-line" x1="90" y1="266" x2="668" y2="266" marker-end="url(#st-b)"/>
+        <text class="f-sub" x="380" y="290" text-anchor="middle">한 번 왕복한 뒤 바로 데이터를 보낸다</text>
+      </svg>
+      <figcaption>클라이언트는 첫 메시지에 키 공유 값을 미리 넣는다. 서버는 답하면서 키를 계산해 그 뒤를 바로 암호화하고, 인증서와 서명까지 한 번에 보낸다. TLS 1.2는 같은 일에 두 왕복이 걸렸다.</figcaption>
+    </figure>
+    <p>
+      핸드셰이크가 정하는 것은 세 가지다. 어떤 알고리즘을 쓸지, 상대가 진짜인지, 이번 연결의 세션 키가 무엇인지다. 세션 키는 회선으로 오가지 않는다. 양쪽이 임시 키 합의(ECDHE)로 각자 계산한다.
+    </p>
+    <p>
+      TLS 1.3은 정적 RSA 키 전송, CBC, RC4, SHA-1 같은 옛 선택지를 모두 뺐다. 남은 암호 조합은 AEAD 몇 개뿐이라 설정 실수의 여지가 크게 줄었다. QUIC(HTTP/3)은 TLS 1.3을 전송 계층에 넣어 같은 핸드셰이크를 쓴다(<a href="../network/http-versions.html">HTTP와 그 변천</a>).
+    </p>
+
+    <h3>전방 비밀성과 0-RTT의 대가</h3>
+    <p>
+      예전 TLS는 서버의 RSA 공개 키로 세션 키를 직접 잠가 보내는 방식을 허용했다. 그러면 누군가 통신을 몽땅 기록해 두었다가 나중에 서버 개인 키를 손에 넣는 순간 과거 통신이 전부 풀린다. 임시 키 합의는 연결이 끝나면 비밀 수를 버리므로 이 공격이 통하지 않는다. 이것이 <span class="blank">전방 비밀성</span>이고, TLS 1.3은 이 방식만 남겼다.
+    </p>
+    <p>
+      TLS 1.3에는 다시 접속할 때 첫 패킷에 데이터를 실어 보내는 <strong>0-RTT</strong>가 있다. 이전 연결에서 받아 둔 키를 쓰므로 왕복 하나를 아낀다. 대신 이 데이터는 공격자가 그대로 복사해 다시 보내도 서버가 막지 못한다. 0-RTT로는 몇 번 받아도 결과가 같은 요청(조회)만 받는다. 결제나 아이템 지급 요청은 절대 받지 않는다.
+    </p>
+
+    <h3>검증을 끄는 코드가 가장 흔한 구멍이다</h3>
+    <pre><code class="language-csharp">// 하지 말 것: 모든 인증서를 통과시킨다. 개발 중에 넣고 그대로 배포되는 일이 많다
+var handler = new HttpClientHandler
+{
+    ServerCertificateCustomValidationCallback =
+        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+};
+
+// 자체 TCP 프로토콜을 TLS로 감쌀 때: 이름을 지정하고 기본 검증을 그대로 쓴다
+await using var ssl = new SslStream(networkStream);
+await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+{
+    TargetHost = "login.example-game.com",   // 인증서 이름과 비교된다
+    EnabledSslProtocols = SslProtocols.Tls13 | SslProtocols.Tls12,
+}, ct);</code></pre>
+    <p>
+      개발 서버의 자체 서명 인증서 때문에 검증을 끄고 싶으면, 끄는 대신 개발용 루트 인증서를 개발 기기에만 설치한다. 검증을 끄는 코드는 빌드 설정과 무관하게 아예 남기지 않는 편이 안전하다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>상황</th><th>쓰는 것</th></tr></thead>
+      <tbody>
+        <tr><td>클라이언트 ↔ 로그인·결제·웹 API</td><td>TLS 1.3(최소 1.2), 공인 인증서, 자동 갱신</td></tr>
+        <tr><td>서버 ↔ 서버(내부망)</td><td>mTLS: 양쪽이 인증서를 내고 서로 확인한다. 내부 CA나 서비스 메시가 발급한다</td></tr>
+        <tr><td>클라이언트 ↔ 게임 서버 TCP</td><td><code>SslStream</code>으로 감싼 TLS</td></tr>
+        <tr><td>클라이언트 ↔ 게임 서버 UDP</td><td>DTLS·QUIC, 또는 TLS로 받은 세션 키로 AEAD(<a href="cipher-modes.html">운용 모드와 인증 암호</a>)</td></tr>
+        <tr><td>배포물·공지·설정 위변조 방지</td><td>Ed25519나 ECDSA 서명, 클라이언트에 공개 키 내장</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      <strong>인증서 고정(피닝)</strong>은 클라이언트가 특정 인증서나 공개 키만 믿게 하는 것이다. CA가 잘못 발급한 인증서나 중간자 프록시를 막지만, 서버 키를 바꾸는 순간 고정된 클라이언트가 모두 접속하지 못한다. 고정한다면 인증서가 아니라 공개 키(SPKI)를 고정하고, 예비 키를 함께 넣어 두고, 강제 업데이트 경로가 있는 클라이언트에만 쓴다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>로그인 폭주는 TLS 핸드셰이크 비용으로도 온다.</strong> 연결마다 서명과 키 합의가 한 번씩 든다. ECDSA 인증서가 RSA보다 서버 쪽 서명 비용이 싸고, 세션 재개(티켓)를 켜면 재접속 비용이 준다. TLS 종료를 게이트웨이나 로드밸런서에 모으는 구성이 흔하다(<a href="../architecture/server-topology.html">게임 서버 토폴로지</a>).</li>
+      <li><strong>패치 매니페스트와 공지에 서명한다.</strong> 클라이언트 실행 파일에 서명 확인용 공개 키를 넣고, 서버가 내려주는 매니페스트·공지·원격 설정의 서명을 확인한다. CDN이나 웹 서버가 뚫려도 가짜 파일을 밀어 넣지 못한다. 키 교체를 대비해 공개 키를 두 개 넣어 둔다.</li>
+      <li><strong>서명 개인 키는 빌드 서버에 두지 않는다.</strong> HSM이나 클라우드 키 관리 서비스에 두고 서명 요청만 보낸다. 이 키가 새면 모든 클라이언트가 공격자의 배포물을 믿는다.</li>
+      <li><strong>인증서 만료는 전체 장애다.</strong> 로그인 서버 인증서 하나가 만료되면 모든 플레이어가 동시에 접속하지 못한다. 만료 30일, 7일 전에 경보를 걸고, 갱신을 자동화한다(<a data-ref="operations/deploy-pipeline">배포 파이프라인</a>).</li>
+      <li><strong>TLS는 통신로만 지킨다.</strong> 클라이언트 자체가 공격자의 손에 있으면 TLS 안쪽 내용은 그 사람이 다 본다. 패킷 조작 방어는 서버 검증이 맡는다(<a href="game-security.html">게임 보안과 치트 대응</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"HTTPS니까 안전하다"는 인증서를 확인했을 때만 맞다.</strong> 경고를 무시하거나 검증 콜백이 항상 true를 돌려주면 중간자와 안전하게 통신하게 된다.</li>
+      <li><strong>서명한 데이터는 누구나 읽는다.</strong> 서명은 위조를 막을 뿐이다. 내용을 감추려면 암호화를 따로 한다.</li>
+      <li><strong>ECDSA를 직접 다루면 난수를 조심한다.</strong> 서명 두 개에 같은 난수가 쓰이면 개인 키가 계산된다. 실제로 이 실수로 서명 키가 통째로 유출된 사례가 있다. 라이브러리 기본값을 쓰거나 Ed25519를 고른다.</li>
+      <li><strong>인증서 검증은 이름 확인까지 포함한다.</strong> 체인만 확인하고 이름을 안 보면, 공격자가 자기 도메인으로 정상 발급받은 인증서도 통과한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

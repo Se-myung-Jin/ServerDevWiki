@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>운용 모드와 인증 암호 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="security/cipher-modes">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="cipher-kinds.html">대칭 암호와 비대칭 암호</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      AES는 16바이트 블록 하나를 암호화하는 함수일 뿐이다. 긴 데이터를 블록으로 나눠 어떻게 이어 붙일지는 <span class="blank">운용 모드</span>가 정한다. 모드를 잘못 고르면 AES를 쓰고도 패턴이 드러난다.
+    </p>
+    <p>
+      암호화는 내용을 가릴 뿐 변조를 막지 않는다. 내용을 몰라도 비트를 뒤집을 수 있고, 받는 쪽은 그것이 원래 값인지 알 수 없다. 그래서 지금은 암호화와 무결성 검사를 한 번에 하는 <span class="blank">AEAD</span>(AES-GCM, ChaCha20-Poly1305)를 기본으로 쓴다.
+    </p>
+    <p>
+      AEAD에도 지켜야 할 규칙이 하나 있다. 같은 키로 같은 <strong>논스</strong>를 두 번 쓰면 안 된다. 재사용하면 기밀성과 무결성이 함께 무너진다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>블록을 따로 암호화하면 패턴이 남는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="ECB에서는 같은 평문 블록 AA가 같은 암호문 7f가 되어 반복이 보이고, CBC와 CTR에서는 같은 AA도 자리마다 다른 암호문이 된다">
+        <text class="f-strong" x="20" y="30">ECB · 블록마다 따로</text>
+        <rect class="f-cell" x="20" y="42" width="70" height="34"/><text class="f-text" x="55" y="64" text-anchor="middle">AA</text>
+        <rect class="f-cell" x="90" y="42" width="70" height="34"/><text class="f-text" x="125" y="64" text-anchor="middle">BB</text>
+        <rect class="f-cell" x="160" y="42" width="70" height="34"/><text class="f-text" x="195" y="64" text-anchor="middle">AA</text>
+        <rect class="f-cell" x="230" y="42" width="70" height="34"/><text class="f-text" x="265" y="64" text-anchor="middle">CC</text>
+        <rect class="f-miss" x="20" y="96" width="70" height="34"/><text class="f-on" x="55" y="118" text-anchor="middle">7f</text>
+        <rect class="f-cell" x="90" y="96" width="70" height="34"/><text class="f-text" x="125" y="118" text-anchor="middle">e2</text>
+        <rect class="f-miss" x="160" y="96" width="70" height="34"/><text class="f-on" x="195" y="118" text-anchor="middle">7f</text>
+        <rect class="f-cell" x="230" y="96" width="70" height="34"/><text class="f-text" x="265" y="118" text-anchor="middle">1c</text>
+        <text class="f-sub" x="20" y="156">같은 평문 블록 → 같은 암호문 블록</text>
+        <text class="f-sub" x="20" y="174">내용을 몰라도 어디가 반복되는지 보인다</text>
+
+        <line class="f-grid" x1="380" y1="20" x2="380" y2="186"/>
+
+        <text class="f-strong" x="420" y="30">CBC·CTR·GCM · 위치를 섞는다</text>
+        <rect class="f-cell" x="420" y="42" width="70" height="34"/><text class="f-text" x="455" y="64" text-anchor="middle">AA</text>
+        <rect class="f-cell" x="490" y="42" width="70" height="34"/><text class="f-text" x="525" y="64" text-anchor="middle">BB</text>
+        <rect class="f-cell" x="560" y="42" width="70" height="34"/><text class="f-text" x="595" y="64" text-anchor="middle">AA</text>
+        <rect class="f-cell" x="630" y="42" width="70" height="34"/><text class="f-text" x="665" y="64" text-anchor="middle">CC</text>
+        <rect class="f-hit" x="420" y="96" width="70" height="34"/><text class="f-text" x="455" y="118" text-anchor="middle">9a</text>
+        <rect class="f-hit" x="490" y="96" width="70" height="34"/><text class="f-text" x="525" y="118" text-anchor="middle">40</text>
+        <rect class="f-hit" x="560" y="96" width="70" height="34"/><text class="f-text" x="595" y="118" text-anchor="middle">d3</text>
+        <rect class="f-hit" x="630" y="96" width="70" height="34"/><text class="f-text" x="665" y="118" text-anchor="middle">b7</text>
+        <text class="f-sub" x="420" y="156">앞 블록이나 카운터를 섞어 같은 AA도</text>
+        <text class="f-sub" x="420" y="174">자리마다 다른 값이 된다</text>
+      </svg>
+      <figcaption>ECB는 블록을 서로 독립으로 암호화한다. 같은 색이 넓게 깔린 이미지를 ECB로 암호화하면 윤곽이 그대로 보인다. 블록을 잘라 붙이거나 순서를 바꿔도 각각 정상으로 풀린다.</figcaption>
+    </figure>
+
+    <h3>모드마다 섞는 방법과 조건이 다르다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>모드</th><th>섞는 방법</th><th>초기값 조건</th><th>무결성</th><th>지금 쓰나</th></tr></thead>
+      <tbody>
+        <tr><td>ECB</td><td>섞지 않는다</td><td>없다</td><td>없다</td><td>쓰지 않는다</td></tr>
+        <tr><td>CBC</td><td>앞 암호문 블록을 XOR</td><td>IV가 <strong>예측 불가</strong>해야 한다</td><td>없다. 패딩 오라클에 약하다</td><td>옛 시스템 호환용</td></tr>
+        <tr><td>CTR</td><td>논스+카운터를 암호화해 키스트림을 만든다</td><td>논스가 <strong>겹치지 않아야</strong> 한다</td><td>없다</td><td>단독으로는 쓰지 않는다</td></tr>
+        <tr><td>GCM</td><td>CTR + GHASH 인증 태그</td><td>96비트 논스, 겹치지 않아야 한다</td><td>있다(AEAD)</td><td>기본</td></tr>
+        <tr><td>ChaCha20-Poly1305</td><td>스트림 암호 + Poly1305 태그</td><td>96비트 논스, 겹치지 않아야 한다</td><td>있다(AEAD)</td><td>기본, AES 가속 없는 기기에서 유리</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      CBC는 마지막 블록을 채우는 패딩이 필요하다. 받는 쪽이 "패딩이 틀렸다"와 "인증이 틀렸다"를 다르게 응답하면, 공격자는 그 차이만으로 암호문을 한 바이트씩 풀어낸다. 이것이 <strong>패딩 오라클</strong>이다. TLS 1.3이 CBC를 아예 뺀 이유 가운데 하나다.
+    </p>
+
+    <h3>논스를 다시 쓰면 무너진다</h3>
+    <p>
+      CTR과 GCM은 키와 논스로 키스트림을 만들어 평문에 XOR한다. 같은 키와 논스를 두 번 쓰면 같은 키스트림이 두 번 나온다. 두 암호문을 XOR하면 키스트림이 지워지고 <strong>두 평문의 XOR</strong>이 남는다. 한쪽 평문을 조금이라도 알면 다른 쪽이 풀린다.
+    </p>
+    <p>
+      GCM은 더 나쁘다. 논스가 겹친 두 메시지로 인증 키까지 계산해 낼 수 있어서, 이후에는 공격자가 아무 메시지나 위조해 통과시킨다. 기밀성과 무결성이 함께 사라진다.
+    </p>
+    <p>
+      흔한 사고는 프로세스 재시작에서 난다. 키는 설정 파일에 그대로 두고 카운터만 메모리에서 0으로 돌아가면, 재시작 전에 쓴 논스를 처음부터 다시 쓴다. 해법은 둘 중 하나다. 연결이나 세션마다 새 키를 만들거나, 카운터를 키와 같은 수명으로 영속화한다.
+    </p>
+    <p>
+      논스를 무작위로 뽑아도 된다. 다만 96비트 무작위 논스는 생일 문제 때문에 같은 키로 약 2<sup>32</sup>개 메시지까지만 쓰라는 것이 GCM 규격의 권고다. 메시지가 많은 통신은 카운터 논스가 안전하다.
+    </p>
+
+    <h3>AEAD는 암호화하지 않는 부분도 묶는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="패킷 헤더는 평문으로 두되 연관 데이터로 태그 계산에 넣고, 본문은 암호화하며, 끝에 16바이트 태그를 붙인다. 논스는 방향과 시퀀스 번호로 만든다">
+        <defs><marker id="cm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="40" width="200" height="50"/>
+        <text class="f-text" x="120" y="62" text-anchor="middle">헤더(평문)</text>
+        <text class="f-sub" x="120" y="80" text-anchor="middle">세션 ID · 시퀀스 · 길이</text>
+        <rect class="f-hit" x="220" y="40" width="340" height="50"/>
+        <text class="f-text" x="390" y="62" text-anchor="middle">본문(암호문)</text>
+        <text class="f-sub" x="390" y="80" text-anchor="middle">이동 · 스킬 · 채팅</text>
+        <rect class="f-miss" x="560" y="40" width="120" height="50"/>
+        <text class="f-on" x="620" y="62" text-anchor="middle">태그</text>
+        <text class="f-on" x="620" y="80" text-anchor="middle">16바이트</text>
+
+        <path class="f-line" d="M120,90 L120,124 L600,124 L600,92" marker-end="url(#cm-a)"/>
+        <path class="f-line" d="M390,90 L390,122" />
+        <text class="f-sub" x="120" y="144" text-anchor="middle">AAD: 암호화하지 않지만</text>
+        <text class="f-sub" x="120" y="160" text-anchor="middle">태그에 들어간다</text>
+        <text class="f-sub" x="420" y="144" text-anchor="middle">헤더 한 비트만 바뀌어도 태그가 틀려 버린다</text>
+
+        <rect class="f-cell" x="20" y="172" width="300" height="30"/>
+        <text class="f-text" x="170" y="192" text-anchor="middle">논스 = 방향(4B) + 시퀀스 번호(8B)</text>
+        <text class="f-sub" x="340" y="192">보내지 않고 양쪽이 각자 계산한다</text>
+      </svg>
+      <figcaption>라우팅에 필요한 헤더는 평문으로 두되 연관 데이터(AAD)로 태그 계산에 넣는다. 공격자가 시퀀스 번호나 세션 ID만 바꿔도 태그 검사에서 걸린다.</figcaption>
+    </figure>
+    <p>
+      AEAD는 받는 쪽에서 태그를 먼저 검사하고, 맞을 때만 평문을 내준다. 라이브러리가 이 순서를 지켜 준다. 직접 CBC와 <a data-ref="security/hashing">HMAC</a>을 조합하던 시절에는 "암호화 후 MAC"인지 "MAC 후 암호화"인지, MAC에 IV가 들어가는지를 매번 따져야 했다. 그 실수가 AEAD로 사라진다.
+    </p>
+    <pre><code class="language-csharp">using System.Buffers.Binary;
+using System.Security.Cryptography;
+
+// 연결마다 새로 받은 256비트 세션 키. 논스는 방향 + 시퀀스로 만든다.
+sealed class PacketCipher(byte[] key, uint direction) : IDisposable
+{
+    readonly AesGcm _gcm = new(key, tagSizeInBytes: 16);   // .NET 8+ 생성자
+    ulong _sendSeq;
+
+    public void Seal(ReadOnlySpan&lt;byte&gt; header, ReadOnlySpan&lt;byte&gt; body,
+                     Span&lt;byte&gt; cipher, Span&lt;byte&gt; tag, out ulong seq)
+    {
+        seq = _sendSeq++;                      // 키 하나로 절대 되돌아가지 않는다
+        Span&lt;byte&gt; nonce = stackalloc byte[12];
+        BinaryPrimitives.WriteUInt32BigEndian(nonce, direction);
+        BinaryPrimitives.WriteUInt64BigEndian(nonce[4..], seq);
+        _gcm.Encrypt(nonce, body, cipher, tag, associatedData: header);
+    }
+
+    public void Dispose() =&gt; _gcm.Dispose();
+}</code></pre>
+    <p>
+      방향 값을 논스에 넣는 이유가 있다. 클라이언트와 서버가 같은 세션 키로 각자 0번부터 세면, 양쪽의 0번 패킷이 같은 논스를 쓴다. 방향을 다르게 두거나 방향별로 키를 따로 만든다(TLS는 방향별 키를 쓴다).
+    </p>
+
+    <h2>선택 기준</h2>
+    <ul>
+      <li><strong>기본은 AES-256-GCM이다.</strong> 서버 CPU에는 거의 언제나 AES 가속이 있다.</li>
+      <li><strong>AES 가속이 없는 기기가 많으면 ChaCha20-Poly1305를 쓴다.</strong> .NET의 <code>ChaCha20Poly1305</code>는 OS가 지원할 때만 쓸 수 있으니 <code>IsSupported</code>를 확인한다.</li>
+      <li><strong>논스를 셀 수 있으면 카운터를, 셀 수 없으면 무작위를 쓴다.</strong> 무작위 논스는 키당 메시지 수 상한을 지키고, 넘기 전에 키를 바꾼다.</li>
+      <li><strong>CBC와 CTR은 새로 쓰지 않는다.</strong> 옛 데이터를 읽어야 할 때만 남겨 두고, 다시 쓸 때는 AEAD로 옮긴다.</li>
+    </ul>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>UDP 패킷은 시퀀스 번호를 논스로 쓴다.</strong> 이미 붙어 있는 번호를 논스로 쓰면 논스를 따로 보낼 필요가 없고, 겹치지 않는다는 조건도 자연히 지켜진다. 세션 키는 접속마다 새로 받으므로 재접속해서 번호가 0으로 돌아가도 안전하다.</li>
+      <li><strong><a data-ref="security/auth-session">재전송 공격</a>은 암호화가 막지 않는다.</strong> 정상 패킷을 그대로 다시 보내면 태그가 맞는다. 받은 시퀀스 번호를 창(window)으로 기억해 이미 받은 번호와 너무 오래된 번호를 버린다. 자세한 판정은 <a href="game-security.html">게임 보안과 치트 대응</a>에서 다룬다.</li>
+      <li><strong>태그가 틀린 패킷은 조용히 버리고 센다.</strong> 오류 내용을 돌려주면 공격자에게 단서가 된다. 세션별 실패 횟수가 늘면 끊고 기록한다.</li>
+      <li><strong>패킷마다 할당하지 않는다.</strong> <code>AesGcm</code> 객체를 연결마다 하나 두고, 버퍼는 <code>Span</code>과 풀에서 빌린다(<a href="../csharp/ref-span.html">ref와 Span</a>). <code>AesGcm</code> 인스턴스는 스레드 안전하지 않으니 연결을 처리하는 스레드 하나만 쓴다.</li>
+      <li><strong>저장 데이터 암호화도 같은 규칙이다.</strong> DB 컬럼이나 세이브 파일을 암호화할 때 행마다 무작위 논스를 만들어 암호문 앞에 붙여 저장한다. 고정 IV를 쓰는 코드가 가장 흔한 실수다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>기밀성과 무결성은 따로 챙겨야 하는 성질이다.</strong> 암호화만 하면 내용은 가려도 바뀐 것을 모른다. 인증 태그가 붙는 방식을 기본으로 쓴다.</li>
+      <li><strong>논스는 비밀이 아니지만 유일해야 한다.</strong> 평문으로 보내도 되고, 대신 같은 키로 절대 다시 쓰면 안 된다. CBC의 IV는 여기에 더해 예측할 수 없어야 한다.</li>
+      <li><strong>태그를 잘라 쓰지 않는다.</strong> GCM 태그를 짧게 하면 위조 확률이 커진다. 16바이트를 그대로 쓴다.</li>
+      <li><strong>복호화 실패를 무시하고 진행하지 않는다.</strong> 예외를 삼키고 빈 값으로 처리하는 코드가 있으면 태그 검사는 의미가 없다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

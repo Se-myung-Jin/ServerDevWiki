@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>결제와 영수증 검증 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="security/payment-verification">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="signature-tls.html">서명과 TLS</a>, <a href="game-security.html">게임 보안과 치트 대응</a>, <a href="../architecture/idempotent-consumer.html">멱등 소비자</a>, <a href="../architecture/saga.html">사가와 보상 트랜잭션</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      인앱 결제에서 클라이언트가 "샀다"며 보내는 <span class="blank">영수증</span>은 그대로 믿을 수 없다. 위조되거나, 남의 것이거나, 이미 한 번 쓴 것일 수 있다. 서버는 그 영수증을 스토어에 다시 물어 확인하고, 확인된 거래만 지급한다.
+    </p>
+    <p>
+      지급은 <strong>거래 번호로 한 번만</strong> 한다. 같은 영수증이 두 번 와도, 서버가 지급 직후 죽어 재시도가 와도 재화는 한 번만 들어가야 한다. 그리고 결제는 지급으로 끝나지 않는다. 환불과 취소는 나중에 스토어가 서버 알림으로 알려 주므로, 그것을 받아 회수까지 해야 한 바퀴가 돈다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>영수증은 서버가 스토어에 다시 묻는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="클라이언트가 스토어에서 구매하고 받은 거래 정보를 게임 서버에 보내면, 게임 서버가 스토어 서버 API로 확인한 뒤 지급하고 확인 처리를 한다">
+        <defs><marker id="pv-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="80" width="120" height="46" rx="6"/>
+        <text class="f-text" x="80" y="108" text-anchor="middle">클라이언트</text>
+        <rect class="f-cell" x="20" y="10" width="120" height="40" rx="6"/>
+        <text class="f-text" x="80" y="35" text-anchor="middle">스토어 앱</text>
+        <line class="f-line" x1="80" y1="50" x2="80" y2="78" marker-end="url(#pv-a)"/>
+        <text class="f-sub" x="88" y="68">① 구매·거래 정보</text>
+        <rect class="f-hit" x="290" y="80" width="150" height="46" rx="6"/>
+        <text class="f-text" x="365" y="108" text-anchor="middle">게임 서버</text>
+        <line class="f-line" x1="140" y1="103" x2="288" y2="103" marker-end="url(#pv-a)"/>
+        <text class="f-sub" x="214" y="95" text-anchor="middle">② 거래 정보 전달</text>
+        <rect class="f-cell" x="590" y="10" width="150" height="46" rx="6"/>
+        <text class="f-text" x="665" y="38" text-anchor="middle">스토어 서버 API</text>
+        <line class="f-line" x1="440" y1="92" x2="588" y2="40" marker-end="url(#pv-a)"/>
+        <text class="f-sub" x="500" y="54" text-anchor="middle">③ 확인 요청</text>
+        <line class="f-line f-dash" x1="590" y1="50" x2="442" y2="100" marker-end="url(#pv-a)"/>
+        <text class="f-sub" x="556" y="90" text-anchor="middle">상태·서명</text>
+        <rect class="f-miss" x="590" y="140" width="150" height="46" rx="6"/>
+        <text class="f-on" x="665" y="168" text-anchor="middle">④ 지급 → ⑤ 확인 처리</text>
+        <line class="f-line" x1="440" y1="115" x2="588" y2="160" marker-end="url(#pv-a)"/>
+        <text class="f-sub" x="365" y="150" text-anchor="middle">거래 ID로 한 번만</text>
+      </svg>
+      <figcaption>게임 서버는 클라이언트가 보낸 값을 확인의 출발점으로만 쓴다. 상품, 수량, 결제 상태, 환경(운영인지 테스트인지)은 스토어가 돌려준 값이나 스토어 서명이 붙은 값에서 읽는다.</figcaption>
+    </figure>
+    <p>
+      스토어마다 방식은 다르지만 생각은 같다.
+    </p>
+    <ul>
+      <li><strong>Apple.</strong> StoreKit 2의 거래 정보는 Apple이 서명한 JWS 형식이다. 서버는 서명과 인증서 체인을 검증하거나, App Store Server API로 거래를 직접 조회한다. 예전의 영수증 검증 엔드포인트는 사용 중단으로 표시되었다.</li>
+      <li><strong>Google Play.</strong> 클라이언트가 구매 토큰을 보내면 서버가 Play Developer API로 구매 상태를 조회한다. 서버만 가진 서비스 계정 자격 증명으로 호출하므로 클라이언트가 결과를 꾸밀 수 없다(<a href="secret-management.html">시크릿과 키 관리</a>).</li>
+    </ul>
+    <p>
+      확인할 항목은 정해져 있다. 우리 앱의 거래인가(번들·패키지 이름), 어떤 상품인가, 결제가 완료 상태인가, 운영 환경 거래인가, 그리고 이 계정의 거래인가. 마지막은 구매 시 계정 식별값(Apple의 <code>appAccountToken</code>, Google의 난독화 계정 ID)을 넣어 두고 서버에서 대조한다. 안 하면 한 사람의 영수증을 여러 계정이 돌려 쓴다.
+    </p>
+
+    <h3>거래 번호로 한 번만 지급한다</h3>
+    <p>
+      같은 거래가 여러 번 오는 것은 정상이다. 클라이언트 재시도, 앱 재시작 시 미완료 거래 재전달, 서버 알림 중복이 모두 있다. 지급은 거래 번호를 유니크 키로 한 기록과 재화 지급을 <strong>한 트랜잭션</strong>에 넣어 처리한다. 두 번째 시도는 유니크 제약에 걸리고, 서버는 "이미 지급됨"을 성공으로 응답한다(<a href="../architecture/idempotent-consumer.html">멱등 소비자</a>).
+    </p>
+    <pre><code class="language-csharp">await using var tx = await conn.BeginTransactionAsync();
+
+// 거래 번호가 유니크 키라서 두 번째 INSERT는 0행이 된다
+int inserted = await conn.ExecuteAsync(
+    """
+    INSERT INTO purchase (store, transaction_id, account_id, product_id, state)
+    VALUES (@Store, @TxId, @AccountId, @ProductId, 'granted')
+    ON CONFLICT (store, transaction_id) DO NOTHING
+    """, p, tx);
+
+if (inserted == 1)
+    await GrantAsync(conn, tx, p.AccountId, p.ProductId); // 재화 지급과 원장 기록
+
+await tx.CommitAsync();
+return PurchaseResult.Ok; // 이미 지급된 거래도 성공으로 응답한다</code></pre>
+
+    <h3>지급한 뒤에 스토어에 확인 처리를 한다</h3>
+    <p>
+      스토어는 "앱이 상품을 줬다"는 신호를 따로 받는다. Google Play는 구매를 <strong>사흘 안에 확인(acknowledge)하지 않으면 자동으로 환불</strong>한다. 소모성 상품은 소비(consume) 처리가 확인을 겸한다. Apple은 앱이 거래를 끝내지(finish) 않으면 그 거래를 계속 다시 전달한다.
+    </p>
+    <p>
+      순서는 지급이 먼저, 확인 처리가 나중이다. 확인부터 하고 지급 전에 죽으면 돈은 나갔는데 상품이 없다. 지급 후 확인 전에 죽는 것은 괜찮다. 재시도가 와도 지급은 멱등이고, 확인 처리만 다시 하면 된다. 확인 처리를 아웃박스에 넣어 두면 서버가 죽어도 빠지지 않는다(<a href="../architecture/transactional-outbox.html">트랜잭셔널 아웃박스</a>).
+    </p>
+
+    <h3>결제를 상태 머신으로 다룬다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 170" role="img" aria-label="결제 상태는 요청됨, 검증됨, 지급됨, 확인됨으로 진행하고, 지급 이후 어느 단계에서든 환불됨으로 갈 수 있다">
+        <defs><marker id="pv-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="120" height="40" rx="6"/>
+        <text class="f-text" x="80" y="55" text-anchor="middle">요청됨</text>
+        <rect class="f-box" x="200" y="30" width="120" height="40" rx="6"/>
+        <text class="f-text" x="260" y="55" text-anchor="middle">검증됨</text>
+        <rect class="f-hit" x="380" y="30" width="120" height="40" rx="6"/>
+        <text class="f-text" x="440" y="55" text-anchor="middle">지급됨</text>
+        <rect class="f-hit" x="560" y="30" width="120" height="40" rx="6"/>
+        <text class="f-text" x="620" y="55" text-anchor="middle">확인됨</text>
+        <line class="f-line" x1="140" y1="50" x2="198" y2="50" marker-end="url(#pv-b)"/>
+        <line class="f-line" x1="320" y1="50" x2="378" y2="50" marker-end="url(#pv-b)"/>
+        <line class="f-line" x1="500" y1="50" x2="558" y2="50" marker-end="url(#pv-b)"/>
+        <rect class="f-miss" x="470" y="115" width="140" height="40" rx="6"/>
+        <text class="f-on" x="540" y="140" text-anchor="middle">환불됨 → 회수</text>
+        <line class="f-line f-dash" x1="440" y1="70" x2="500" y2="113" marker-end="url(#pv-b)"/>
+        <line class="f-line f-dash" x1="620" y1="70" x2="580" y2="113" marker-end="url(#pv-b)"/>
+        <rect class="f-cell" x="200" y="115" width="120" height="40" rx="6"/>
+        <text class="f-text" x="260" y="140" text-anchor="middle">거부됨</text>
+        <line class="f-line f-dash" x1="80" y1="70" x2="198" y2="128" marker-end="url(#pv-b)"/>
+        <text class="f-sub" x="120" y="152" text-anchor="middle">검증 실패</text>
+      </svg>
+      <figcaption>각 단계는 DB의 상태 값으로 남는다. 서버가 어디서 멈췄든 상태를 보고 다음 할 일을 이어 간다. 환불은 지급 뒤 어느 때든 들어올 수 있다.</figcaption>
+    </figure>
+    <p>
+      상태를 남겨 두면 복구와 CS가 쉬워진다. "검증됨에서 멈춘 거래"를 주기적으로 찾아 지급을 다시 시도하고, "지급됨에서 오래 멈춘 거래"는 확인 처리를 다시 보낸다. 사람이 볼 때도 어디까지 진행됐는지 한눈에 보인다.
+    </p>
+
+    <h3>환불과 취소는 서버 알림으로 따라간다</h3>
+    <p>
+      플레이어가 스토어에 환불을 요청하면 게임 서버를 거치지 않는다. 스토어가 서버 간 알림(Apple의 App Store Server Notifications, Google의 실시간 개발자 알림)으로 알려 주고, Google은 취소·환불된 구매를 조회하는 API도 따로 제공한다. 이것을 받지 않으면 "사서 쓰고 환불받기"가 공짜가 된다.
+    </p>
+    <p>
+      알림도 서명을 검증하고, 거래 번호로 멱등하게 처리한다. 알림이 빠질 수 있으니 주기적으로 환불 목록을 조회해 맞춰 본다.
+    </p>
+
+    <h3>웹 결제 콜백도 같은 원칙이다</h3>
+    <p>
+      PC 웹샵이나 결제 대행사(PG)를 쓰면 결제 결과가 콜백(웹훅)으로 온다. 서명이나 <a data-ref="security/hashing">HMAC</a>을 검증하고(비교는 상수 시간으로, <a href="timing-attack.html">타이밍 공격</a>), 주문 번호로 멱등 처리하고, <strong>금액을 우리 주문 기록과 대조</strong>한다. 콜백의 금액만 믿으면 100원 결제로 10만 원 상품을 받는 위조가 통한다. 의심스러우면 PG의 조회 API로 한 번 더 확인한다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <table>
+      <thead><tr><th>검사</th><th>안 하면 생기는 일</th></tr></thead>
+      <tbody>
+        <tr><td>스토어 서버 검증 또는 서명 검증</td><td>위조 영수증으로 무료 지급</td></tr>
+        <tr><td>거래 번호 유니크 처리</td><td>같은 영수증으로 여러 번 지급</td></tr>
+        <tr><td>계정 식별값 대조</td><td>한 영수증을 여러 계정이 돌려 씀</td></tr>
+        <tr><td>환경 값 확인</td><td>테스트(샌드박스) 결제로 운영 재화 지급</td></tr>
+        <tr><td>지급 후 확인 처리</td><td>자동 환불되거나 거래가 계속 재전달됨</td></tr>
+        <tr><td>환불 알림 처리</td><td>사서 쓰고 환불받기가 공짜가 됨</td></tr>
+        <tr><td>웹 결제 금액 대조</td><td>적은 금액 결제로 비싼 상품 지급</td></tr>
+      </tbody>
+    </table>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>환불 악용 정책을 미리 정한다.</strong> 환불된 재화가 이미 쓰였으면 잔액을 음수로 두거나, 산 아이템을 회수하거나, 반복 시 계정을 제재한다. 어떤 방식이든 약관과 CS 안내에 맞춰 둔다.</li>
+      <li><strong>재화는 원장으로 쌓는다.</strong> 결제 지급, 사용, 환불 회수를 원장에 남기면 "왜 잔액이 이렇냐"를 거래 단위로 설명할 수 있다(<a href="../architecture/cqrs-event-sourcing.html">CQRS와 이벤트 소싱</a>).</li>
+      <li><strong>CS 조회 도구를 만든다.</strong> 거래 번호, 계정, 시각으로 결제 상태와 지급 기록을 찾게 한다. "결제했는데 안 들어왔다" 문의의 대부분은 상태를 보면 바로 풀린다.</li>
+      <li><strong>결제 로그는 오래 보존한다.</strong> 환불·분쟁은 몇 달 뒤에도 온다. 일반 게임 로그와 보존 기간을 따로 둔다.</li>
+      <li><strong>가격은 스토어가 정한 값을 쓴다.</strong> 지역별 가격과 통화는 스토어가 관리한다. 서버는 상품 ID로 지급 내용을 정하고, 클라이언트가 보낸 가격을 쓰지 않는다.</li>
+      <li><strong>상품 지급 정의는 서버 데이터에 둔다.</strong> "상품 A는 보석 100개"라는 표는 서버 쪽 기획 데이터다(<a href="../game-patterns/data-driven.html">기획 데이터와 데이터 주도 설계</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>클라이언트가 보낸 상품 ID, 수량, 금액을 지급에 쓰지 않는다. 스토어가 돌려준 값을 쓴다.</li>
+      <li>스토어 API가 잠깐 실패하면 "실패"로 처리하지 말고 "검증 대기"로 남겨 재시도한다. 돈은 이미 나갔을 수 있다.</li>
+      <li>확인 처리를 지급보다 먼저 하지 않는다.</li>
+      <li>스토어 API 키와 PG 서명 키는 결제 서비스만 읽게 하고, 로그에 남기지 않는다.</li>
+      <li>테스트 계정 결제가 운영 서버에서 지급되지 않는지 출시 전에 확인한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>대칭 암호와 비대칭 암호 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="security/cipher-kinds">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../algorithm/random.html">난수 생성</a> · <a href="../network/tcp-connection.html">TCP 연결 관리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">대칭 암호</span>는 같은 키로 잠그고 푼다. AES, ChaCha20이 대표다. 빠르고 큰 데이터에 맞지만, 그 키를 상대와 어떻게 나눠 가질지가 문제로 남는다.
+    </p>
+    <p>
+      <span class="blank">비대칭 암호</span>는 공개 키와 개인 키를 한 쌍으로 쓴다. 공개 키는 누구에게 줘도 되므로 처음 만난 상대와도 키를 맞출 수 있다. 대신 연산이 수백 배 이상 무겁다. RSA와 타원 곡선(ECC)이 대표다.
+    </p>
+    <p>
+      그래서 실제 시스템은 둘을 섞는다. 비대칭으로 상대를 확인하고 이번 연결에만 쓸 대칭 키를 합의한다. 본문은 그 대칭 키로 암호화한다. TLS가 정확히 이 구조다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>대칭과 비대칭은 성질이 반대다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>구분</th><th>대칭</th><th>비대칭</th></tr></thead>
+      <tbody>
+        <tr><td>키</td><td>양쪽이 같은 키 하나를 공유한다</td><td>공개 키와 개인 키 한 쌍</td></tr>
+        <tr><td>속도</td><td>빠르다. AES-NI가 있으면 코어당 초당 수 GB</td><td>느리다. 연결마다 몇 번만 쓴다</td></tr>
+        <tr><td>키 나누기</td><td>미리 안전하게 나눠 둬야 한다</td><td>공개 키는 공개해도 된다</td></tr>
+        <tr><td>주로 하는 일</td><td>본문 암호화</td><td>키 합의, 서명</td></tr>
+        <tr><td>대표</td><td>AES-GCM, ChaCha20-Poly1305</td><td>RSA, ECDHE(X25519, P-256), Ed25519</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      비대칭 연산은 큰 수의 거듭제곱이나 타원 곡선 위의 곱셈이다. 메가바이트 단위 데이터를 그대로 처리하면 감당이 안 된다. 그래서 비대칭은 짧은 값, 곧 키나 해시에만 쓴다.
+    </p>
+
+    <h3>같은 안전 수준이라도 키 길이가 다르다</h3>
+    <p>
+      "몇 비트 키"는 방식마다 뜻이 다르다. 알려진 가장 좋은 공격의 비용이 방식마다 달라서, 같은 수준을 지키는 데 필요한 키 길이가 다르다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>보안 수준</th><th>대칭</th><th>RSA</th><th>타원 곡선</th></tr></thead>
+      <tbody>
+        <tr><td>112비트</td><td>(3DES, 쓰지 않는다)</td><td>2048비트</td><td>224비트</td></tr>
+        <tr><td>128비트</td><td>AES-128</td><td>3072비트</td><td>256비트(P-256, X25519)</td></tr>
+        <tr><td>192비트</td><td>AES-192</td><td>7680비트</td><td>384비트(P-384)</td></tr>
+        <tr><td>256비트</td><td>AES-256</td><td>15360비트</td><td>512비트 안팎(P-521)</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      타원 곡선은 같은 수준을 훨씬 짧은 키로 얻는다. 키가 짧으면 계산이 가볍고 핸드셰이크에서 주고받는 바이트도 준다. 그래서 새 설계는 키 합의에 X25519나 P-256, 서명에 ECDSA나 Ed25519를 쓰는 쪽으로 옮겨 왔다. RSA-2048은 아직 허용되지만 128비트 수준에는 못 미친다.
+    </p>
+
+    <h3>비대칭으로 키를 맞추고 대칭으로 보낸다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 300" role="img" aria-label="클라이언트와 서버가 임시 공개 값을 주고받아 각자 같은 세션 키를 계산하고, 서버는 인증서와 서명으로 자기가 진짜임을 보인 뒤, 이후 본문은 대칭 키로 암호화한다">
+        <defs><marker id="ck2-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="20" width="150" height="44" rx="6"/>
+        <text class="f-text" x="95" y="47" text-anchor="middle">클라이언트</text>
+        <rect class="f-box" x="590" y="20" width="150" height="44" rx="6"/>
+        <text class="f-text" x="665" y="47" text-anchor="middle">서버</text>
+        <line class="f-grid" x1="95" y1="64" x2="95" y2="280"/>
+        <line class="f-grid" x1="665" y1="64" x2="665" y2="280"/>
+
+        <line class="f-line" x1="95" y1="96" x2="663" y2="96" marker-end="url(#ck2-a)"/>
+        <text class="f-text" x="380" y="88" text-anchor="middle">① 임시 공개 값 a·G</text>
+        <line class="f-line" x1="665" y1="138" x2="97" y2="138" marker-end="url(#ck2-a)"/>
+        <text class="f-text" x="380" y="130" text-anchor="middle">② 임시 공개 값 b·G + 인증서 + 서명</text>
+
+        <rect class="f-hit" x="20" y="158" width="150" height="44" rx="6"/>
+        <text class="f-text" x="95" y="178" text-anchor="middle">a × (b·G)</text>
+        <text class="f-sub" x="95" y="194" text-anchor="middle">= 같은 비밀값</text>
+        <rect class="f-hit" x="590" y="158" width="150" height="44" rx="6"/>
+        <text class="f-text" x="665" y="178" text-anchor="middle">b × (a·G)</text>
+        <text class="f-sub" x="665" y="194" text-anchor="middle">= 같은 비밀값</text>
+        <text class="f-sub" x="380" y="176" text-anchor="middle">비밀값 자체는 회선을 지나가지 않는다</text>
+        <text class="f-sub" x="380" y="192" text-anchor="middle">a와 b는 연결이 끝나면 버린다</text>
+
+        <rect class="f-miss" x="95" y="226" width="570" height="40" rx="6"/>
+        <text class="f-on" x="380" y="251" text-anchor="middle">③ 이후 본문은 대칭 키(AES-GCM 등)로 암호화한다</text>
+      </svg>
+      <figcaption>ECDHE 키 합의다. 양쪽이 이번 연결에만 쓸 비밀 수(a, b)를 하나씩 만들고 그 공개 값만 보낸다. 각자 상대의 공개 값에 자기 비밀 수를 곱하면 같은 값이 나온다. 서버는 그 과정에 서명해서, 중간에서 값을 바꿔치기한 사람이 아님을 보인다.</figcaption>
+    </figure>
+    <p>
+      키를 나누는 방법은 두 가지가 있었다. 하나는 클라이언트가 대칭 키를 만들어 서버의 RSA 공개 키로 잠가 보내는 <strong>키 전송</strong>이다. 다른 하나는 위 그림처럼 양쪽이 값을 주고받아 같은 키를 각자 계산하는 <strong>키 합의</strong>다.
+    </p>
+    <p>
+      TLS 1.3은 키 전송을 없애고 임시 키 합의(ECDHE)만 남겼다. 키 전송 방식이면 서버의 RSA 개인 키 하나로 기록해 둔 모든 과거 통신이 풀린다. 임시 키 합의는 연결마다 비밀 수를 버리므로, 나중에 서버 키가 새도 과거 통신은 안전하다. 이 성질을 <span class="blank">전방 비밀성</span>이라고 부른다(<a href="signature-tls.html">서명과 TLS</a>).
+    </p>
+    <p>
+      공개 값을 확인하는 단계가 빠지면 나머지가 소용없다. 중간에 끼어든 사람이 양쪽에 자기 공개 값을 건네면 양쪽과 따로 키를 맞추고 모든 내용을 읽는다. 그래서 서버는 인증서와 서명으로 "이 공개 값은 내가 보냈다"를 증명한다.
+    </p>
+
+    <h3>대칭 암호는 하드웨어가 빠르게 만든다</h3>
+    <p>
+      요즘 x86과 ARM CPU에는 AES 라운드를 한 명령으로 처리하는 전용 명령(AES-NI, ARMv8 암호 확장)이 있다. 덕분에 AES-GCM은 코어 하나로 초당 수 GB를 처리한다(<a href="../computer-architecture/simd.html">SIMD와 벡터 연산</a>). 이 명령이 없는 저가 모바일 칩에서는 소프트웨어만으로 빠른 ChaCha20-Poly1305가 더 낫다. TLS가 두 방식을 모두 두는 이유다.
+    </p>
+    <p>
+      서버 쪽 비용은 대칭 암호보다 핸드셰이크의 비대칭 연산에서 난다. 연결을 새로 맺을 때마다 키 합의와 서명 한 번씩이 든다. 점검 직후처럼 연결이 한꺼번에 몰리면 CPU가 여기서 먼저 찬다.
+    </p>
+
+    <h3>양자 컴퓨터 이후를 준비하는 중이다</h3>
+    <p>
+      충분히 큰 양자 컴퓨터가 생기면 RSA와 지금의 타원 곡선은 모두 풀린다. 대칭 암호는 키를 두 배로 늘리는 정도로 버틴다. 아직 그런 컴퓨터는 없지만, 오늘 기록해 둔 통신을 나중에 푸는 공격은 지금부터 걱정해야 한다.
+    </p>
+    <p>
+      NIST는 2024년에 격자 기반 키 캡슐화 방식인 <strong>ML-KEM</strong>(FIPS 203)과 서명 방식 ML-DSA(FIPS 204)를 표준으로 확정했다. TLS에서는 기존 X25519와 ML-KEM-768을 함께 써서 둘 다 뚫려야 풀리게 만든 하이브리드 키 합의(X25519MLKEM768)를 주요 브라우저와 CDN이 쓰기 시작했다. 직접 고를 일은 드물고, 쓰는 TLS 라이브러리와 OS를 최신으로 유지하는 것이 대부분이다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>하려는 일</th><th>쓰는 것</th><th>피할 것</th></tr></thead>
+      <tbody>
+        <tr><td>통신 구간 보호</td><td>TLS 1.3(또는 1.2 + ECDHE + AEAD)</td><td>직접 만든 핸드셰이크</td></tr>
+        <tr><td>데이터 암호화</td><td>AES-256-GCM, ChaCha20-Poly1305</td><td>ECB, 인증 없는 CBC·CTR</td></tr>
+        <tr><td>키 합의</td><td>ECDHE(X25519, P-256)</td><td>정적 RSA 키 전송</td></tr>
+        <tr><td>서명</td><td>Ed25519, ECDSA P-256, RSA-PSS 3072</td><td>RSA PKCS#1 v1.5 새 설계, SHA-1 서명</td></tr>
+        <tr><td>대칭 키 만들기</td><td>암호학적 난수(<code>RandomNumberGenerator</code>)</td><td><code>System.Random</code>, 시각·ID로 만든 키</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>로그인·결제·웹 API는 TLS에 맡긴다.</strong> 계정 정보와 토큰이 오가는 구간은 HTTPS나 TLS로 감싼다. 직접 짠 암호 프로토콜은 알고리즘이 맞아도 순서와 검증에서 구멍이 난다.</li>
+      <li><strong>자체 TCP 프로토콜도 TLS 위에 올릴 수 있다.</strong> .NET은 <code>SslStream</code>으로 소켓을 감싸면 된다. 핸드셰이크 비용은 로그인 때 한 번이고, 이후 본문 암호화 비용은 하드웨어 가속 덕분에 작다.</li>
+      <li><strong>UDP 실시간 패킷은 키를 TLS로 받아 대칭으로 쓴다.</strong> 흔한 구조는 TLS 로그인 응답으로 세션 키를 받고, 이후 UDP 패킷은 그 키로 AEAD 암호화하는 것이다. 모드와 논스 관리는 <a href="cipher-modes.html">운용 모드와 인증 암호</a>에서 다룬다.</li>
+      <li><strong>클라이언트에 넣은 키는 공개된 키다.</strong> 실행 파일 안의 대칭 키는 언젠가 뽑힌다. 클라이언트에 넣어도 되는 것은 서명 확인용 공개 키뿐이다(<a href="game-security.html">게임 보안과 치트 대응</a>).</li>
+      <li><strong>서버 개인 키와 세션 키를 코드에 두지 않는다.</strong> <a data-ref="security/secret-management">비밀 저장소</a>나 HSM에 두고, 저장소와 로그에 남지 않게 한다. 키 교체 절차를 미리 만들어 둔다(<a data-ref="operations/deploy-pipeline">배포 파이프라인</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>암호 알고리즘을 직접 구현하지 않는다.</strong> 수식이 맞아도 분기와 메모리 접근 시간 차이로 키가 샌다. 플랫폼 라이브러리(.NET <code>System.Security.Cryptography</code>, OpenSSL, libsodium)를 쓰고, 쓰는 법을 정확히 익히는 데 힘을 쓴다.</li>
+      <li><strong>사고는 대개 알고리즘이 아니라 키에서 난다.</strong> 저장소에 올라간 키, 로그에 찍힌 토큰, 교체하지 않은 오래된 키가 흔한 원인이다. "암호화했다"는 말에는 키를 어디에 두고 언제 바꾸는지가 들어 있지 않다.</li>
+      <li><strong>비대칭으로 본문을 직접 암호화하지 않는다.</strong> RSA로 잠글 수 있는 크기는 키 길이보다 작고, 패딩을 잘못 고르면 깨진다. 본문은 언제나 대칭 키로 한다.</li>
+      <li><strong>키 길이만 늘려서는 안전해지지 않는다.</strong> AES-256을 써도 키를 <code>System.Random</code>으로 만들면 맞히기 쉬운 키가 된다(<a href="../algorithm/random.html">난수 생성</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
