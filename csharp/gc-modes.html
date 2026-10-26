@@ -128,7 +128,7 @@
     <ul>
       <li>
         <strong>멈춤은 틱 예산에서 빠진다.</strong> 30Hz 틱이면 한 틱이 약 33ms다. GC 멈춤이 20ms면 그 틱에 쓸 시간이 13ms로 줄고, 멈춤이 틱보다 길면 틱 하나를 통째로 놓친다. 평균 틱 시간은 멀쩡한데 가끔 튀는 틱이 GC 시각과 겹치면 이것이 원인이다(<a href="../server/tick-loop.html">서버 틱 루프</a>, <a href="../operations/diagnosis.html">느린 서버 진단</a>).
-      </li>
+       여러 기능을 한 프로세스에 모으면 이 멈춤도 함께 겪는다(<a href="../architecture/process-boundary.html">프로세스 경계</a>).</li>
       <li>
         <strong>멈춤은 분포로 잰다.</strong> <code>GC.GetGCMemoryInfo()</code>의 <code>PauseDurations</code>, <code>GC.GetTotalPauseDuration()</code>(.NET 7), 이벤트 추적의 GC 시작·끝 시각을 틱 시간 기록과 나란히 남긴다. 평균 멈춤으로는 문제의 한 번이 보이지 않는다.
       </li>

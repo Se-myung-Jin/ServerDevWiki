@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>메시지 모델 세 갈래 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/message-models">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../game-patterns/event-bus.html">이벤트 버스와 메시지 전달</a> · <a href="../database/redis.html">Redis 활용</a> · <a href="actor-model.html">액터 모델과 가상 액터</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      서버끼리 메시지를 주고받을 때 쓰는 <span class="blank">메시지 브로커</span>는 두 질문으로 나뉜다. 메시지 하나가 <strong>누구에게 가는가</strong>(소비자 하나인가, 구독자 전원인가), 그리고 <strong>읽은 뒤에도 남는가</strong>다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>모델</th><th>메시지 하나는</th><th>읽은 뒤</th><th>대표</th></tr></thead>
+        <tbody>
+          <tr><td><span class="blank">작업 큐</span></td><td>소비자 중 하나가 가져간다</td><td>확인하면 지워진다</td><td>RabbitMQ 큐, Amazon SQS, Azure Service Bus 큐</td></tr>
+          <tr><td>Pub/Sub</td><td>구독자 전원이 받는다</td><td>제품마다 다르다. 저장하지 않는 것도 있다</td><td>Redis Pub/Sub, NATS(Core), Amazon SNS</td></tr>
+          <tr><td><span class="blank">이벤트 로그</span></td><td>읽는 쪽이 자기 위치부터 읽는다</td><td>보존 기간 동안 남는다. 다시 읽을 수 있다</td><td>Kafka, Redis Streams, RabbitMQ Streams</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      운영체제의 <a href="../operating-system/ipc.html">프로세스 간 통신</a>에 나오는 "메시지 큐"는 커널이 같은 기계 안에서 중개하는 것이고, 프로세스 안의 큐는 <a href="../game-patterns/event-bus.html">이벤트 버스</a>가 다룬다. 이 문서는 기계를 넘나드는 브로커를 다룬다.
+    </p>
+
+    <h2>동작 원리</h2>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="작업 큐에서는 메시지가 소비자 하나에게만 가고, Pub/Sub에서는 구독자 전원에게 복사되며, 이벤트 로그에서는 메시지가 남아 있고 소비자마다 읽은 위치가 다르다">
+        <defs><marker id="mm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">작업 큐</text>
+        <rect class="f-cell" x="20" y="60" width="30" height="30" rx="3"/>
+        <text class="f-sub" x="35" y="80" text-anchor="middle">3</text>
+        <rect class="f-cell" x="52" y="60" width="30" height="30" rx="3"/>
+        <text class="f-sub" x="67" y="80" text-anchor="middle">2</text>
+        <rect class="f-hit" x="84" y="60" width="30" height="30" rx="3"/>
+        <text class="f-text" x="99" y="80" text-anchor="middle">1</text>
+        <line class="f-line" x1="116" y1="70" x2="158" y2="50" marker-end="url(#mm-a)"/>
+        <rect class="f-hit" x="162" y="34" width="70" height="30" rx="4"/>
+        <text class="f-text" x="197" y="54" text-anchor="middle">소비자 A</text>
+        <rect class="f-box" x="162" y="88" width="70" height="30" rx="4"/>
+        <text class="f-sub" x="197" y="108" text-anchor="middle">소비자 B</text>
+        <text class="f-sub" x="20" y="146">1은 A만 받는다. 2는 B가 받는다</text>
+        <text class="f-sub" x="20" y="164">확인하면 큐에서 사라진다</text>
+
+        <line class="f-grid" x1="258" y1="16" x2="258" y2="236"/>
+
+        <text class="f-strong" x="278" y="24">Pub/Sub</text>
+        <rect class="f-hit" x="278" y="60" width="70" height="30" rx="4"/>
+        <text class="f-text" x="313" y="80" text-anchor="middle">공지 1</text>
+        <line class="f-line" x1="350" y1="70" x2="398" y2="44" marker-end="url(#mm-a)"/>
+        <line class="f-line" x1="350" y1="75" x2="398" y2="75" marker-end="url(#mm-a)"/>
+        <line class="f-line" x1="350" y1="80" x2="398" y2="106" marker-end="url(#mm-a)"/>
+        <rect class="f-hit" x="402" y="30" width="76" height="28" rx="4"/>
+        <text class="f-text" x="440" y="49" text-anchor="middle">채팅 1</text>
+        <rect class="f-hit" x="402" y="62" width="76" height="28" rx="4"/>
+        <text class="f-text" x="440" y="81" text-anchor="middle">채팅 2</text>
+        <rect class="f-hit" x="402" y="94" width="76" height="28" rx="4"/>
+        <text class="f-text" x="440" y="113" text-anchor="middle">채팅 3</text>
+        <text class="f-sub" x="278" y="146">구독자 전원에게 복사된다</text>
+        <text class="f-sub" x="278" y="164">저장하지 않으면 끊긴 쪽은 놓친다</text>
+
+        <line class="f-grid" x1="500" y1="16" x2="500" y2="236"/>
+
+        <text class="f-strong" x="520" y="24">이벤트 로그</text>
+        <rect class="f-cell" x="520" y="60" width="30" height="30" rx="3"/>
+        <text class="f-sub" x="535" y="80" text-anchor="middle">0</text>
+        <rect class="f-cell" x="552" y="60" width="30" height="30" rx="3"/>
+        <text class="f-sub" x="567" y="80" text-anchor="middle">1</text>
+        <rect class="f-cell" x="584" y="60" width="30" height="30" rx="3"/>
+        <text class="f-sub" x="599" y="80" text-anchor="middle">2</text>
+        <rect class="f-hit" x="616" y="60" width="30" height="30" rx="3"/>
+        <text class="f-text" x="631" y="80" text-anchor="middle">3</text>
+        <rect class="f-cell" x="648" y="60" width="30" height="30" rx="3"/>
+        <text class="f-sub" x="663" y="80" text-anchor="middle">4</text>
+        <rect class="f-hit" x="680" y="60" width="30" height="30" rx="3"/>
+        <text class="f-text" x="695" y="80" text-anchor="middle">5</text>
+        <line class="f-line" x1="631" y1="128" x2="631" y2="94" marker-end="url(#mm-a)"/>
+        <text class="f-sub" x="631" y="144" text-anchor="middle">정산: 3부터</text>
+        <line class="f-line" x1="695" y1="128" x2="695" y2="94" marker-end="url(#mm-a)"/>
+        <text class="f-sub" x="705" y="162" text-anchor="middle">통계: 5부터</text>
+        <text class="f-sub" x="520" y="196">지우지 않고 오프셋만 기억한다</text>
+        <text class="f-sub" x="520" y="214">새 소비자는 0부터 다시 읽을 수 있다</text>
+      </svg>
+      <figcaption>작업 큐는 일을 나눠 주고, Pub/Sub은 같은 소식을 퍼뜨리고, 이벤트 로그는 일어난 일을 쌓아 두고 읽는 쪽이 저마다 자기 속도로 따라간다.</figcaption>
+    </figure>
+
+    <h3>작업 큐는 일감을 나눠 준다</h3>
+    <p>
+      소비자가 여럿 붙어도 메시지 하나는 그중 하나에게만 간다. 이것을 <strong>경쟁 소비자</strong> 구조라고 한다. 소비자를 늘리면 처리량이 늘고, 하나가 죽으면 확인하지 않은 메시지가 다른 소비자에게 다시 간다. 처리가 끝나 확인(ACK)한 메시지는 큐에서 지워진다.
+    </p>
+    <p>
+      우편 발송, 보상 지급, 이미지 처리처럼 "누가 하든 한 번 하면 되는 일"에 맞는다. 브로커가 소비자마다 미리 몇 개까지 넘겨줄지(RabbitMQ의 prefetch)를 정하지 않으면, 느린 소비자 하나가 메시지를 잔뜩 쥔 채 늘어진다.
+    </p>
+
+    <h3>Pub/Sub은 같은 소식을 모두에게 보낸다</h3>
+    <p>
+      발행자는 주제(토픽, 채널)에 보내고, 구독한 쪽 전원이 사본을 받는다. 발행자는 구독자가 몇인지 모른다. 이름이 같아도 저장 여부는 제품마다 갈린다.
+    </p>
+    <ul>
+      <li><strong>저장하지 않는 쪽:</strong> Redis Pub/Sub, NATS Core. 그 순간 붙어 있던 구독자에게만 간다. 끊겨 있던 구독자는 영영 못 받는다(<a href="../database/redis.html">Redis 활용</a>).</li>
+      <li><strong>구독마다 큐를 만드는 쪽:</strong> Azure Service Bus 토픽, SNS에서 SQS로 퍼뜨리는 구성, RabbitMQ의 fanout 교환기와 큐. 구독 하나가 자기 큐를 갖고, 그 안에서는 작업 큐처럼 동작한다.</li>
+    </ul>
+
+    <h3>이벤트 로그는 지우지 않고 위치만 기억한다</h3>
+    <p>
+      Kafka는 토픽을 <strong>파티션</strong>으로 나누고, 파티션마다 메시지를 끝에 붙이기만 한다. 메시지마다 파티션 안에서의 번호인 <strong>오프셋</strong>이 있다. 소비자는 어디까지 읽었는지 오프셋을 커밋해 둔다. 메시지는 읽혔다고 지워지지 않고, 보존 기간이나 크기 한도에 따라 지워진다.
+    </p>
+    <p>
+      남아 있으니 <strong>다시 읽을 수 있다</strong>. 새 소비자를 붙여 처음부터 따라가게 하거나, 집계 버그를 고친 뒤 지난주 오프셋으로 되감아 다시 계산할 수 있다. 큐와 Pub/Sub은 이 요구를 채우지 못한다. DB의 <a href="../database/durability-wal.html">WAL</a>도 로그지만 목적이 다르다. WAL은 커밋을 잃지 않으려고 남기고, 이벤트 로그는 다시 읽어 전달하려고 남긴다.
+    </p>
+
+    <h3>컨슈머 그룹 하나로 큐와 Pub/Sub을 함께 흉내 낸다</h3>
+    <p>
+      Kafka의 <span class="blank">컨슈머 그룹</span>은 같은 이름을 쓰는 소비자 묶음이다. 한 그룹 안에서는 파티션 하나를 소비자 하나가 맡아 일을 나누고(큐처럼), 서로 다른 그룹은 같은 메시지를 각자 다 읽는다(Pub/Sub처럼). 정산 서비스와 통계 서비스가 서로 다른 그룹으로 같은 거래 토픽을 읽는 식이다.
+    </p>
+    <p>
+      한 그룹 안의 병렬도는 <strong>파티션 수</strong>를 넘지 못한다. 파티션이 6개인데 소비자를 10개 띄우면 4개는 논다. 파티션 수는 나중에 늘릴 수 있지만, 늘리면 키가 가는 파티션이 바뀌어 아래의 순서 보장이 흔들린다. 처음부터 넉넉히 잡는다.
+    </p>
+
+    <h3>순서는 생각보다 좁게 지켜진다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>제품</th><th>순서가 지켜지는 범위</th></tr></thead>
+        <tbody>
+          <tr><td>Kafka</td><td><strong>파티션 안에서만</strong>. 같은 키는 같은 파티션으로 가므로 키별 순서가 지켜진다. 토픽 전체 순서는 없다</td></tr>
+          <tr><td>RabbitMQ 큐</td><td>큐에 들어간 순서로 내보내지만, 소비자가 여럿이거나 재전달이 생기면 처리 순서는 바뀐다</td></tr>
+          <tr><td>Amazon SQS</td><td>표준 큐는 순서를 보장하지 않는다. FIFO 큐는 메시지 그룹 ID 안에서만 지킨다</td></tr>
+          <tr><td>Redis Streams</td><td>스트림 하나 안에서 ID 순서. 소비자 그룹에서 여럿이 나눠 가져가면 처리 순서는 소비자마다 다르다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      순서가 필요한 단위를 키로 삼는다. 같은 캐릭터의 재화 변경은 캐릭터 ID를 키로 보내면 한 파티션에 모여 순서대로 처리된다. 순서를 넓게 요구할수록 동시에 처리할 수 있는 폭이 좁아진다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>하려는 일</th><th>모델</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>접속 중인 서버 모두에게 "이 캐릭터 캐시를 지워라", "공지 띄워라"</td><td>저장하지 않는 Pub/Sub</td><td>그때 없던 서버는 어차피 새로 읽는다. 저장과 재생은 운영 부담만 늘린다</td></tr>
+          <tr><td>우편 지급, 보상 정산, 외부 API 호출처럼 한 번 처리하면 되는 일</td><td>작업 큐</td><td>소비자를 늘려 나눠 처리하고, 실패하면 다시 받는다</td></tr>
+          <tr><td>거래 기록을 정산, 통계, 이상 탐지가 각자 읽는다</td><td>이벤트 로그</td><td>읽는 쪽이 늘어도 보내는 쪽은 그대로다. 각자 속도로 따라간다</td></tr>
+          <tr><td>규칙이 바뀌어 지난 이벤트를 다시 계산해야 한다</td><td>이벤트 로그</td><td>읽고 나서도 남아 있는 것은 이 모델뿐이다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      제품을 고를 때는 모델 말고도 운영을 본다. Kafka는 처리량과 재생이 강한 대신 클러스터 운영이 무겁다. RabbitMQ는 라우팅 규칙이 풍부하고 작업 큐에 익숙한 구조다. 이미 Redis를 쓰고 있다면 Streams로 시작할 수 있지만 메시지가 메모리에 쌓인다. 클라우드 큐는 운영을 맡기는 대신 제품마다 크기, 보존 기간, 순서 제약이 다르다. 숫자 한도는 버전마다 바뀌므로 쓰는 제품의 문서에서 확인한다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>귓속말과 길드 채팅은 받는 사람이 어느 서버에 있는지가 문제다.</strong> 접속 위치를 기록해 둔 디렉터리(Redis 등)를 보고 그 서버에만 보내거나, 채팅 서버 전원에게 Pub/Sub으로 뿌리고 각자 자기 접속자만 고른다. 서버가 적으면 뿌리기가 단순하고, 많아지면 라우팅이 싸다. 놓쳐도 되는 메시지인지가 저장 여부를 정한다.</li>
+      <li><strong>게임 로그와 행동 이벤트는 이벤트 로그로 모은다.</strong> 게임 서버는 토픽에 쓰기만 하고, 분석 적재, 어뷰징 탐지, 운영 툴이 각자 컨슈머 그룹으로 읽는다. 분석 쪽이 멈춰도 게임 서버는 영향을 받지 않는다.</li>
+      <li><strong>느린 일은 작업 큐로 뺀다.</strong> 시즌 보상 정산, 대량 우편, 결제 검증처럼 틱 안에서 기다리면 안 되는 일을 큐에 넣고 결과를 메시지로 돌려받는다(<a href="../server/backpressure.html">큐와 백프레셔</a>). 큐가 밀리는 것을 지표로 본다.</li>
+      <li><strong>DB를 고치고 메시지를 보내는 일은 한 번에 묶이지 않는다.</strong> 재화를 바꾼 뒤 "보상 지급됨"을 보내다가 죽으면 둘 중 하나만 남는다. 이 문제는 <a href="transactional-outbox.html">트랜잭셔널 아웃박스</a>가 다룬다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"Pub/Sub이니까 안전하게 전달된다"고 보면 안 된다.</strong> 저장하지 않는 Pub/Sub은 받는 쪽이 끊긴 순간의 메시지를 버린다. 놓치면 안 되는 일은 큐나 로그로 보낸다.</li>
+      <li><strong>브로커가 있어도 중복은 온다.</strong> 대부분의 브로커는 최소 한 번 전달이다. 받는 쪽은 같은 메시지를 두 번 받아도 결과가 같게 짠다(<a href="delivery-guarantees.html">전달 보장과 exactly-once</a>, <a href="idempotent-consumer.html">멱등 소비자</a>).</li>
+      <li><strong>메시지 형식도 버전이다.</strong> 보내는 쪽과 받는 쪽이 따로 배포되므로, 필드를 지우거나 뜻을 바꾸면 옛 소비자가 깨진다. 필드는 더하기만 하고 모르는 필드는 무시하게 만든다(<a data-ref="operations/protocol-compat">프로토콜 호환성</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

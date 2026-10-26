@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>세션 기반과 지속 세계 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/session-vs-persistent">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="server-topology.html">게임 서버 토폴로지</a> · <a href="../game-patterns/world-partition.html">월드 분할: 존·채널·인스턴스</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">세션 기반</span> 서버는 판 하나와 함께 생기고 판이 끝나면 사라진다. 대전 매치, 배틀로얄 한 판, 던전 한 번이 그렇다. <span class="blank">지속 세계</span> 서버는 끝나는 시점이 게임 안에 없다. MMO의 월드는 플레이어가 모두 나가도 남아 있어야 하고, 운영자가 내리기 전까지 돈다.
+    </p>
+    <p>
+      둘을 가르는 것은 상태가 있느냐가 아니라 <strong>프로세스의 수명을 무엇이 정하느냐</strong>다. 세션 서버도 판이 도는 동안에는 상태를 메모리에 든다. 다만 그 상태는 판과 함께 끝난다. 수명이 다르면 저장 시점, 늘리고 줄이는 법, 배포, 장애 때 잃는 것이 모두 달라진다. 한 게임 안에도 두 모델이 섞여 있어서, 고르는 단위는 게임이 아니라 기능이다.
+    </p>
+
+    <h2>동작 원리</h2>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="세션 서버는 준비, 할당, 판 진행, 결과 보고, 종료를 거쳐 끝난다. 지속 세계 서버는 끝나는 지점 없이 돌며 주기적으로 저장하고 점검 때만 내려간다">
+        <defs><marker id="sp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="55">세션 서버</text>
+        <rect class="f-box" x="120" y="32" width="80" height="38" rx="6"/>
+        <text class="f-text" x="160" y="56" text-anchor="middle">대기</text>
+        <line class="f-line" x1="200" y1="51" x2="216" y2="51" marker-end="url(#sp-a)"/>
+        <rect class="f-box" x="220" y="32" width="80" height="38" rx="6"/>
+        <text class="f-text" x="260" y="56" text-anchor="middle">할당</text>
+        <line class="f-line" x1="300" y1="51" x2="316" y2="51" marker-end="url(#sp-a)"/>
+        <rect class="f-hit" x="320" y="32" width="190" height="38" rx="6"/>
+        <text class="f-text" x="415" y="56" text-anchor="middle">판 진행 · 상태는 메모리에</text>
+        <line class="f-line" x1="510" y1="51" x2="526" y2="51" marker-end="url(#sp-a)"/>
+        <rect class="f-box" x="530" y="32" width="100" height="38" rx="6"/>
+        <text class="f-text" x="580" y="56" text-anchor="middle">결과 보고</text>
+        <line class="f-line" x1="630" y1="51" x2="646" y2="51" marker-end="url(#sp-a)"/>
+        <rect class="f-miss" x="650" y="32" width="90" height="38" rx="6"/>
+        <text class="f-on" x="695" y="56" text-anchor="middle">종료</text>
+        <text class="f-sub" x="120" y="92">판이 끝나는 순간이 저장 시점이자 프로세스가 끝나는 시점이다</text>
+
+        <text class="f-strong" x="20" y="158">지속 세계</text>
+        <rect class="f-hit" x="120" y="136" width="560" height="38" rx="6"/>
+        <text class="f-text" x="400" y="160" text-anchor="middle">월드 서버 · 끝나는 시점이 게임 안에 없다</text>
+        <line class="f-line" x1="680" y1="155" x2="736" y2="155" marker-end="url(#sp-a)"/>
+        <line class="f-line f-dash" x1="165" y1="128" x2="165" y2="182"/>
+        <line class="f-line f-dash" x1="225" y1="128" x2="225" y2="182"/>
+        <line class="f-line f-dash" x1="590" y1="128" x2="590" y2="182"/>
+        <line class="f-line f-dash" x1="645" y1="128" x2="645" y2="182"/>
+        <text class="f-sub" x="400" y="200" text-anchor="middle">점선마다 주기 저장. 저장 시점은 직접 정한다</text>
+        <text class="f-sub" x="736" y="200" text-anchor="end">점검 때만 내린다</text>
+      </svg>
+      <figcaption>세션 서버는 끝나는 지점이 판으로 정해져 있어서, 결과를 그때 한 번 남기면 된다. 지속 세계 서버에는 그런 지점이 없어서 언제 저장하고 언제 내릴지를 운영이 따로 만든다.</figcaption>
+    </figure>
+
+    <h3>세션 서버는 판과 함께 생기고 끝난다</h3>
+    <p>
+      세션 기반 게임의 서버를 흔히 <span class="blank">전용 게임 서버</span>(DGS, dedicated game server)라고 부른다. 흐름은 대개 이렇다.
+    </p>
+    <ol>
+      <li>미리 띄워 둔 서버 여러 대가 <strong>대기</strong> 상태로 기다린다. 서버 프로세스를 띄우고 맵을 읽는 데 몇 초에서 수십 초가 걸리므로, 판이 잡힌 뒤에 띄우면 그만큼 기다리게 된다.</li>
+      <li><a href="matchmaking.html">매칭 서버</a>가 판을 짜면 할당기가 대기 중인 서버 하나를 <strong>할당</strong> 상태로 바꾸고, 그 주소와 접속 토큰을 플레이어에게 준다.</li>
+      <li>판이 도는 동안 상태는 그 프로세스의 메모리에만 있다. 판 중간의 상태를 DB에 쓸 이유가 거의 없다.</li>
+      <li>판이 끝나면 결과(승패, 보상, 전적)를 지속 쪽 서비스에 <strong>보고</strong>하고 프로세스를 끝낸다. 다시 대기 상태로 돌려 재사용하기도 한다.</li>
+    </ol>
+    <p>
+      이 수명을 그대로 관리해 주는 도구가 게임 서버 오케스트레이터다. 쿠버네티스 위에서 도는 Agones는 게임 서버를 <code>Ready</code>, <code>Allocated</code>, <code>Shutdown</code> 같은 상태로 관리하고, 대기 서버 수를 정해진 만큼 유지한다. 게임 서버는 SDK로 "준비됐다", "끝났다"를 알린다. AWS의 GameLift도 서버 프로세스가 준비와 종료를 알리면 게임 세션을 배치하는 같은 모양이다. 운영 쪽 이야기는 <a data-ref="operations/orchestration">오케스트레이션</a>에서 다룬다.
+    </p>
+
+    <h3>결과 보고는 한 번만 반영되어야 한다</h3>
+    <p>
+      세션 서버가 지속 세계에 영향을 주는 길은 사실상 결과 보고 하나다. 그래서 이 길을 좁고 튼튼하게 만든다.
+    </p>
+    <ul>
+      <li><strong>같은 보고가 두 번 와도 보상은 한 번이다.</strong> 보고 요청이 시간 초과로 재시도되면 같은 결과가 두 번 도착한다. 판 ID를 키로 처리 기록을 남겨 두 번째를 흡수한다(<a href="idempotent-consumer.html">멱등 소비자</a>). 판 ID는 서버마다 따로 만들어도 겹치지 않아야 한다(<a href="../database/distributed-id.html">분산 ID 생성</a>).</li>
+      <li><strong>보고 전에 죽으면 무엇을 할지 정해 둔다.</strong> 판이 끝나기 전에 서버가 죽으면 그 판의 상태는 사라진다. 판을 무효로 하고 입장 재화를 돌려줄지, 중간 점수를 주기적으로 보고해 둘지 미리 정한다.</li>
+      <li><strong>받는 쪽이 범위를 검사한다.</strong> 우리 서버가 보낸 보고라도 버그로 엉뚱한 값이 올 수 있다. 한 판에 줄 수 있는 보상의 상한을 받는 쪽에서 다시 확인한다.</li>
+    </ul>
+
+    <h3>지속 세계는 끝이 없어서 저장과 배포를 직접 정한다</h3>
+    <p>
+      월드 서버 프로세스에는 "판이 끝났다" 같은 지점이 없다. 플레이어가 나가도 세계는 남아야 하므로 프로세스가 끝날 자리가 없다. 그러면 세 가지를 직접 만들어야 한다.
+    </p>
+    <ul>
+      <li><strong>저장 시점.</strong> 위치와 체력을 매 틱 쓸 수는 없으므로 무엇을 즉시, 무엇을 주기적으로, 무엇을 로그아웃 때 저장할지 나눈다. 그 표는 <a href="scaling.html">확장과 샤딩</a>에, 바뀐 것만 모아 저장하는 구현은 <a href="../database/data-access.html">ORM과 저장 설계</a>에 있다.</li>
+      <li><strong>내리는 시점.</strong> 새 판을 올리려면 지금 접속해 있는 사람을 어떻게 할지 먼저 정한다. 정기 점검으로 모두 내보내거나, 사람을 다른 프로세스로 옮긴 뒤 내린다(<a data-ref="operations/draining">드레이닝</a>, <a data-ref="operations/zero-downtime-patch">무중단 패치</a>).</li>
+      <li><strong>죽었을 때 되돌아갈 지점.</strong> 프로세스가 죽으면 그 지역의 메모리 상태가 사라지고, 플레이어는 마지막 저장 시점에서 다시 시작한다. 그 사이에 얻은 것이 사라져도 되는지가 저장 주기를 정한다.</li>
+    </ul>
+
+    <h3>수명이 정하는 것</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>축</th><th>세션 기반</th><th>지속 세계</th></tr></thead>
+        <tbody>
+          <tr><td>프로세스가 끝나는 시점</td><td>판이 끝날 때</td><td>운영이 내릴 때까지 끝나지 않는다</td></tr>
+          <tr><td>저장 시점</td><td>판이 끝날 때 결과만 남긴다</td><td>즉시·주기·로그아웃으로 나눠 직접 정한다</td></tr>
+          <tr><td>부하가 늘 때</td><td>판 수만큼 서버를 더 띄운다</td><td>공간을 나누거나 채널을 늘린다</td></tr>
+          <tr><td>부하가 줄 때</td><td>판이 끝나길 기다렸다가 내린다</td><td>사람을 다른 프로세스로 옮겨야 내릴 수 있다</td></tr>
+          <tr><td>새 판을 올릴 때</td><td>다음 판부터 새 버전으로 시작한다</td><td>접속한 사람을 언제 넘길지부터 정한다</td></tr>
+          <tr><td>한 대가 죽으면</td><td>그 판의 인원만 영향을 받는다</td><td>그 지역 전원이 마지막 저장 시점으로 돌아간다</td></tr>
+          <tr><td>오케스트레이터와의 궁합</td><td>도구가 그대로 맞는다</td><td>"끝났다"는 신호를 게임 쪽이 만들어 줘야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      마지막 줄이 실무에서 자주 걸린다. 오케스트레이터는 끝나는 서버를 다루도록 만들어졌다. Agones는 서버 묶음을 새 버전으로 갱신할 때 이미 할당된 서버는 지우지 않고, 판이 끝나 스스로 종료하기를 기다린다. 끝나지 않는 월드 서버를 여기에 올리면 갱신이 영원히 끝나지 않는다. 그래서 지속 세계를 오케스트레이터에 올릴 때는 사람을 옮기고 스스로 종료를 알리는 절차를 게임 쪽에 만든다.
+    </p>
+
+    <h3>한 게임 안에 둘이 섞인다</h3>
+    <p>
+      "이 게임은 MMO다"로 모델이 하나로 정해지지 않는다.
+    </p>
+    <ul>
+      <li>MMO 안에서도 던전과 전장은 세션이다. 파티가 들어가면 생기고 나오면 사라진다(<a href="../game-patterns/world-partition.html">월드 분할</a>의 인스턴스).</li>
+      <li>배틀로얄도 판 밖에는 지속되는 것이 많다. 계정, 인벤토리, 상점, 친구, 전적은 판이 끝나도 남는다. 이런 기능은 오래 도는 프로세스보다 무상태 API 서버와 DB로 만드는 편이 다루기 쉽다.</li>
+      <li>그래서 경계는 기능마다 긋는다. 로그인, 친구 목록, 랭킹, 전적처럼 요청 하나로 끝나는 기능은 무상태 쪽에 두고, 여러 플레이어가 같은 공간에서 계속 상호작용하는 부분만 오래 도는 프로세스에 남긴다. 무상태 쪽이 넓을수록 확장이 쉬워진다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>이 기능의 상태에 대해 물을 것</th><th>그렇다면</th></tr></thead>
+        <tbody>
+          <tr><td>끝나면 결과만 남기고 버려도 되나</td><td>세션으로 만든다. 저장 시점을 따로 정할 일이 없고, 새 버전은 다음 판부터 들어간다</td></tr>
+          <tr><td>나갔다 돌아와도 그대로여야 하나. 다른 사람이 같은 공간에서 계속 봐야 하나</td><td>오래 도는 프로세스가 들고 있어야 한다. 저장·배포·복구 절차를 직접 만든다</td></tr>
+          <tr><td>요청 하나로 끝나고 공간이 필요 없나</td><td>어느 쪽도 아니다. 무상태 서버와 DB로 만든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>대기 서버 수는 피크의 할당 속도로 정한다.</strong> 1초에 판이 20개씩 잡히고 서버가 뜨는 데 30초가 걸린다면, 대기 서버가 600대보다 적을 때 몰리는 순간 판이 서버를 기다린다. 넉넉히 두면 놀고 있는 서버 비용이 든다.</li>
+      <li><strong>판 길이에 상한을 둔다.</strong> 버그로 끝나지 않는 판은 서버를 영원히 붙잡는다. 최대 시간이 지나면 결과를 정리하고 강제로 끝낸다.</li>
+      <li><strong>세션 서버는 버전이 섞여 돈다.</strong> 새 버전을 배포해도 진행 중인 판은 옛 버전으로 끝까지 간다. 매칭은 클라이언트 버전에 맞는 서버를 골라 줘야 하고, 결과 보고 형식은 두 버전이 함께 통해야 한다(<a data-ref="operations/protocol-compat">프로토콜 호환</a>).</li>
+      <li><strong>재접속 경로가 다르다.</strong> 세션 게임에서 끊긴 플레이어는 같은 판 서버로 돌아가야 하므로, 판 ID와 서버 주소를 계정에 잠시 붙여 둔다. 지속 세계에서는 마지막 저장 위치를 맡은 존 서버로 보낸다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>"게임 서버"라는 한 이름이 수명이 다른 둘을 함께 가리킨다. 세션 서버를 두고 한 말을 월드 서버에 그대로 옮기면 배포와 확장에서 어긋난다.</li>
+      <li>상태를 메모리에 들고 있다고 지속 세계인 것은 아니다. 기준은 그 상태가 프로세스와 함께 끝나느냐다.</li>
+      <li>세션 서버가 메모리에만 든 상태는 판 중간에 서버가 죽으면 사라진다. "판이 짧으니 괜찮다"는 판이 짧을 때만 맞다. 한 시간짜리 판이라면 중간 보고를 고민한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

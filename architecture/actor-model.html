@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>액터 모델과 가상 액터 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/actor-model">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/threading-model.html">게임 서버 스레딩 모델</a> · <a href="scaling.html">확장과 샤딩</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">액터</span>는 상태와 그 상태를 고치는 코드를 한데 가둔 단위다. 바깥에서는 상태를 직접 읽거나 고칠 수 없고, 메시지를 보내야 한다. 액터는 자기 <strong>메일박스</strong>에 쌓인 메시지를 한 번에 하나씩 처리한다. 그래서 액터 안에서는 락이 필요 없다.
+    </p>
+    <p>
+      대가는 경계다. 한 액터 안에서 끝나던 일이 액터 둘에 걸치면 원자성이 사라지고, 서로를 기다리는 호출은 데드락이 된다. <span class="blank">가상 액터</span>(Orleans의 그레인)는 여기에 한 가지를 더 바꾼다. 액터를 만들고, 어느 서버에 두고, 죽은 서버의 액터를 다른 곳에서 살리는 일을 응용 대신 런타임이 맡는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>상태는 안에 두고 메시지로만 주고받는다</h3>
+    <p>
+      <a href="../server/threading-model.html">게임 서버 스레딩 모델</a>의 "조각별 직렬 실행"을 개체 단위로 끝까지 밀고 간 것이 액터다. 존 하나에 큐 하나를 두던 것을 플레이어 하나, 길드 하나, 경매 품목 하나마다 둔다. 상태를 고치는 실행 흐름이 언제나 하나라서 경합이 없다. 수만 개의 액터가 있어도 실제 스레드는 <a data-ref="operating-system/thread-pool">스레드 풀</a> 몇 개이고, 런타임이 메일박스가 빈 액터는 건너뛰고 메시지가 있는 액터만 스레드에 올린다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="여러 발신자가 보낸 메시지가 메일박스에 쌓이고 액터는 그중 하나만 처리한다. 오른쪽에서는 액터 A와 B가 서로의 응답을 기다리며 멈춘다">
+        <defs><marker id="am-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">메일박스와 한 번에 하나</text>
+        <rect class="f-box" x="20" y="44" width="100" height="32" rx="4"/>
+        <text class="f-text" x="70" y="65" text-anchor="middle">거래 서버</text>
+        <rect class="f-box" x="20" y="96" width="100" height="32" rx="4"/>
+        <text class="f-text" x="70" y="117" text-anchor="middle">우편 작업</text>
+        <rect class="f-box" x="20" y="148" width="100" height="32" rx="4"/>
+        <text class="f-text" x="70" y="169" text-anchor="middle">클라이언트</text>
+        <line class="f-line" x1="120" y1="60" x2="166" y2="104" marker-end="url(#am-a)"/>
+        <line class="f-line" x1="120" y1="112" x2="166" y2="112" marker-end="url(#am-a)"/>
+        <line class="f-line" x1="120" y1="164" x2="166" y2="120" marker-end="url(#am-a)"/>
+        <rect class="f-cell" x="170" y="96" width="44" height="32" rx="3"/>
+        <text class="f-sub" x="192" y="117" text-anchor="middle">m3</text>
+        <rect class="f-cell" x="216" y="96" width="44" height="32" rx="3"/>
+        <text class="f-sub" x="238" y="117" text-anchor="middle">m2</text>
+        <text class="f-sub" x="215" y="150" text-anchor="middle">메일박스</text>
+        <line class="f-line" x1="262" y1="112" x2="290" y2="112" marker-end="url(#am-a)"/>
+        <rect class="f-hit" x="294" y="80" width="120" height="64" rx="6"/>
+        <text class="f-text" x="354" y="104" text-anchor="middle">플레이어 1001</text>
+        <text class="f-sub" x="354" y="122" text-anchor="middle">gold = 500</text>
+        <text class="f-sub" x="354" y="138" text-anchor="middle">m1 처리 중</text>
+        <text class="f-sub" x="20" y="210">상태를 고치는 흐름이 하나뿐이라 락이 없다</text>
+
+        <line class="f-grid" x1="450" y1="20" x2="450" y2="216"/>
+
+        <text class="f-strong" x="480" y="24">서로를 부르면 멈춘다</text>
+        <rect class="f-hit" x="490" y="84" width="90" height="44" rx="6"/>
+        <text class="f-text" x="535" y="111" text-anchor="middle">길드 A</text>
+        <rect class="f-hit" x="650" y="84" width="90" height="44" rx="6"/>
+        <text class="f-text" x="695" y="111" text-anchor="middle">길드 B</text>
+        <path class="f-line" d="M535,84 C560,40 670,40 695,82" marker-end="url(#am-a)"/>
+        <path class="f-line" d="M695,128 C670,172 560,172 537,130" marker-end="url(#am-a)"/>
+        <text class="f-sub" x="615" y="44" text-anchor="middle">동맹 요청, 응답 대기</text>
+        <text class="f-sub" x="615" y="180" text-anchor="middle">동맹 요청, 응답 대기</text>
+        <text class="f-sub" x="480" y="210">둘 다 다음 메시지를 받지 않아 시간 초과로 끝난다</text>
+      </svg>
+      <figcaption>왼쪽: 누가 보내든 메시지는 메일박스에 줄을 서고, 액터는 하나를 끝낸 뒤 다음을 꺼낸다. 오른쪽: 요청을 처리하는 도중에 상대에게 묻고 응답을 기다리면, 같은 순간 상대도 나에게 물었을 때 둘 다 멈춘다.</figcaption>
+    </figure>
+
+    <h3>기다리는 동안에도 액터는 막혀 있다</h3>
+    <p>
+      "한 번에 하나"는 메시지를 받아서 끝낼 때까지를 말한다. 처리 도중 DB 저장을 <code>await</code>하면 그 응답이 올 때까지 액터는 다음 메시지를 꺼내지 않는다. 스레드는 놓아주지만 액터는 붙잡혀 있다. DB가 100ms 걸리면 그 플레이어 액터는 초당 열 건밖에 처리하지 못한다.
+    </p>
+    <p>
+      서로를 부르는 데드락도 같은 규칙에서 나온다. <a href="../operating-system/deadlock.html">데드락</a>의 네 조건 가운데 순환 대기가 액터 호출 사이에서 생긴다. 락을 쓰지 않았는데도 생긴다는 점이 함정이다. Orleans는 이런 호출이 응답 시한(기본 30초)을 넘기면 예외로 끝낸다.
+    </p>
+    <p>
+      풀어 주는 장치가 <strong>재진입</strong>이다. Orleans에서 그레인에 <code>[Reentrant]</code>를 붙이거나 메서드에 <code>[AlwaysInterleave]</code>를 붙이면, 한 요청이 <code>await</code>로 기다리는 사이 다른 요청이 끼어들어 실행된다. 여전히 한 번에 한 흐름만 실행되므로 락은 필요 없다. 대신 <code>await</code> 앞에서 읽은 값이 뒤에서 그대로라는 보장이 사라진다. 비동기 코드의 원자성 문제가 액터 안으로 돌아오는 셈이다.
+    </p>
+
+    <h3>가상 액터는 수명과 위치를 런타임에 넘긴다</h3>
+    <p>
+      Orleans는 Microsoft Research에서 만들었고, Halo 4의 클라우드 서비스를 돌리는 데 쓰였다. 이 모델에서 그레인은 "언제나 있는" 논리적 개체다. 코드는 키로 그레인을 부를 뿐 만들거나 지우지 않는다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>하는 일</th><th>액터를 직접 다룰 때(Akka.NET 등)</th><th>가상 액터(Orleans)</th></tr></thead>
+        <tbody>
+          <tr><td>만들고 없애기</td><td>응용이 만들고 멈춘다</td><td>처음 호출될 때 <strong>활성화</strong>하고, 한동안 호출이 없으면 <strong>비활성화</strong>해 메모리에서 내린다</td></tr>
+          <tr><td>어디에 둘지</td><td>응용이 정한다</td><td>런타임이 배치 전략(무작위, 호출자와 같은 서버, 부하 기준 등)으로 정한다</td></tr>
+          <tr><td>찾기</td><td>액터 주소(참조)를 들고 있어야 한다</td><td>키만 있으면 부른다. 위치는 런타임의 그레인 디렉터리가 안다</td></tr>
+          <tr><td>서버가 죽으면</td><td>감독자가 다시 만들고 상태 복구도 응용이 한다</td><td>다음 호출 때 살아 있는 서버에서 다시 활성화된다. 상태는 저장소에서 다시 읽는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre><code class="language-csharp">public interface IPlayerGrain : IGrainWithIntegerKey
+{
+    Task&lt;int&gt; AddGold(int amount);
+}
+
+public sealed class PlayerGrain(
+    [PersistentState("player")] IPersistentState&lt;PlayerState&gt; state) : Grain, IPlayerGrain
+{
+    public async Task&lt;int&gt; AddGold(int amount)
+    {
+        state.State.Gold += amount;     // 이 그레인 안에서는 한 번에 요청 하나
+        await state.WriteStateAsync();  // 저장을 기다리는 동안 다음 요청은 줄을 선다
+        return state.State.Gold;
+    }
+}
+
+// 부르는 쪽: 어느 서버에 있는지 모르고 키로 부른다
+var player = grainFactory.GetGrain&lt;IPlayerGrain&gt;(playerId);
+await player.AddGold(100);</code></pre>
+    <p>
+      위치가 감춰졌다는 것은 비용도 감춰졌다는 뜻이다. 같은 호출이 같은 프로세스 안에서 끝날 수도, 직렬화되어 다른 서버로 갈 수도 있다. 코드만 봐서는 어느 쪽인지 모른다. 자주 주고받는 그레인끼리 같은 서버에 두는 배치 전략을 고르는 일은 다시 응용의 몫이다.
+    </p>
+    <p>
+      <strong>단일 활성화</strong>도 절대적이지 않다. Orleans는 키 하나에 활성화 하나를 지키려 하지만, 서버가 죽었다고 잘못 판정되거나 클러스터 멤버십이 흔들리는 짧은 순간에는 같은 그레인이 두 곳에서 살아날 수 있다. 그래서 그레인 상태 저장은 ETag로 낙관적 동시성 검사를 한다. 늦게 쓰는 쪽은 충돌로 실패한다(<a href="../database/concurrency-control.html">동시성 제어와 데드락</a>). "액터니까 하나뿐"이라고 믿고 재화를 다루면 안 된다.
+    </p>
+
+    <h3>감독 트리는 실패를 위로 올린다</h3>
+    <p>
+      Erlang/OTP와 Akka.NET은 다른 갈래다. 액터가 자식 액터를 만들고, 자식이 예외로 죽으면 부모(감독자)가 처리 방침을 정한다. 다시 시작할지, 무시하고 계속할지, 멈출지, 자기 부모에게 넘길지다. 죽은 액터 하나만 다시 시작하는 방식(one-for-one)과 형제를 모두 다시 시작하는 방식(all-for-one)이 있다.
+    </p>
+    <p>
+      "고치려 하지 말고 죽게 둔다(let it crash)"는 말이 여기서 나왔다. 오류 처리 코드를 곳곳에 넣는 대신, 깨끗한 상태로 다시 시작하는 일을 구조가 맡는다. 가상 액터는 이 트리 대신 "다음 호출 때 다시 활성화"로 같은 문제를 푼다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>액터가 맞나</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>플레이어, 길드, 채팅방처럼 상태가 개체마다 닫혀 있다</td><td>맞는다</td><td>개체 하나에 액터 하나. 개체가 늘면 액터가 늘고 서버를 넘어 퍼진다</td></tr>
+          <tr><td>로비, 친구, 우편, 업적처럼 개체별 요청이 많고 서로 얽힘이 적다</td><td>잘 맞는다</td><td>가상 액터의 활성화·비활성화가 접속자 수에 맞춰 메모리를 쓴다</td></tr>
+          <tr><td>두 플레이어 사이의 거래처럼 여러 액터를 함께 고쳐야 한다</td><td>장치가 더 필요하다</td><td>액터 둘에 걸친 원자성은 없다. 거래 액터를 따로 두거나 <a href="saga.html">사가</a>, 분산 트랜잭션 기능을 쓴다</td></tr>
+          <tr><td>인기 경매 품목, 월드 보스처럼 한 개체에 요청이 몰린다</td><td>상한이 생긴다</td><td>액터 하나는 더 나뉘지 않는다. <a href="scaling.html">확장과 샤딩</a>에서 말한 "나눌 수 없는 것"이 그대로 남는다</td></tr>
+          <tr><td>틱마다 수백 개 엔티티가 서로 부딪히는 전투 시뮬레이션</td><td>맞지 않는다</td><td>엔티티마다 메시지를 주고받으면 비용이 크다. 존 하나를 한 스레드가 도는 편이 낫다(<a href="../server/tick-loop.html">서버 틱 루프</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>전투는 존 스레드, 메타 기능은 액터로 나누는 구성이 흔하다.</strong> 위치와 충돌은 틱 루프 안에서 한꺼번에 계산하고, 친구·길드·우편·랭킹 요청처럼 개체별로 닫힌 것은 액터로 보낸다.</li>
+      <li><strong>액터 안에서 오래 기다리지 않는다.</strong> 외부 결제 API 호출처럼 느린 일을 액터 메서드에서 그대로 <code>await</code>하면 그 플레이어의 모든 요청이 줄을 선다. 느린 일은 작업 큐로 넘기고 결과를 메시지로 받는다(<a href="message-models.html">메시지 모델 세 갈래</a>).</li>
+      <li><strong>호출 방향을 정해 고리를 끊는다.</strong> 플레이어 → 길드 → 플레이어처럼 되돌아오는 호출이 데드락과 재진입 버그를 만든다. 위에서 아래로만 부르고, 거꾸로 알릴 일은 응답을 기다리지 않는 단방향 메시지로 보낸다.</li>
+      <li><strong>비활성화는 저장 시점이 된다.</strong> 그레인이 내려가기 전에 상태를 저장해야 한다. 서버가 그대로 죽으면 비활성화 훅은 불리지 않으므로, 중요한 변경은 그때그때 저장한다(<a href="../database/data-access.html">ORM과 저장 설계</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>가상 액터는 액터 모델의 다른 이름이 아니다.</strong> 액터 모델은 상태를 가두고 메시지로 주고받는 방식이고, 가상 액터는 그 액터의 수명과 위치를 누가 맡느냐를 바꾼 것이다.</li>
+      <li><strong>액터 안에 락이 없다고 시스템에 경쟁이 없는 것은 아니다.</strong> 액터 사이의 변경, 재진입 중 끼어든 요청, 드물게 생기는 중복 활성화가 남는다.</li>
+      <li><strong>메시지는 공유 참조를 넘기면 안 된다.</strong> 같은 프로세스 안에서 가변 객체를 메시지로 넘기면 두 액터가 같은 객체를 고친다. 불변 객체를 넘기거나 복사한다(<a href="../csharp/immutability-null.html">불변과 null 다루기</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>전달 보장과 exactly-once · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/delivery-guarantees">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="message-models.html">메시지 모델 세 갈래</a> · <a href="../network/tcp-connection.html">TCP 연결 관리</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      전달 보장은 세 가지로 나뉜다. <span class="blank">at-most-once</span>는 많아야 한 번이다. 유실될 수 있고 중복은 없다. <span class="blank">at-least-once</span>는 적어도 한 번이다. 유실은 없고 중복이 생길 수 있다. <span class="blank">exactly-once</span>는 정확히 한 번이다.
+    </p>
+    <p>
+      앞의 둘을 가르는 것은 <strong>확인(ACK)을 언제 하느냐</strong>다. 처리 전에 확인하면 최대 한 번, 처리 후에 확인하면 최소 한 번이 된다. exactly-once는 제품이 말하는 범위가 좁다. Kafka의 exactly-once는 Kafka에서 읽어 Kafka에 쓰는 구간 안에서만 성립한다. 소비자가 DB나 외부 API에 남기는 결과는 그 밖이다. 그래서 실무의 기본은 최소 한 번 전달에 멱등한 소비자를 붙여 <strong>결과만 한 번</strong>이 되게 하는 것이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>확인 시점이 보장을 정한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 236" role="img" aria-label="받자마자 확인하고 처리 중에 죽으면 메시지가 사라지고, 처리 뒤에 확인하는데 확인 직전에 죽으면 브로커가 다시 보내 두 번 처리된다">
+        <defs><marker id="dg-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="26">받자마자 확인: at-most-once</text>
+        <line class="f-line" x1="20" y1="66" x2="740" y2="66"/>
+        <rect class="f-box" x="40" y="48" width="90" height="36" rx="4"/>
+        <text class="f-text" x="85" y="71" text-anchor="middle">받음</text>
+        <rect class="f-hit" x="160" y="48" width="90" height="36" rx="4"/>
+        <text class="f-text" x="205" y="71" text-anchor="middle">ACK</text>
+        <rect class="f-box" x="280" y="48" width="130" height="36" rx="4"/>
+        <text class="f-text" x="345" y="71" text-anchor="middle">우편 지급 중</text>
+        <text class="f-x" x="440" y="74" text-anchor="middle">✕</text>
+        <text class="f-sub" x="460" y="52">프로세스가 죽는다</text>
+        <rect class="f-miss" x="600" y="48" width="130" height="36" rx="4"/>
+        <text class="f-on" x="665" y="71" text-anchor="middle">유실</text>
+        <text class="f-sub" x="460" y="90">브로커는 이미 지웠다</text>
+
+        <text class="f-strong" x="20" y="132">처리 뒤 확인: at-least-once</text>
+        <line class="f-line" x1="20" y1="172" x2="740" y2="172"/>
+        <rect class="f-box" x="40" y="154" width="90" height="36" rx="4"/>
+        <text class="f-text" x="85" y="177" text-anchor="middle">받음</text>
+        <rect class="f-box" x="160" y="154" width="130" height="36" rx="4"/>
+        <text class="f-text" x="225" y="177" text-anchor="middle">우편 지급 완료</text>
+        <text class="f-x" x="320" y="180" text-anchor="middle">✕</text>
+        <text class="f-sub" x="336" y="158">ACK 직전에 죽는다</text>
+        <line class="f-line f-dash" x1="340" y1="172" x2="590" y2="172" marker-end="url(#dg-a)"/>
+        <text class="f-sub" x="515" y="196" text-anchor="middle">브로커가 다시 보낸다</text>
+        <rect class="f-miss" x="600" y="154" width="130" height="36" rx="4"/>
+        <text class="f-on" x="665" y="177" text-anchor="middle">두 번 지급</text>
+        <text class="f-sub" x="20" y="222">어느 쪽도 실패를 없애지 못한다. 유실과 중복 가운데 무엇을 남길지 고를 뿐이다</text>
+      </svg>
+      <figcaption>"처리했다"와 "확인했다"는 두 사건이고, 그 사이에서 죽는 순간이 반드시 있다. 확인을 앞에 두면 그 틈이 유실이 되고, 뒤에 두면 중복이 된다.</figcaption>
+    </figure>
+    <p>
+      같은 브로커도 설정에 따라 보장이 바뀐다. RabbitMQ에서 자동 확인(auto-ack)을 켜면 메시지를 내보내는 순간 지우므로 최대 한 번이다. 수동 확인으로 처리 뒤에 <code>BasicAck</code>를 보내면 최소 한 번이다. 보내는 쪽도 같다. 발행 확인(publisher confirm)을 받고, 못 받으면 다시 보내야 브로커까지의 유실이 없다. 다시 보내면 브로커 쪽 중복이 생긴다.
+    </p>
+    <p>
+      Kafka 소비자는 오프셋 커밋이 확인이다. 자동 커밋(<code>enable.auto.commit</code>)은 처리와 무관하게 주기적으로 커밋하므로, 처리 전에 커밋되면 유실, 처리 후 커밋 전에 죽으면 중복이 생겨 둘 다 일어날 수 있다. 처리를 끝낸 뒤 직접 커밋하는 것이 최소 한 번의 기본형이다.
+    </p>
+
+    <h3>네트워크 너머 "정확히 한 번 전달"은 없다</h3>
+    <p>
+      보낸 쪽은 상대가 받았는지를 응답으로만 안다. 응답이 오지 않으면 메시지가 사라진 것인지, 응답만 사라진 것인지 구별할 수 없다. 응답에 대한 응답을 기다려도 같은 문제가 한 단계 뒤로 밀릴 뿐이다. 이것이 <strong>두 장군 문제</strong>다. 그래서 다시 보내지 않으면 유실을, 다시 보내면 중복을 받아들여야 한다.
+    </p>
+    <p>
+      실무에서 말하는 정확히 한 번은 "전달"이 아니라 <strong>효과</strong>다. 중복 전달은 일어나지만 받는 쪽이 이미 본 메시지를 알아보고 버려서 결과가 한 번만 남는다. 이를 effectively-once라고 부르기도 한다. 벤더가 말하는 exactly-once도 실은 이 방식을 브로커 안에서 구현한 것이다.
+    </p>
+
+    <h3>Kafka의 exactly-once는 Kafka 안에서 닫힌다</h3>
+    <p>
+      Kafka는 두 장치를 둔다.
+    </p>
+    <ul>
+      <li><strong>멱등 프로듀서:</strong> 프로듀서마다 ID를, 파티션별 메시지마다 순번을 붙인다. 재전송된 메시지는 브로커가 순번을 보고 버린다. Kafka 3.0부터 기본으로 켜진다. 보내는 쪽 재시도로 생기는 중복을 없앤다.</li>
+      <li><strong>트랜잭션:</strong> 여러 파티션에 쓰는 메시지와 <strong>소비자 오프셋 커밋</strong>을 한 트랜잭션으로 묶는다. 읽는 쪽이 <code>isolation.level=read_committed</code>면 커밋된 것만 본다. "토픽 A를 읽고 처리해 토픽 B에 쓰고, A의 오프셋을 넘긴다"가 전부 되거나 전부 안 된다.</li>
+    </ul>
+    <p>
+      경계가 분명하다. 처리 도중 DB에 쓰거나, 외부 결제 API를 부르거나, 클라이언트에 패킷을 보낸 일은 Kafka 트랜잭션에 들어가지 않는다. 트랜잭션이 취소되고 다시 실행되면 그 일은 한 번 더 일어난다. 다른 브로커의 "exactly-once" 기능(예: 일정 시간 안의 같은 메시지 ID를 버리는 중복 감지)도 보내는 쪽 중복만 막는 범위로 좁다.
+    </p>
+
+    <h3>계속 실패하는 메시지는 따로 뺀다</h3>
+    <p>
+      최소 한 번 전달에는 그늘이 있다. 형식이 깨진 메시지나 버그를 건드리는 메시지는 처리할 때마다 실패하고, 확인을 못 받으니 끝없이 다시 온다. 큐 하나가 그 메시지에 묶이고, 재시도가 몰려 부하가 커진다. 그래서 전달 횟수 상한을 두고, 넘으면 <strong>데드 레터 큐</strong>로 옮겨 사람이 보게 한다. 재시도 사이에는 간격을 늘려 가며 기다린다(<a data-ref="operations/dead-letter-circuit">데드 레터와 서킷 브레이커</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>메시지</th><th>보장</th><th>받는 쪽에서 할 일</th></tr></thead>
+        <tbody>
+          <tr><td>재화 이동, 보상 지급, 결제 결과</td><td>at-least-once</td><td>메시지 ID로 중복을 거른다(<a href="idempotent-consumer.html">멱등 소비자</a>)</td></tr>
+          <tr><td>캐시 무효화, 접속자 수 갱신, 공지 표시</td><td>at-most-once로 충분하다</td><td>놓쳐도 다음 갱신이나 만료로 맞춰진다</td></tr>
+          <tr><td>실시간 위치, 체력 같은 계속 바뀌는 값</td><td>at-most-once</td><td>다시 보낸 옛 값은 오히려 해롭다. 최신 값만 쓴다</td></tr>
+          <tr><td>Kafka 토픽을 읽어 집계해 다른 토픽에 쓰는 파이프라인</td><td>Kafka 트랜잭션으로 exactly-once</td><td>결과를 DB로 내보내는 마지막 단계는 다시 멱등하게 만든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>"보상 지급" 메시지는 반드시 두 번 온다고 가정한다.</strong> 우편 서버가 지급을 커밋하고 확인 직전에 재시작되는 일은 배포 때마다 생긴다. 보상 ID를 유니크 키로 두면 두 번째는 저장 단계에서 걸러진다.</li>
+      <li><strong>클라이언트 요청도 같은 구조다.</strong> 클라이언트가 응답을 못 받으면 다시 보낸다. 서버와 클라이언트 사이에서도 정확히 한 번 전달은 없으므로, 구매 같은 요청에는 요청 ID를 붙이게 한다(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>, <a href="../database/transaction.html">트랜잭션과 ACID</a>).</li>
+      <li><strong>배포와 리밸런싱이 중복의 주된 원인이다.</strong> 소비자를 재시작하거나 Kafka 컨슈머 그룹이 파티션을 다시 나누면, 커밋하지 않은 메시지가 다른 소비자에게 다시 간다. 종료할 때 처리 중인 것을 끝내고 커밋한 뒤 내린다(<a data-ref="operations/draining">드레이닝</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>exactly-once 설정을 켜도 소비자 쪽 일은 남는다.</strong> 설정 하나가 DB 저장이나 외부 호출까지 한 번으로 만들지 않는다. 브로커가 보장하는 구간과 소비자가 책임지는 구간을 나눠 그린다.</li>
+      <li><strong>"유실 없음"은 브로커 설정 전체가 맞을 때만이다.</strong> 보내는 쪽 확인, 브로커 복제 수와 쓰기 확인 범위(Kafka의 <code>acks=all</code>과 <code>min.insync.replicas</code>), 디스크 내리기까지 함께 맞아야 한다. 한 군데만 약해도 장애 때 메시지가 빠진다.</li>
+      <li><strong>최소 한 번은 순서도 흔든다.</strong> 실패한 메시지가 나중에 다시 오면 뒤의 메시지보다 늦게 처리된다. 순서가 중요한 데이터는 버전이나 순번으로 옛 메시지를 버린다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

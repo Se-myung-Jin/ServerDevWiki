@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>게임 서버 토폴로지 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/server-topology">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/threading-model.html">게임 서버 스레딩 모델</a> · <a href="../game-patterns/world-partition.html">월드 분할: 존·채널·인스턴스</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      온라인 게임의 서버는 보통 여러 층으로 나뉜다. 접속을 받는 <span class="blank">게이트웨이</span>, 계정을 확인하는 로그인 서버, 판을 짜는 로비·<a href="matchmaking.html">매칭</a> 서버, 월드를 시뮬레이션하는 존 서버, 길드·우편·경매 같은 전역 서비스, 그리고 DB와 캐시다. 층의 이름과 개수는 회사마다 다르다.
+    </p>
+    <p>
+      이름보다 먼저 볼 것은 <strong>어느 층이 상태를 메모리에 들고 있느냐</strong>다. 상태를 밖에 두는 층은 아무 인스턴스가 요청을 받아도 되므로 대수를 늘리면 끝난다. 지역의 상태를 들고 있는 층은 플레이어와 묶여 있어서, 늘릴 때도 뺄 때도 사람을 옮겨야 한다. 배포 순서와 장애가 퍼지는 범위도 이것을 따라간다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>층마다 맡는 일과 들고 있는 상태</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 300" role="img" aria-label="클라이언트가 게이트웨이에 붙고, 게이트웨이가 로그인, 로비, 존, 채팅, 전역 서비스로 요청을 나눈다. 존 서버만 지역 상태를 메모리에 들고 나머지는 DB와 캐시에 상태를 둔다">
+        <defs><marker id="st-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="122" width="100" height="46" rx="6"/>
+        <text class="f-text" x="70" y="150" text-anchor="middle">클라이언트</text>
+        <line class="f-line" x1="120" y1="145" x2="166" y2="145" marker-end="url(#st-a)"/>
+
+        <rect class="f-box" x="170" y="100" width="140" height="90" rx="6"/>
+        <text class="f-strong" x="240" y="135" text-anchor="middle">게이트웨이 ×N</text>
+        <text class="f-sub" x="240" y="156" text-anchor="middle">연결 유지 · 암호화</text>
+        <text class="f-sub" x="240" y="174" text-anchor="middle">어느 서버로 보낼지</text>
+
+        <rect class="f-box" x="380" y="16" width="190" height="40" rx="6"/>
+        <text class="f-text" x="475" y="41" text-anchor="middle">로그인 · 인증</text>
+        <rect class="f-box" x="380" y="68" width="190" height="40" rx="6"/>
+        <text class="f-text" x="475" y="93" text-anchor="middle">로비 · 매칭</text>
+        <rect class="f-hit" x="380" y="120" width="190" height="50" rx="6"/>
+        <text class="f-text" x="475" y="142" text-anchor="middle">존 · 인스턴스 서버 ×N</text>
+        <text class="f-sub" x="475" y="161" text-anchor="middle">지역 상태를 메모리에</text>
+        <rect class="f-box" x="380" y="182" width="190" height="40" rx="6"/>
+        <text class="f-text" x="475" y="207" text-anchor="middle">채팅</text>
+        <rect class="f-box" x="380" y="234" width="190" height="40" rx="6"/>
+        <text class="f-text" x="475" y="259" text-anchor="middle">길드 · 우편 · 경매</text>
+
+        <line class="f-line" x1="310" y1="120" x2="376" y2="40" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="310" y1="132" x2="376" y2="90" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="310" y1="145" x2="376" y2="145" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="310" y1="158" x2="376" y2="200" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="310" y1="170" x2="376" y2="250" marker-end="url(#st-a)"/>
+
+        <line class="f-line" x1="570" y1="36" x2="600" y2="36"/>
+        <line class="f-line" x1="570" y1="88" x2="600" y2="88"/>
+        <line class="f-line" x1="570" y1="145" x2="600" y2="145"/>
+        <line class="f-line" x1="570" y1="202" x2="600" y2="202"/>
+        <line class="f-line" x1="570" y1="254" x2="600" y2="254"/>
+        <line class="f-line" x1="600" y1="36" x2="600" y2="254"/>
+        <line class="f-line" x1="600" y1="80" x2="636" y2="80" marker-end="url(#st-a)"/>
+        <line class="f-line" x1="600" y1="212" x2="636" y2="212" marker-end="url(#st-a)"/>
+
+        <rect class="f-box" x="640" y="56" width="104" height="50" rx="6"/>
+        <text class="f-text" x="692" y="78" text-anchor="middle">DB</text>
+        <text class="f-sub" x="692" y="96" text-anchor="middle">오래 남을 것</text>
+        <rect class="f-box" x="640" y="188" width="104" height="50" rx="6"/>
+        <text class="f-text" x="692" y="210" text-anchor="middle">캐시 · Redis</text>
+        <text class="f-sub" x="692" y="228" text-anchor="middle">세션 · 랭킹</text>
+      </svg>
+      <figcaption>칠한 칸만 지역의 상태를 메모리에 든다. 나머지 층은 상태를 DB나 캐시에 두거나, 기능 하나의 원본을 한곳에 모은다. 게이트웨이는 상태가 없어 보이지만 연결 자체를 들고 있다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>층</th><th>맡는 일</th><th>들고 있는 상태</th><th>늘리는 법</th><th>한 대가 죽으면</th></tr></thead>
+        <tbody>
+          <tr><td>게이트웨이</td><td>연결 유지, 암호화·압축, 토큰 확인, 뒤쪽 서버로 전달</td><td>연결 자체와 "이 연결은 어느 서버로"라는 표</td><td>대수를 늘린다. 새 연결만 새 장비로 간다</td><td>붙어 있던 클라이언트가 모두 재접속한다</td></tr>
+          <tr><td>로그인 · 인증</td><td>계정 확인, 접속 토큰 발급, 월드 목록</td><td>거의 없다. 원본은 DB</td><td>대수를 늘린다</td><td>진행 중이던 로그인만 실패한다</td></tr>
+          <tr><td>로비 · 매칭</td><td>파티, 대기열, 판 구성</td><td>대기열(짧게 산다)</td><td>모드나 지역별로 대기열을 나눈다</td><td>대기 중이던 사람이 다시 줄을 선다</td></tr>
+          <tr><td>존 · 인스턴스</td><td>이동, 전투, AI, 판정</td><td>지역의 모든 상태</td><td>공간을 나누거나 복사본을 늘린다</td><td>그 지역 상태가 마지막 저장 시점으로 돌아간다</td></tr>
+          <tr><td>채팅</td><td>채널 메시지 중계</td><td>구독 목록</td><td>채널을 해시로 나눈다</td><td>메시지 몇 개를 잃고 다시 구독한다</td></tr>
+          <tr><td>전역 서비스</td><td>길드, 우편, 경매, 친구</td><td>원본은 DB, 자주 읽는 것은 캐시</td><td>기능별로 떼고, 한 값은 한곳에서 고친다</td><td>그 기능만 멈춘다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      나누는 순서와 "모두가 같은 값을 봐야 하는 것은 한곳에 둔다"는 원칙은 <a href="scaling.html">확장과 샤딩</a>에서 다룬다. 존 서버가 공간을 어떻게 나누고 경계에서 플레이어를 어떻게 넘기는지는 <a href="../game-patterns/world-partition.html">월드 분할</a>의 몫이다. 이 문서는 그 조각들을 어떤 층으로 엮는지를 본다.
+    </p>
+
+    <h3>게이트웨이를 따로 세우는 이유</h3>
+    <p>
+      클라이언트가 존 서버에 바로 붙어도 게임은 돈다. 그런데도 앞에 한 층을 더 두는 데는 이유가 있다.
+    </p>
+    <ul>
+      <li><strong>뒤쪽 배치를 숨긴다.</strong> 클라이언트는 게이트웨이 주소만 안다. 존 서버를 늘리고 옮겨도 클라이언트 쪽은 바뀌지 않는다.</li>
+      <li><strong>존을 옮겨도 연결이 끊기지 않는다.</strong> 직접 붙는 구조에서는 존 이동이 곧 재접속이다. 게이트웨이가 있으면 연결은 그대로 두고 "이 캐릭터는 이제 존 7로" 하고 뒤쪽 경로만 바꾼다. 인계 절차는 <a href="../game-patterns/world-partition.html">월드 분할</a>을 따른다.</li>
+      <li><strong>연결 관리를 한곳에서 한다.</strong> 하트비트로 끊긴 연결을 알아차리고(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>), 암호화와 압축을 풀고, 느린 클라이언트의 송신 버퍼를 관리한다(<a href="../server/backpressure.html">큐와 백프레셔</a>). 존 서버는 이미 해석된 메시지만 받아 시뮬레이션에 집중한다.</li>
+      <li><strong>나쁜 입력을 앞에서 거른다.</strong> <a data-ref="server/framing">프레이밍</a>이 깨진 패킷, 지나치게 잦은 요청, 인증 전 패킷을 게이트웨이에서 끊으면 존 서버의 틱이 그런 것에 쓰이지 않는다(<a data-ref="security/game-security">게임 보안</a>).</li>
+    </ul>
+    <p>
+      비용도 있다. 모든 메시지가 <strong>한 홉을 더</strong> 거친다. 같은 데이터센터 안이라면 한 홉은 보통 1ms가 안 되지만 왕복마다 더해지고, 메시지를 한 번 더 복사하고 해석한다. 그리고 게이트웨이는 무상태가 아니다. 수천에서 수만 개의 연결을 들고 있어서, 한 대가 죽거나 재시작하면 그 위의 플레이어가 한꺼번에 재접속한다. 그래서 게이트웨이는 가장 드물게, 가장 조심해서 배포하는 층이 된다.
+    </p>
+
+    <h3>서버끼리는 어떻게 말하나</h3>
+    <p>
+      층이 나뉘면 서버끼리 주고받는 일이 생긴다. 존 서버가 우편 서비스에 "아이템 지급"을 요청하고, 길드 서비스가 길드원이 흩어져 있는 존 서버 전부에 "길드 공지"를 알린다. 이 두 가지는 모양이 다르다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>쓰는 곳</th><th>장점</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>직접 호출(RPC)</td><td>답이 필요한 요청. 우편 지급, 길드 가입, 경매 입찰</td><td>결과를 바로 받는다. 흐름을 따라 읽기 쉽다</td><td>상대가 죽거나 느리면 호출한 쪽도 기다린다. 시간 초과와 재시도를 직접 처리한다</td></tr>
+          <tr><td>메시지 버스</td><td>여럿에게 알리는 일. 공지, 친구 접속 알림, 랭킹 갱신</td><td>보내는 쪽이 받는 쪽을 몰라도 된다. 받는 쪽이 잠시 죽어도 보내는 쪽은 멈추지 않는다</td><td>순서와 중복, 유실을 따로 생각해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      버스의 종류와 보장 수준은 <a href="message-models.html">메시지 모델 세 갈래</a>와 <a href="delivery-guarantees.html">전달 보장</a>에서 다룬다. 어느 쪽이든 같은 요청이 두 번 도착할 수 있으므로, 지급처럼 결과가 남는 요청은 요청 ID로 중복을 흡수한다(<a href="idempotent-consumer.html">멱등 소비자</a>). 한 프로세스 안의 함수 호출이던 것이 망을 넘으면 이 모든 것이 새로 생긴다. 어디까지 나눌지는 <a href="process-boundary.html">프로세스 경계</a>에서 본다.
+    </p>
+
+    <h3>누가 어디 있는지 찾는 일</h3>
+    <p>
+      게이트웨이가 메시지를 넘기려면 두 가지 표가 있어야 한다. 하나는 <strong>지금 떠 있는 서버 목록</strong>이고, 다른 하나는 <strong>이 캐릭터가 어느 존 서버에 있는지</strong>다.
+    </p>
+    <ul>
+      <li><strong>서버 목록은 등록소가 들고 있다.</strong> 서버는 뜨면서 자기 주소와 맡은 일을 등록하고, 살아 있는 동안 주기적으로 갱신한다. 갱신이 끊기면 목록에서 빠진다. 이것을 <span class="blank">서비스 디스커버리</span>라고 한다. Consul이나 etcd 같은 전용 도구를 쓰기도 하고, 쿠버네티스의 서비스 목록이나 Redis의 만료 키로 간단히 만들기도 한다(<a href="../database/redis.html">Redis 활용</a>).</li>
+      <li><strong>캐릭터 위치는 원본을 하나로 둔다.</strong> 캐릭터가 존을 옮기면 위치 표가 바뀐다. 이 표가 두 곳에 있으면 서로 다른 존을 가리키는 순간이 생기고, 메시지가 엉뚱한 서버로 간다. 위치 표의 원본은 세션 서버나 위치 서비스 한곳에 두고, 게이트웨이는 그것을 캐시한다. 같은 표가 중복 로그인도 막는다. 이미 위치가 등록된 계정이 다시 로그인하면 기존 접속을 끊는다.</li>
+    </ul>
+
+    <h3>샤드는 월드를 통째로 여러 벌 둔다</h3>
+    <p>
+      채널이 한 월드 안에서 같은 공간을 여러 벌 띄우는 것이라면, <span class="blank">샤드</span>는 월드 전체를 여러 벌 띄우는 것이다. 게임에서는 "서버"나 "월드"라고 부르는 단위다. 샤드끼리는 플레이어가 만나지 않으므로 주고받을 상태가 없다. 그래서 나누기 가장 쉬운 경계이고, 많은 MMORPG가 이 방식으로 시작했다.
+    </p>
+    <ul>
+      <li>계정 DB는 모든 샤드가 함께 쓰고, 캐릭터와 아이템 DB는 샤드마다 따로 두는 구성이 흔하다(<a href="../database/scaling-db.html">DB 확장</a>).</li>
+      <li>샤드를 넘는 콘텐츠가 생기면 경계가 무너지기 시작한다. 서버 간 전장, 통합 경매장, 서버 이전이 그렇다. 이런 기능은 샤드 위에 전역 층을 하나 더 두어 처리하고, 캐릭터 ID도 샤드를 넘어 유일해야 한다(<a href="../database/distributed-id.html">분산 ID 생성</a>).</li>
+      <li>반대로 샤드를 두지 않고 모든 플레이어를 한 세계에 두는 설계도 있다. EVE Online이 대표적이다. "다른 서버라서 못 만난다"가 사라지는 대신, 나눌 수 없는 상태를 한곳에서 감당하는 구조를 따로 만들어야 한다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <p>
+      층은 처음부터 많이 둘 필요가 없다. 한 프로세스에서 시작해, 신호가 보일 때 하나씩 뗀다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>이런 신호가 보이면</th><th>뗄 층</th></tr></thead>
+        <tbody>
+          <tr><td>존을 옮길 때마다 재접속이 거슬린다. 연결 처리가 존 서버의 틱을 잡아먹는다</td><td>게이트웨이</td></tr>
+          <tr><td>점검 직후 로그인이 몰려 게임 서버까지 느려진다</td><td>로그인과 대기열</td></tr>
+          <tr><td>길드·우편 수정 때문에 월드 서버를 다시 띄워야 한다. 배포 주기가 다르다</td><td>전역 서비스</td></tr>
+          <tr><td>한 기능의 장애가 다른 기능까지 멈춘다</td><td>장애를 가둘 경계(<a href="process-boundary.html">프로세스 경계</a>)</td></tr>
+          <tr><td>동시 접속이 한 월드 구성으로 받을 수 있는 수를 넘는다</td><td>샤드</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>층마다 배포 순서와 주기가 다르다.</strong> 무상태 층은 언제든 하나씩 바꿔 끼운다. 존 서버는 사람을 옮기거나 점검 때 바꾼다. 게이트웨이는 연결을 모두 끊으므로 가장 드물게 바꾼다. 층 사이 프로토콜은 옛 버전과 새 버전이 잠시 함께 돌아도 통하게 만든다(<a data-ref="operations/protocol-compat">프로토콜 호환</a>).</li>
+      <li><strong>존 서버가 죽어도 연결은 살린다.</strong> 게이트웨이가 있으면 존 서버 하나가 죽었을 때 클라이언트를 끊지 않고 붙잡아 두었다가, 마지막 저장 위치를 맡은 다른 존 서버로 다시 붙일 수 있다. 직접 붙는 구조에서는 그대로 접속이 끊긴다.</li>
+      <li><strong>로그인 폭주는 앞에서 막는다.</strong> 점검이 끝나는 순간 수만 명이 한꺼번에 로그인한다. 대기열을 로그인 층에 두고 들여보내는 속도를 조절하지 않으면 DB와 존 서버가 함께 넘어간다. 순번을 매겨 들이는 방식은 <a href="rate-limiting.html">레이트 리밋과 입장 대기열</a>에서 다룬다.</li>
+      <li><strong>모든 층에 같은 추적 ID를 싣는다.</strong> 요청 하나가 게이트웨이, 존, 우편, DB를 거친다. 처음 받은 층에서 ID를 붙여 끝까지 들고 가야 "아이템이 안 들어왔다"는 문의를 층을 따라 추적할 수 있다(<a href="../operations/diagnosis.html">느린 서버 진단</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>층의 이름은 회사마다 다르다. 같은 "월드 서버"가 한 곳에서는 샤드 전체를, 다른 곳에서는 존 하나를 가리킨다. 구조를 이야기할 때는 이름보다 그 층이 무엇을 메모리에 들고 있는지를 먼저 맞춘다.</li>
+      <li>게이트웨이를 무상태 층으로 보면 안 된다. 연결을 들고 있으므로 재시작은 대규모 재접속이다.</li>
+      <li>널리 돌아다니는 유명 MMO의 서버 구조도는 회사가 공개한 것이 아닌 경우가 많다. 재현 프로젝트나 추측에서 나온 그림을 사실로 옮기지 않는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

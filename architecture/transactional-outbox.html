@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>트랜잭셔널 아웃박스 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/transactional-outbox">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../database/transaction.html">트랜잭션과 ACID</a>, <a href="idempotent-consumer.html">멱등 소비자</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      처리 하나가 DB에도 쓰고 메시지 브로커에도 보내야 할 때가 있다. 두 시스템은 한 트랜잭션을 함께 쓰지 못한다. 그래서 어느 쪽을 먼저 해도 중간에 실패하면 둘이 어긋난다. 이것을 <span class="blank">이중 쓰기 문제</span>라고 부른다.
+    </p>
+    <p>
+      <strong>트랜잭셔널 아웃박스</strong>는 보낼 메시지를 브로커로 바로 보내지 않는다. 업무 데이터를 고치는 같은 DB 트랜잭션 안에서 <code>outbox</code> 테이블에 한 행으로 적는다. 브로커로 보내는 일은 별도의 <strong>릴레이</strong>가 그 테이블을 읽어 맡는다. 두 시스템에 걸친 쓰기가 한 DB 안의 쓰기로 바뀐다.
+    </p>
+    <p>
+      대가는 중복이다. 릴레이는 보낸 뒤 표시하기 전에 죽을 수 있으므로 같은 메시지를 다시 보낸다. 아웃박스가 주는 것은 <strong>적어도 한 번</strong>이고, 받는 쪽은 멱등해야 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>어느 쪽을 먼저 해도 구멍이 남는다</h3>
+    <p>
+      DB와 브로커는 서로 다른 시스템이다. 한쪽의 커밋이 다른 쪽의 커밋을 기다려 주지 않는다. 처리 중간에 프로세스가 죽거나 네트워크가 끊기는 순간을 생각하면 순서마다 구멍이 하나씩 있다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>순서</th><th>중간에 실패하면</th><th>게임 서버에서 보이는 모습</th></tr></thead>
+        <tbody>
+          <tr><td>DB 커밋 후 전송</td><td>상태는 바뀌었는데 그 사실이 밖으로 나가지 않는다</td><td>골드는 줄었는데 경매 서비스에는 입찰이 없다</td></tr>
+          <tr><td>전송 후 DB 커밋</td><td>일어나지 않은 일이 밖에 알려진다</td><td>커밋이 실패해 아이템은 그대로인데 "판매 완료" 알림이 나갔다</td></tr>
+          <tr><td>트랜잭션 안에서 전송</td><td>전송은 롤백되지 않는다. 롤백되면 두 번째와 같다</td><td>위와 같다. 게다가 브로커 응답을 기다리는 동안 락을 쥐고 있다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      두 시스템을 한 트랜잭션으로 묶는 방법으로 <a href="../database/scaling-db.html">2단계 커밋</a>이 있다. 하지만 Kafka나 RabbitMQ 같은 흔한 브로커는 DB와 함께 2단계 커밋에 참가하지 않는다. 참가하더라도 조정자를 기다리는 동안 락이 잡혀 있는 비용이 크다. 아웃박스는 2단계 커밋 없이 이 문제를 푼다.
+    </p>
+
+    <h3>보낼 메시지를 같은 트랜잭션에 함께 쓴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="게임 서버가 업무 테이블 갱신과 outbox 행 삽입을 한 트랜잭션으로 커밋하고, 릴레이가 outbox를 읽어 브로커로 보내며, 소비자는 멱등하게 받는다">
+        <defs><marker id="ob-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="84" width="120" height="50" rx="6"/>
+        <text class="f-text" x="80" y="106" text-anchor="middle">게임 서버</text>
+        <text class="f-sub" x="80" y="124" text-anchor="middle">거래 처리</text>
+
+        <rect class="f-pad" x="170" y="34" width="240" height="160" rx="8"/>
+        <text class="f-strong" x="290" y="26" text-anchor="middle">한 DB 트랜잭션</text>
+        <rect class="f-box" x="190" y="52" width="200" height="50" rx="6"/>
+        <text class="f-text" x="290" y="74" text-anchor="middle">inventory · gold 갱신</text>
+        <text class="f-sub" x="290" y="92" text-anchor="middle">업무 테이블</text>
+        <rect class="f-hit" x="190" y="124" width="200" height="50" rx="6"/>
+        <text class="f-text" x="290" y="146" text-anchor="middle">outbox 행 삽입</text>
+        <text class="f-sub" x="290" y="164" text-anchor="middle">보낼 메시지 한 건</text>
+
+        <rect class="f-box" x="450" y="124" width="120" height="50" rx="6"/>
+        <text class="f-text" x="510" y="146" text-anchor="middle">릴레이</text>
+        <text class="f-sub" x="510" y="164" text-anchor="middle">폴링 또는 CDC</text>
+
+        <rect class="f-box" x="610" y="124" width="130" height="50" rx="6"/>
+        <text class="f-text" x="675" y="154" text-anchor="middle">브로커</text>
+
+        <rect class="f-box" x="610" y="34" width="130" height="50" rx="6"/>
+        <text class="f-text" x="675" y="56" text-anchor="middle">소비자</text>
+        <text class="f-sub" x="675" y="74" text-anchor="middle">멱등하게 처리</text>
+
+        <line class="f-line" x1="140" y1="109" x2="168" y2="109" marker-end="url(#ob-a)"/>
+        <line class="f-line" x1="390" y1="149" x2="448" y2="149" marker-end="url(#ob-a)"/>
+        <line class="f-line" x1="570" y1="149" x2="608" y2="149" marker-end="url(#ob-a)"/>
+        <line class="f-line" x1="675" y1="124" x2="675" y2="86" marker-end="url(#ob-a)"/>
+
+        <text class="f-sub" x="510" y="200" text-anchor="middle">보낸 뒤 "발행됨" 표시</text>
+        <text class="f-sub" x="510" y="218" text-anchor="middle">그 사이에 죽으면 한 번 더 보낸다</text>
+      </svg>
+      <figcaption>점선 안은 한 번의 커밋이다. 업무 갱신과 outbox 행은 함께 남거나 함께 사라진다. 브로커로 나가는 일은 그 뒤에 릴레이가 따로 하므로, 거래 처리는 브로커가 느리거나 죽어 있어도 끝난다.</figcaption>
+    </figure>
+<pre><code class="language-sql">CREATE TABLE outbox (
+  id            BIGINT       PRIMARY KEY,        -- 분산 ID나 시퀀스
+  aggregate_id  BIGINT       NOT NULL,           -- 순서를 지킬 단위(캐릭터 ID 등)
+  type          VARCHAR(64)  NOT NULL,           -- 'ItemSold', 'GoldGranted'
+  payload       JSON         NOT NULL,
+  created_at    TIMESTAMP    NOT NULL,
+  published_at  TIMESTAMP    NULL                -- NULL이면 아직 안 보냈다
+);
+CREATE INDEX ix_outbox_unpublished ON outbox (published_at, id);</code></pre>
+<pre><code class="language-csharp">await using var tx = await conn.BeginTransactionAsync(ct);
+
+await conn.ExecuteAsync(
+    "UPDATE inventory SET owner_id = @buyer WHERE item_uid = @item AND owner_id = @seller",
+    new { buyer, item, seller }, tx);
+await conn.ExecuteAsync(
+    "UPDATE character SET gold = gold - @price WHERE id = @buyer AND gold &gt;= @price",
+    new { buyer, price }, tx);
+
+// 브로커로 보내지 않는다. 같은 트랜잭션에 적기만 한다
+await conn.ExecuteAsync(
+    "INSERT INTO outbox (id, aggregate_id, type, payload, created_at) " +
+    "VALUES (@id, @agg, 'ItemSold', @payload, @now)",
+    new { id = ids.Next(), agg = seller, payload = Json(new { tradeId, item, price }), now }, tx);
+
+await tx.CommitAsync(ct);   // 여기서 둘 다 확정된다</code></pre>
+    <p>
+      메시지 ID는 아웃박스 행을 만들 때 정해 두고 끝까지 바꾸지 않는다. 릴레이가 같은 행을 두 번 보내도 ID가 같아야 받는 쪽이 중복을 알아본다(<a href="../database/distributed-id.html">분산 ID 생성</a>).
+    </p>
+
+    <h3>릴레이는 두 가지 방식으로 읽는다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>어떻게 읽나</th><th>장점</th><th>약점</th></tr></thead>
+        <tbody>
+          <tr><td>폴링 발행자</td><td>주기적으로 <code>published_at IS NULL</code>인 행을 골라 보내고 표시한다</td><td>DB와 코드만 있으면 된다. 이해하고 고치기 쉽다</td><td>폴링 간격만큼 늦다. 자주 돌리면 DB에 읽기 부하가 생긴다</td></tr>
+          <tr><td>변경 로그 기반(CDC)</td><td>DB의 복제 로그(MySQL binlog, PostgreSQL 논리 디코딩)를 따라가며 outbox 삽입을 잡는다. Debezium의 outbox 라우터가 대표적이다</td><td>지연이 짧고 테이블을 조회하지 않는다. 커밋 순서대로 나온다</td><td>CDC 도구를 운영해야 한다. 로그 보관 설정과 장애 복구를 따로 챙긴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      CDC가 읽는 로그는 <a href="../database/durability-wal.html">로그와 지속성</a>에서 본 바로 그 로그다. 커밋된 것만, 커밋 순서대로 나온다는 성질을 그대로 빌린다.
+    </p>
+    <p>
+      폴링 발행자를 여러 개 띄우면 같은 행을 둘이 동시에 집을 수 있다. 행 잠금으로 나눠 가진다.
+    </p>
+<pre><code class="language-sql">-- PostgreSQL, MySQL 8.0 이상. SQL Server는 WITH (UPDLOCK, READPAST)
+SELECT id, type, payload FROM outbox
+WHERE published_at IS NULL
+ORDER BY id
+LIMIT 100
+FOR UPDATE SKIP LOCKED;
+-- 보낸 뒤 같은 트랜잭션에서 UPDATE outbox SET published_at = now() WHERE id IN (...)</code></pre>
+
+    <h3>"마지막으로 보낸 ID 다음부터"는 행을 빠뜨린다</h3>
+    <p>
+      폴링 릴레이를 "마지막으로 보낸 <code>id</code>보다 큰 행"으로 짜고 싶어진다. 그런데 ID를 받은 순서와 커밋된 순서는 다르다. 트랜잭션 A가 id 101을 받고 커밋이 늦는 사이, B가 id 102를 받고 먼저 커밋할 수 있다. 릴레이가 그 순간 102까지 보내고 기준점을 102로 옮기면, 뒤늦게 커밋된 101은 영원히 건너뛴다.
+    </p>
+    <p>
+      그래서 기준점 대신 <strong>보냈는지 여부</strong>로 고른다. 위 예처럼 <code>published_at</code>을 두고 그 컬럼에 인덱스를 건다. CDC는 커밋 순서대로 읽으므로 이 문제가 없다.
+    </p>
+
+    <h3>순서는 단위를 정해야 지켜진다</h3>
+    <p>
+      outbox 전체의 순서를 지키려면 릴레이 하나가 한 줄로 보내야 한다. 그러면 처리량이 릴레이 하나에 묶인다. 실제로 필요한 순서는 대개 <strong>한 대상 안의 순서</strong>다. 같은 캐릭터의 "지급 → 회수"가 뒤집히면 안 되지만, 서로 다른 캐릭터의 메시지 순서는 상관없다.
+    </p>
+    <p>
+      그래서 <code>aggregate_id</code>를 브로커의 파티션 키로 쓴다. Kafka는 같은 키를 같은 파티션에 넣고 파티션 안 순서를 지킨다(<a href="message-models.html">메시지 모델 세 갈래</a>). 재전송 때문에 순서가 잠깐 뒤섞일 수 있으므로, 순서가 중요한 소비자는 메시지에 대상별 버전 번호를 함께 받아 늦게 온 옛 메시지를 버린다.
+    </p>
+
+    <h3>보낸 행은 치워야 한다</h3>
+    <p>
+      outbox는 쌓이기만 하는 테이블이다. 보낸 행을 주기적으로 지우거나, 날짜로 파티션을 나눠 오래된 파티션을 통째로 떼어 낸다. 대량 <code>DELETE</code>는 락과 로그를 크게 만들므로 작은 묶음으로 나눠 지운다. 감사용으로 남겨야 하는 기록이면 outbox가 아니라 별도 원장 테이블에 둔다(<a href="cqrs-event-sourcing.html">CQRS와 이벤트 소싱</a>).
+    </p>
+
+    <h3>받는 쪽에는 인박스를 둔다</h3>
+    <p>
+      아웃박스가 보내는 쪽 이중 쓰기를 막는다면, <strong>인박스</strong>는 받는 쪽 중복을 막는다. 소비자는 처리한 메시지 ID를 <code>inbox</code> 테이블에 적는다. 업무 결과와 같은 트랜잭션으로 적고, ID에 유니크 키를 건다. 같은 메시지가 다시 오면 삽입이 실패하므로 처리하지 않고 확인응답만 보낸다. 자세한 방법은 <a href="idempotent-consumer.html">멱등 소비자</a>에서 다룬다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th></tr></thead>
+        <tbody>
+          <tr><td>DB 변경과 메시지가 반드시 함께 있어야 한다(재화, 거래, 결제 결과)</td><td>아웃박스</td></tr>
+          <tr><td>메시지를 잃어도 된다(일반 행동 로그, 통계 샘플)</td><td>커밋 뒤 그냥 보낸다. 아웃박스 비용을 들이지 않는다</td></tr>
+          <tr><td>DB 하나 안에서 끝나는 일이다</td><td>메시지가 아니라 트랜잭션으로 묶는다</td></tr>
+          <tr><td>지연이 짧아야 하고 CDC를 운영할 수 있다</td><td>CDC 릴레이</td></tr>
+          <tr><td>운영 도구를 늘리기 어렵다</td><td>폴링 릴레이. 간격은 수백 밀리초에서 수 초</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      .NET에서는 MassTransit, NServiceBus 같은 메시징 라이브러리가 EF Core와 엮은 아웃박스를 기능으로 제공한다. 직접 만들 때도 구조는 위와 같다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>재화와 아이템이 움직이면 아웃박스로 알린다.</strong> 거래가 커밋되면 경매 서비스, 우편 서비스, 감사 로그 수집기가 그 사실을 알아야 한다. 이 알림을 커밋 뒤 직접 보내면, 서버가 그 사이에 죽을 때 "골드는 빠졌는데 경매에는 기록이 없는" 상태가 남는다. CS 문의로 돌아오는 대표적인 불일치다.</li>
+      <li><strong>모든 로그를 아웃박스에 넣지는 않는다.</strong> 이동, 채팅, 전투 같은 행동 로그는 양이 많고 몇 건 잃어도 된다. 이런 로그까지 outbox에 넣으면 게임 DB의 쓰기가 몇 배로 는다. 돈과 아이템이 걸린 사건만 아웃박스로 보내고, 나머지는 로그 수집기로 바로 보낸다.</li>
+      <li><strong>샤드마다 outbox와 릴레이를 둔다.</strong> outbox는 업무 테이블과 같은 DB에 있어야 한 트랜잭션에 들어간다. 월드 DB가 여럿이면 outbox도 DB마다 있고, 릴레이도 DB마다 하나씩 붙인다.</li>
+      <li><strong>외부 결제·플랫폼 서버에 알리는 일도 같다.</strong> 지급을 커밋한 뒤 플랫폼에 "소비 완료"를 알려야 하는 흐름이 있다. 이 호출을 outbox 행으로 남기고 릴레이가 재시도하게 하면, 서버가 재시작해도 알림이 빠지지 않는다. 받는 쪽 API가 같은 요청 ID를 중복으로 처리하는지 먼저 확인한다.</li>
+      <li><strong>밀린 행 수를 지표로 둔다.</strong> outbox는 그 자체로 큐다. 릴레이가 멈춰도 거래는 계속 성공하므로 아무도 모른다. <code>published_at IS NULL</code>인 행 수와 가장 오래된 행의 나이를 경보로 건다(<a href="../server/backpressure.html">백프레셔</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>아웃박스는 중복을 없애지 않는다.</strong> 한 트랜잭션으로 묶이는 것은 "업무 변경과 보낼 메시지를 함께 남기는 것"까지다. 전송은 그 밖에서 일어나므로 재전송이 남는다. 소비자가 멱등하지 않으면 아웃박스를 들여도 이중 지급이 생긴다.</li>
+      <li><strong>트랜잭션 안에서 브로커를 부르지 않는다.</strong> 아웃박스를 쓰면서도 "빨리 보내려고" 커밋 전에 직접 전송을 섞으면 처음 문제로 돌아간다. 빨라야 하면 커밋 직후 릴레이를 깨우는 신호만 보낸다.</li>
+      <li><strong>payload에는 그 시점의 사실을 담는다.</strong> 메시지에 ID만 담고 받는 쪽이 DB를 다시 읽게 하면, 그 사이 값이 바뀌어 다른 사실을 읽는다. 받는 쪽이 판단에 쓸 값은 커밋할 때의 값으로 함께 넣는다.</li>
+      <li><strong>보내지 못한 행을 버리지 않는다.</strong> 형식이 틀려 계속 실패하는 행이 있으면 릴레이가 그 행에서 막힌다. 재시도 횟수를 세고, 넘으면 따로 옮겨 사람이 본다(<a data-ref="operations/dead-letter-circuit">데드 레터와 서킷 브레이커</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

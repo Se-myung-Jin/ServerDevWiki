@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>서비스 호출: 타임아웃·재시도·데드라인 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/service-calls">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="process-boundary.html">프로세스 경계: 모으기와 나누기</a>, <a href="../csharp/cancellation.html">취소와 시한</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      프로세스를 나누면 함수 호출이 망을 넘는 호출이 된다. 그 호출은 빨리 실패하기도 하고, 느리게 실패하기도 하고, 성공했는데 응답만 사라지기도 한다. 호출하는 쪽은 세 가지를 정해야 한다. <strong>얼마나 기다릴지</strong>(타임아웃), <strong>다시 할지</strong>(재시도), <strong>남은 시간을 아래로 어떻게 넘길지</strong>(데드라인 전파)다.
+    </p>
+    <p>
+      재시도는 일시적인 실패를 가려 주지만 잘못 쓰면 장애를 키운다. 층마다 세 번씩 다시 하면 맨 아래는 27배의 요청을 받는다. 재시도는 <span class="blank">한 층에서만</span>, 멱등한 요청에만, 간격을 벌리고 흩어서 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>타임아웃이 없으면 느린 의존성 하나가 전체를 붙잡는다</h3>
+    <p>
+      응답이 오지 않는 호출을 끝없이 기다리면, 그 호출을 든 스레드와 커넥션과 메모리가 함께 묶인다. 요청은 계속 들어오고 묶인 자원은 풀리지 않으니, 곧 커넥션 풀과 <a data-ref="operating-system/thread-pool">스레드 풀</a>이 바닥난다(<a href="../database/scaling-db.html">DB 확장: 복제와 샤딩</a>). 그때부터는 멀쩡한 기능의 요청도 줄을 서서 기다린다. 의존 서비스 하나가 느려졌을 뿐인데 이쪽 서버 전체가 멈춘 것처럼 보인다.
+    </p>
+    <p>
+      .NET의 <code>HttpClient.Timeout</code> 기본값은 100초다. 게임 서버의 서비스 호출로는 사실상 타임아웃이 없는 것과 같다. 호출마다 직접 정한다.
+    </p>
+
+    <h3>타임아웃은 의존성의 실제 지연을 보고 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>재는 것</th><th>정하는 법</th></tr></thead>
+        <tbody>
+          <tr><td>연결 타임아웃</td><td>TCP·TLS 연결이 맺어지기까지</td><td>짧게. 같은 데이터센터 안이면 수백 ms면 충분하다</td></tr>
+          <tr><td>시도 타임아웃</td><td>요청 하나를 보내고 응답을 받기까지</td><td>의존성의 <a data-ref="operations/diagnosis">p99</a> 지연보다 조금 위. 평균으로 정하면 정상 요청의 꼬리를 자른다</td></tr>
+          <tr><td>전체 시한</td><td>재시도를 모두 포함한 호출 전체</td><td>호출한 쪽이 기다려 줄 수 있는 시간. 위에서 내려온 데드라인을 넘지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      타임아웃은 "실패했다"가 아니라 "모른다"다. 요청이 가서 처리됐는데 응답만 늦었을 수 있다. 그래서 타임아웃 뒤의 재시도는 그 요청이 두 번 처리돼도 괜찮을 때만 한다.
+    </p>
+
+    <h3>다시 해도 되는 실패만 다시 한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>실패</th><th>재시도</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>연결 거부, 연결 끊김, 503, gRPC <code>UNAVAILABLE</code></td><td>한다</td><td>잠깐 넘어진 인스턴스나 배포 중인 서버일 가능성이 크다</td></tr>
+          <tr><td>시도 타임아웃</td><td>멱등할 때만</td><td>이미 처리됐을 수 있다</td></tr>
+          <tr><td>429, gRPC <code>RESOURCE_EXHAUSTED</code></td><td>늦춰서. 서버가 준 대기 시간을 따른다</td><td>상대가 과부하라고 말하는 중이다. 바로 다시 하면 더 무겁게 만든다</td></tr>
+          <tr><td>400, 401, 403, 404, 검증 실패</td><td>안 한다</td><td>몇 번을 보내도 결과가 같다</td></tr>
+          <tr><td>전체 데드라인 초과, gRPC <code>DEADLINE_EXCEEDED</code></td><td>안 한다</td><td>기다려 줄 사람이 이미 떠났다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      쓰기 요청은 멱등 키를 함께 보내야 재시도할 수 있다. 받는 쪽이 같은 키의 두 번째 요청을 알아보고 첫 결과를 돌려준다(<a href="idempotent-consumer.html">멱등 소비자</a>).
+    </p>
+
+    <h3>간격은 지수로 벌리고 지터로 흩는다</h3>
+    <p>
+      실패하자마자 다시 보내면, 같은 순간 실패한 수천 개의 클라이언트가 같은 순간 다시 보낸다. 넘어진 서버가 일어나려는 순간 그 파도에 다시 넘어진다. 간격을 시도마다 두 배로 늘리는 <strong>지수 백오프</strong>만으로는 부족하다. 모두가 같은 간격으로 늘리면 파도가 같은 박자로 계속 온다. 간격에 무작위를 섞는 <span class="blank">지터</span>로 파도를 흩는다.
+    </p>
+    <pre><code class="language-csharp">// 전체 지터: 0과 (지수로 늘어난 상한) 사이에서 고르게 뽑는다
+static TimeSpan Backoff(int attempt)
+{
+    const double baseMs = 100, capMs = 2000;
+    double max = Math.Min(capMs, baseMs * Math.Pow(2, attempt));
+    return TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * max);
+}</code></pre>
+
+    <h3>층마다 재시도하면 곱으로 불어난다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="게이트웨이, 로그인 서비스, 계정 서비스가 각자 세 번씩 시도하면 DB는 요청 하나에 27번을 받는다">
+        <defs><marker id="sc-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="60" width="140" height="56" rx="6"/>
+        <text class="f-text" x="90" y="84" text-anchor="middle">게이트웨이</text>
+        <text class="f-sub" x="90" y="102" text-anchor="middle">요청 1</text>
+        <rect class="f-box" x="210" y="60" width="140" height="56" rx="6"/>
+        <text class="f-text" x="280" y="84" text-anchor="middle">로그인 서비스</text>
+        <text class="f-sub" x="280" y="102" text-anchor="middle">3번 받는다</text>
+        <rect class="f-hit" x="400" y="60" width="140" height="56" rx="6"/>
+        <text class="f-text" x="470" y="84" text-anchor="middle">계정 서비스</text>
+        <text class="f-sub" x="470" y="102" text-anchor="middle">9번 받는다</text>
+        <rect class="f-miss" x="590" y="60" width="150" height="56" rx="6"/>
+        <text class="f-on" x="665" y="84" text-anchor="middle">DB</text>
+        <text class="f-on" x="665" y="102" text-anchor="middle">27번 받는다</text>
+        <line class="f-line" x1="160" y1="88" x2="208" y2="88" marker-end="url(#sc-a)"/>
+        <line class="f-line" x1="350" y1="88" x2="398" y2="88" marker-end="url(#sc-a)"/>
+        <line class="f-line" x1="540" y1="88" x2="588" y2="88" marker-end="url(#sc-a)"/>
+        <text class="f-sub" x="184" y="50" text-anchor="middle">×3</text>
+        <text class="f-sub" x="374" y="50" text-anchor="middle">×3</text>
+        <text class="f-sub" x="564" y="50" text-anchor="middle">×3</text>
+        <text class="f-sub" x="380" y="150" text-anchor="middle">DB가 느려서 실패하는 중이라면, 재시도가 DB를 27배 더 무겁게 만든다</text>
+      </svg>
+      <figcaption>각 층은 자기 아래가 실패했다고 보고 세 번씩 시도한다. 층 하나만 보면 합리적이지만, 맨 아래는 3 × 3 × 3 = 27배를 받는다. 과부하로 생긴 실패라면 재시도가 장애를 키운다.</figcaption>
+    </figure>
+    <p>
+      재시도는 한 층에서만 한다. 보통 실패를 가장 잘 아는 층, 즉 의존성을 직접 부르는 층이다. 그 위의 층은 실패를 그대로 올린다. 여기에 <strong>재시도 예산</strong>을 더한다. 재시도가 전체 요청의 일정 비율(예: 10%)을 넘으면 더는 다시 하지 않는다. 의존성이 정말 아플 때 재시도가 저절로 멈춘다.
+    </p>
+
+    <h3>남은 시간을 아래로 넘긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 170" role="img" aria-label="클라이언트가 1초 시한으로 보낸 로그인 요청을 게이트웨이가 900ms, 로그인 서비스가 700ms, 계정 서비스가 500ms 남은 시한으로 넘긴다">
+        <defs><marker id="sc-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="40" width="150" height="56" rx="6"/>
+        <text class="f-text" x="95" y="64" text-anchor="middle">게이트웨이</text>
+        <text class="f-sub" x="95" y="82" text-anchor="middle">남은 900ms</text>
+        <rect class="f-box" x="220" y="40" width="150" height="56" rx="6"/>
+        <text class="f-text" x="295" y="64" text-anchor="middle">로그인 서비스</text>
+        <text class="f-sub" x="295" y="82" text-anchor="middle">남은 700ms</text>
+        <rect class="f-hit" x="420" y="40" width="150" height="56" rx="6"/>
+        <text class="f-text" x="495" y="64" text-anchor="middle">계정 서비스</text>
+        <text class="f-sub" x="495" y="82" text-anchor="middle">남은 500ms</text>
+        <rect class="f-box" x="620" y="40" width="120" height="56" rx="6"/>
+        <text class="f-text" x="680" y="64" text-anchor="middle">DB</text>
+        <text class="f-sub" x="680" y="82" text-anchor="middle">남은 450ms</text>
+        <line class="f-line" x1="170" y1="68" x2="218" y2="68" marker-end="url(#sc-b)"/>
+        <line class="f-line" x1="370" y1="68" x2="418" y2="68" marker-end="url(#sc-b)"/>
+        <line class="f-line" x1="570" y1="68" x2="618" y2="68" marker-end="url(#sc-b)"/>
+        <text class="f-sub" x="380" y="130" text-anchor="middle">각 층은 자기가 쓴 시간을 빼고 넘긴다. 남은 시간이 0이면 아래를 부르지 않고 바로 실패한다</text>
+      </svg>
+      <figcaption>클라이언트는 1초 안에 답을 원한다. 층마다 "몇 초 기다린다"를 따로 정하면, 위에서 이미 포기한 요청을 아래가 계속 처리한다. 남은 시간을 함께 넘기면 모든 층이 같은 시각에 멈춘다.</figcaption>
+    </figure>
+    <p>
+      gRPC는 데드라인을 요청 헤더(<code>grpc-timeout</code>)에 실어 보내고, 서버는 그것을 <code>ServerCallContext.Deadline</code>과 <code>CancellationToken</code>으로 받는다. 받은 쪽이 다시 아래를 부를 때 그 값을 그대로 넘기면 전파가 된다. 토큰을 넘기는 규칙은 <a href="../csharp/cancellation.html">취소와 시한</a>과 같다.
+    </p>
+    <pre><code class="language-csharp">public override async Task&lt;LoginReply&gt; Login(LoginRequest req, ServerCallContext ctx)
+{
+    // 들어온 요청의 시한과 취소를 그대로 아래 호출에 넘긴다
+    var account = await _accounts.GetAccountAsync(
+        new AccountRequest { Id = req.AccountId },
+        deadline: ctx.Deadline,
+        cancellationToken: ctx.CancellationToken);
+    // ...
+}</code></pre>
+    <p>
+      gRPC 클라이언트 팩토리에 <code>EnableCallContextPropagation()</code>을 켜면 서버 호출 안에서 만든 클라이언트 호출에 시한과 취소가 자동으로 붙는다.
+    </p>
+
+    <h3>꼬리 지연은 헤지 요청으로 줄인다</h3>
+    <p>
+      대부분의 응답은 빠르고 일부만 오래 걸릴 때가 있다. <a data-ref="csharp/gc-basics">GC</a> 멈춤이나 잠깐 바쁜 인스턴스 때문이다. <strong>헤지 요청</strong>은 첫 요청이 p95 지연 안에 오지 않으면 다른 인스턴스에 같은 요청을 하나 더 보내고, 먼저 온 답을 쓴다. 꼬리 지연이 크게 줄고, 추가 요청은 전체의 5% 남짓이다. 멱등한 읽기에만 쓰고, 의존성이 과부하일 때는 끈다. gRPC의 hedging 정책과 Polly의 hedging 전략이 이것을 제공한다.
+    </p>
+
+    <h3>동기 호출 사슬은 짧게 둔다</h3>
+    <p>
+      A가 B를, B가 C를, C가 D를 기다리면 지연은 더해지고 가용성은 곱해진다. 99.9%짜리 서비스 다섯 개를 줄로 세우면 0.999<sup>5</sup> ≈ 99.5%가 된다. 사슬을 줄이는 방법은 세 가지다. 결과를 미리 가져다 두는 캐시, 응답을 기다릴 필요가 없는 일은 메시지로 넘기기(<a href="message-models.html">메시지 모델 세 갈래</a>), 늘 함께 불리는 서비스는 합치기다.
+    </p>
+    <p>
+      없어도 화면이 뜨는 데이터는 대체값으로 처리한다. 친구 목록 서비스가 실패하면 로그인을 막지 말고 빈 목록과 "다시 불러오기"를 보여 준다. 무엇이 필수이고 무엇이 생략 가능한지를 호출마다 미리 정해 둔다. 실패가 계속되는 의존성을 아예 잠시 부르지 않는 서킷 브레이커는 <a data-ref="operations/dead-letter-circuit">데드 레터와 서킷 브레이커</a>에서 다룬다.
+    </p>
+
+    <h3>.NET은 표준 회복 파이프라인을 준다</h3>
+    <p>
+      .NET 8부터 <code>Microsoft.Extensions.Http.Resilience</code>가 Polly v8 위에 HTTP 클라이언트용 파이프라인을 제공한다. <code>AddStandardResilienceHandler()</code> 한 줄이 바깥부터 레이트 리미터, 전체 시한, 재시도(지수 백오프 + 지터), 서킷 브레이커, 시도 시한을 차례로 건다. 기본값은 전체 30초, 시도당 10초, 재시도 3번이다. 게임 서버의 내부 호출에는 길므로 호출마다 줄여서 쓴다.
+    </p>
+    <pre><code class="language-csharp">builder.Services.AddHttpClient&lt;PlatformClient&gt;()
+    .AddStandardResilienceHandler(o =&gt;
+    {
+        o.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(3);
+        o.AttemptTimeout.Timeout = TimeSpan.FromMilliseconds(800);
+        o.Retry.MaxRetryAttempts = 2;
+    });</code></pre>
+    <p>
+      서킷 브레이커의 표본 구간은 시도 시한의 두 배 이상이어야 한다는 검증 규칙이 있어서, 시도 시한을 크게 바꾸면 그 값도 함께 맞춘다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th></tr></thead>
+        <tbody>
+          <tr><td>읽기, 멱등한 조회</td><td>시도 시한 + 재시도 2~3번 + 지터. 꼬리가 문제면 헤지</td></tr>
+          <tr><td>쓰기, 재화가 움직인다</td><td>멱등 키를 붙일 수 있을 때만 재시도. 없으면 재시도 대신 상태 조회로 결과를 확인한다</td></tr>
+          <tr><td>여러 층을 지나는 호출</td><td>데드라인 전파. 재시도는 의존성을 직접 부르는 층 하나에서만</td></tr>
+          <tr><td>없어도 되는 데이터</td><td>짧은 시한과 대체값. 실패해도 화면은 뜬다</td></tr>
+          <tr><td>응답을 기다릴 필요가 없다</td><td>동기 호출 대신 메시지로 넘긴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>로직 스레드는 외부 호출을 기다리지 않는다.</strong> 존 틱 안에서 다른 서비스의 응답을 기다리면 그 시간만큼 존 전체가 멈춘다. 호출은 비동기로 보내고, 결과는 로직 스레드의 큐로 돌려받아 다음 틱에 반영한다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).</li>
+      <li><strong>로그인 경로의 시간 예산을 나눠 둔다.</strong> 인증, 계정 조회, 캐릭터 목록, 중복 로그인 잠금, 존 배정이 줄지어 불린다. 클라이언트가 기다리는 전체 시간을 단계별로 나눠 각 단계의 시도 시한을 정한다. 점검 직후 몰릴 때 어느 단계가 예산을 넘는지 지표로 바로 보인다.</li>
+      <li><strong>결제 콜백은 상대가 다시 보낸다.</strong> 플랫폼은 응답을 못 받으면 같은 콜백을 다시 보낸다. 영수증 ID로 멱등하게 처리하고, 이미 처리한 콜백에는 성공을 돌려준다. 거꾸로 이쪽에서 플랫폼의 영수증 검증 API를 부를 때는 재시도에 지터를 넣는다.</li>
+      <li><strong>타임아웃 뒤에는 결과를 확인하는 경로를 만든다.</strong> 아이템 지급 요청이 타임아웃 나면 "지급됐는지 모름" 상태가 된다. 요청 ID로 조회하는 API를 두면 재시도 대신 확인으로 끝낼 수 있다.</li>
+      <li><strong>호출마다 추적 ID를 붙인다.</strong> 한 요청이 여러 서비스를 지나므로, 같은 ID로 로그를 이어 붙여야 어느 층에서 시간을 썼는지 보인다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>타임아웃은 실패가 아니라 모름이다.</strong> 타임아웃 난 쓰기를 무작정 다시 보내면 두 번 반영된다.</li>
+      <li><strong>재시도는 장애를 키울 수 있다.</strong> 층마다 다시 하지 않고, 지터 없이 다시 하지 않고, 예산 없이 다시 하지 않는다.</li>
+      <li><strong>시한은 위에서 아래로 줄어야 한다.</strong> 아래층의 시한이 위층보다 길면, 위층이 포기한 뒤에도 아래층이 일을 계속하며 자원을 쓴다.</li>
+      <li><strong>기본값을 믿지 않는다.</strong> HTTP 클라이언트의 100초, 회복 파이프라인의 30초는 게임 서버 내부 호출에 맞춘 값이 아니다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

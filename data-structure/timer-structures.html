@@ -105,7 +105,7 @@
         <tbody>
           <tr><td>Linux 커널 타이머</td><td>계층형. 4.8부터는 먼 타이머를 내리지 않고, 먼 단일수록 해상도를 낮춰 받아들이는 쪽으로 바꿨다. 먼 타이머는 대개 실행 전에 취소된다는 관찰 때문이다</td></tr>
           <tr><td>Netty <code>HashedWheelTimer</code></td><td>단층 휠에 남은 바퀴 수를 센다. 연결별 시간 초과처럼 대량의 짧은 타이머에 쓴다</td></tr>
-          <tr><td>Kafka 지연 작업</td><td>계층형 휠. 요청 시간 초과처럼 대부분 취소되는 수십만 개의 타이머를 다룬다</td></tr>
+          <tr><td><a data-ref="architecture/message-models">Kafka</a> 지연 작업</td><td>계층형 휠. 요청 시간 초과처럼 대부분 취소되는 수십만 개의 타이머를 다룬다</td></tr>
         </tbody>
       </table>
     </div>

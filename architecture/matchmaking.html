@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>매치메이킹 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/matchmaking">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="session-vs-persistent.html">세션 기반과 지속 세계</a>, <a href="../database/redis.html">Redis 활용</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      매치메이킹은 대기열에 들어온 플레이어를 묶어 한 판을 만드는 일이다. 좋은 매치는 실력이 비슷하고, 지연이 낮고, 빨리 잡힌다. 세 조건은 서로 부딪힌다. 실력을 엄격하게 맞추면 대기가 길어지고, 빨리 잡으려면 조건을 풀어야 한다.
+    </p>
+    <p>
+      그래서 대부분의 매처는 처음에 좁은 조건으로 찾고, <span class="blank">기다린 시간에 따라 허용 범위를 넓힌다</span>. 실력은 Elo나 Glicko 같은 레이팅으로 숫자를 매기고, 그 숫자는 화면에 보이는 랭크와 따로 둔다.
+    </p>
+    <p>
+      매치가 정해진 뒤의 일, 즉 전용 서버를 잡아 주소를 나눠 주는 일은 판 서버의 수명 관리와 이어진다(<a href="session-vs-persistent.html">세션 기반과 지속 세계</a>).
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>요청에서 접속까지 다섯 단계를 지난다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="매칭 요청이 대기열에 들어가고, 매칭 틱이 후보를 묶고, 수락 단계를 지나면 서버를 할당해 접속한다. 수락에 실패하면 남은 사람은 대기열로 돌아간다">
+        <defs><marker id="mm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="10" y="40" width="110" height="52" rx="6"/>
+        <text class="f-text" x="65" y="62" text-anchor="middle">매칭 요청</text>
+        <text class="f-sub" x="65" y="80" text-anchor="middle">모드·파티·핑</text>
+        <rect class="f-hit" x="160" y="40" width="110" height="52" rx="6"/>
+        <text class="f-text" x="215" y="62" text-anchor="middle">대기열</text>
+        <text class="f-sub" x="215" y="80" text-anchor="middle">MMR 순 정렬</text>
+        <rect class="f-hit" x="310" y="40" width="120" height="52" rx="6"/>
+        <text class="f-text" x="370" y="62" text-anchor="middle">후보 묶기</text>
+        <text class="f-sub" x="370" y="80" text-anchor="middle">몇 초마다 한 번</text>
+        <rect class="f-box" x="470" y="40" width="110" height="52" rx="6"/>
+        <text class="f-text" x="525" y="62" text-anchor="middle">수락 확인</text>
+        <text class="f-sub" x="525" y="80" text-anchor="middle">전원 10초 안에</text>
+        <rect class="f-miss" x="620" y="40" width="130" height="52" rx="6"/>
+        <text class="f-on" x="685" y="62" text-anchor="middle">서버 할당</text>
+        <text class="f-on" x="685" y="80" text-anchor="middle">주소·토큰 전달</text>
+        <line class="f-line" x1="120" y1="66" x2="158" y2="66" marker-end="url(#mm-a)"/>
+        <line class="f-line" x1="270" y1="66" x2="308" y2="66" marker-end="url(#mm-a)"/>
+        <line class="f-line" x1="430" y1="66" x2="468" y2="66" marker-end="url(#mm-a)"/>
+        <line class="f-line" x1="580" y1="66" x2="618" y2="66" marker-end="url(#mm-a)"/>
+        <path class="f-line f-dash" d="M525,92 L525,150 L215,150 L215,94" marker-end="url(#mm-a)"/>
+        <text class="f-sub" x="370" y="170" text-anchor="middle">누가 거절하면 나머지는 원래 대기 시간을 유지한 채 돌아간다</text>
+      </svg>
+      <figcaption>요청은 대기열에 쌓이고, 매처는 주기적으로 대기열 전체를 보며 후보를 묶는다. 모두 수락하면 서버를 잡고, 한 명이라도 거절하거나 응답이 없으면 그 사람만 빼고 나머지를 대기열 앞쪽으로 되돌린다.</figcaption>
+    </figure>
+    <p>
+      요청에는 모드, 파티 구성원, 각 데이터센터까지의 핑, 레이팅이 담긴다. 대기열은 모드와 지역마다 따로 두는 것이 보통이다. 같은 대기열 안에서는 레이팅 순으로 정렬해 두면 비슷한 사람을 이웃에서 바로 찾는다.
+    </p>
+
+    <h3>레이팅은 결과로 실력을 추정한다</h3>
+    <p>
+      <strong>Elo</strong>는 두 사람의 점수 차로 기대 승률을 계산하고, 실제 결과와의 차이만큼 점수를 옮긴다.
+    </p>
+    <pre><code class="language-csharp">// A가 B를 이길 기대값. 점수 차 400이면 약 10:1
+double Expected(double ra, double rb) =&gt; 1.0 / (1.0 + Math.Pow(10, (rb - ra) / 400.0));
+
+// 이기면 s = 1, 지면 0. K가 한 판에 움직이는 최대 폭이다
+double Update(double ra, double rb, double s, double k = 32) =&gt; ra + k * (s - Expected(ra, rb));</code></pre>
+    <p>
+      1500점이 1700점을 이길 기대값은 약 0.24다. 이기면 32 × 0.76 ≈ 24점을 얻고, 지면 약 8점만 잃는다. 강한 상대를 이긴 결과일수록 많이 움직인다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>들고 있는 값</th><th>특징</th></tr></thead>
+        <tbody>
+          <tr><td>Elo</td><td>점수 하나</td><td>단순하다. 새 플레이어와 오래 쉰 플레이어를 구분하지 못해 K를 따로 조정한다</td></tr>
+          <tr><td>Glicko</td><td>점수 + 불확실도(RD)</td><td>판이 적거나 오래 쉬면 RD가 커지고, RD가 클수록 한 판에 크게 움직인다. Glicko-2는 변동성 값을 더한다</td></tr>
+          <tr><td>TrueSkill 계열</td><td>평균 μ + 표준편차 σ</td><td>팀전과 다인전을 위해 만들었다. 보통 μ − 3σ처럼 보수적인 값으로 순위를 매긴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      매칭에 쓰는 숨은 값(MMR)과 화면에 보여 주는 랭크는 나눈다. 랭크는 승급전, 강등 보호, 시즌 초기화처럼 동기를 위한 규칙을 얹은 값이다. 둘을 하나로 두면 보여 주기 위한 규칙이 매칭 품질을 망친다.
+    </p>
+
+    <h3>기다린 시간만큼 허용 범위를 넓힌다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 720 230" role="img" aria-label="대기 시간이 늘면 허용 MMR 차이가 50에서 시작해 초당 10씩 늘다가 400에서 멈춘다">
+        <defs><marker id="mm-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <line class="f-line" x1="80" y1="190" x2="680" y2="190" marker-end="url(#mm-b)"/>
+        <line class="f-line" x1="80" y1="190" x2="80" y2="20" marker-end="url(#mm-b)"/>
+        <text class="f-sub" x="680" y="212" text-anchor="end">대기 시간(초)</text>
+        <text class="f-sub" x="90" y="28">허용 MMR 차</text>
+        <line class="f-grid" x1="80" y1="50" x2="660" y2="50"/>
+        <text class="f-sub" x="72" y="54" text-anchor="end">400</text>
+        <text class="f-sub" x="72" y="174" text-anchor="end">50</text>
+        <polyline class="f-tick" fill="none" points="80,170 500,50 660,50"/>
+        <circle class="f-hit" cx="80" cy="170" r="4"/>
+        <circle class="f-hit" cx="500" cy="50" r="4"/>
+        <text class="f-sub" x="80" y="208" text-anchor="middle">0</text>
+        <text class="f-sub" x="500" y="208" text-anchor="middle">35</text>
+        <text class="f-text" x="300" y="150">초당 +10</text>
+        <text class="f-text" x="520" y="40">상한 400에서 멈춘다</text>
+      </svg>
+      <figcaption>처음 몇 초는 좁은 범위에서만 찾는다. 사람이 많은 시간대에는 여기서 대부분 잡힌다. 사람이 적으면 범위가 넓어지며 잡히고, 상한을 넘으면 품질이 너무 나빠지므로 거기서 멈춘다.</figcaption>
+    </figure>
+    <pre><code class="language-csharp">// 매칭 틱마다 한 번 돈다. 1:1 모드의 예다
+void MatchTick(List&lt;Ticket&gt; queue, DateTime now)
+{
+    queue.Sort((a, b) =&gt; a.Mmr.CompareTo(b.Mmr));
+    for (int i = 0; i + 1 &lt; queue.Count; i++)
+    {
+        var a = queue[i];
+        var b = queue[i + 1];
+        int allowed = Math.Min(Window(a, now), Window(b, now)); // 둘 다 받아들일 수 있어야 한다
+        if (b.Mmr - a.Mmr &lt;= allowed)
+        {
+            Propose(a, b);            // 수락 단계로 넘긴다
+            queue.RemoveRange(i, 2);
+            i--;                      // 같은 자리부터 다시 본다
+        }
+    }
+}
+
+int Window(Ticket t, DateTime now)
+{
+    double waited = (now - t.EnqueuedAt).TotalSeconds;
+    return (int)Math.Min(50 + waited * 10, 400);
+}</code></pre>
+    <p>
+      허용 범위는 두 사람 중 좁은 쪽에 맞춘다. 오래 기다린 사람의 범위만 보면, 방금 들어온 사람이 자기와 한참 차이 나는 상대를 받게 된다.
+    </p>
+
+    <h3>파티는 한 사람처럼 다루되 보정한다</h3>
+    <p>
+      파티는 하나의 티켓으로 대기열에 들어간다. 파티의 레이팅을 평균으로 두면 고수 한 명과 초보 한 명이 함께 들어와 평균 실력의 판을 받고, 고수가 판을 휩쓴다. 그래서 평균보다 최고값 쪽으로 끌어올리거나, 구성원 사이 차이가 크면 파티 결성 자체를 막는다.
+    </p>
+    <p>
+      손발을 맞춘 파티는 같은 실력의 솔로 넷보다 강하다. 큰 파티는 큰 파티끼리 먼저 찾고, 오래 못 찾을 때만 솔로와 섞는 규칙을 흔히 둔다.
+    </p>
+
+    <h3>지연은 데이터센터 선택으로 맞춘다</h3>
+    <p>
+      클라이언트는 각 데이터센터의 핑 측정용 주소로 지연을 재서 요청에 담는다. 매처는 모든 구성원의 핑이 기준(예: 80ms) 안에 드는 데이터센터만 후보로 둔다. 실력 범위처럼 지역 조건도 기다린 시간에 따라 넓힌다. 다만 지연은 판 내내 체감되므로, 실력보다 늦게, 좁게 푼다.
+    </p>
+
+    <h3>매칭은 모아서 한 번에 한다</h3>
+    <p>
+      요청이 들어올 때마다 바로 짝을 찾으면 빠르지만, 먼저 온 사람이 조금 나은 상대를 기다리지 못하고 처음 보이는 상대와 묶인다. 몇 초마다 대기열 전체를 보고 묶으면 전체 품질이 좋아진다. 그 대가로 매칭 주기만큼 대기가 늘어난다. 실제로는 1~5초 주기가 흔하다.
+    </p>
+    <p>
+      진행 중인 판에서 한 명이 나가면 <strong>백필</strong>로 대기열에서 채운다. 판이 거의 끝났거나 지고 있는 팀이면 들어가는 사람에게 불리하므로, 남은 시간과 점수 차로 백필 여부를 정하고 들어가는 사람에게는 불리한 결과를 덜 반영한다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th></tr></thead>
+        <tbody>
+          <tr><td>랭크전, 결과가 레이팅에 반영된다</td><td>좁은 범위에서 시작하고 상한을 낮게 둔다. 대기가 길어도 품질을 지킨다</td></tr>
+          <tr><td>일반전, 이벤트 모드</td><td>범위를 빨리 넓힌다. 빨리 잡히는 쪽이 낫다</td></tr>
+          <tr><td>인구가 적은 시간대·지역</td><td>지역을 합치거나 모드를 합친다. 대기열이 쪼개질수록 한 대기열의 사람이 준다</td></tr>
+          <tr><td>최상위 구간</td><td>비슷한 상대가 원래 적다. 대기 상한을 따로 두고, 넘으면 넓은 범위를 받아들이게 한다</td></tr>
+          <tr><td>도착하는 즉시 vs 모아서</td><td>사람이 아주 많으면 즉시로도 품질이 나온다. 적을수록 모아서 하는 편이 낫다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>대기열 상태는 매처 한 곳이 소유한다.</strong> 같은 대기열을 두 매처가 동시에 보면 한 사람이 두 판에 묶인다. 대기열을 모드 × 지역으로 쪼개 쪼갠 단위마다 매처 하나가 맡는다(<a href="scaling.html">확장과 샤딩</a>). 대기열을 Redis 정렬 집합에 두면 매처가 재시작해도 대기열이 남는다(<a href="../database/redis.html">Redis 활용</a>).</li>
+      <li><strong>티켓에 상태를 둔다.</strong> 대기 중, 제안됨, 수락 대기, 할당 중, 완료, 취소. 클라이언트가 매칭을 취소한 순간과 매처가 그 티켓을 묶는 순간이 겹치면, 상태 전이로 어느 쪽이 이겼는지 정한다.</li>
+      <li><strong>수락 거절과 이탈에는 대가를 둔다.</strong> 거절한 사람은 잠깐 대기열에 못 들어오게 하고, 남은 사람은 원래 대기 시간을 유지한 채 앞으로 돌려보낸다. 판 중 이탈은 레이팅과 별개의 불이익으로 다룬다.</li>
+      <li><strong>대기 시간을 분포로 본다.</strong> 레이팅 구간·지역·시간대별 p50과 p95를 지표로 남긴다. 평균만 보면 최상위 구간이 10분씩 기다리는 것이 가려진다. 매치 품질도 함께 본다. 양 팀 평균 MMR 차, 한쪽이 일방적으로 이긴 판의 비율이다.</li>
+      <li><strong>어뷰징을 지표로 잡는다.</strong> 고수가 새 계정으로 낮은 구간을 휩쓰는 스머프는 초반 승률과 레이팅 상승 속도로 걸러 낸다. 새 계정의 불확실도를 크게 두면 빨리 제자리로 올라간다. 일부러 져서 레이팅을 낮추는 행위, 같은 상대와 반복해 만나 승패를 주고받는 행위도 매칭 로그로 찾는다.</li>
+      <li><strong>규칙은 시뮬레이션으로 고친다.</strong> 실제 대기열 로그(도착 시각, 레이팅, 파티, 핑)를 남겨 두면, 새 규칙을 그 로그에 돌려 대기 시간과 품질이 어떻게 바뀌는지 출시 전에 본다.</li>
+      <li><strong>할당이 실패하면 처음으로 돌아가지 않는다.</strong> 서버가 없어서 할당이 실패하면 묶인 판을 그대로 유지한 채 할당만 다시 시도한다. 판을 풀어 대기열로 돌리면 방금 기다린 시간이 날아간다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>레이팅은 추정치다.</strong> 판 수가 적은 플레이어의 숫자는 크게 틀린다. 배치 판에서 불확실도를 크게 두고 빨리 움직이게 한다.</li>
+      <li><strong>대기열을 너무 잘게 나누지 않는다.</strong> 모드, 지역, 파티 크기, 랭크 구간마다 대기열을 나누면 곱만큼 쪼개진다. 쪼개진 대기열은 각각 사람이 적어 대기가 길어진다.</li>
+      <li><strong>허용 범위는 한쪽만 보지 않는다.</strong> 오래 기다린 사람의 넓은 범위를 상대에게 강요하면, 방금 들어온 사람이 불공정한 판을 받는다. 두 범위가 모두 맞을 때만 묶는다.</li>
+      <li><strong>보여 주는 랭크와 매칭 값을 섞지 않는다.</strong> 시즌 초기화나 강등 보호는 랭크에만 걸고, MMR은 계속 이어지게 둔다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

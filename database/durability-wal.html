@@ -136,7 +136,7 @@ COMMIT;</code></pre>
     <p>
       로그에 모든 변경이 순서대로 있으니, 그 로그를 다른 서버로 보내 재생하면 복제본이 된다. PostgreSQL 스트리밍 복제는 WAL을 그대로 보내고 받는 쪽이 복구하듯 재생한다. MySQL은 redo가 아니라 SQL 수준의 변경을 담은 바이너리 로그(binlog)를 보낸다. 그래서 MySQL은 커밋 하나에 redo와 binlog 두 로그를 맞춰 내리는 내부 2단계 커밋을 한다. 복제 지연과 페일오버는 <a href="scaling-db.html">DB 확장</a>에서 다룬다.
      같은 로그를 백업 위에 이어 재생하면 원하는 시점으로 되돌릴 수 있다(<a href="backup-recovery.html">백업과 복구</a>).</p>
-    <blockquote>여기서 로그는 커밋을 지키는 DB 내부의 로그다. 메시지 브로커가 재생하려고 쌓아 두는 이벤트 로그나, 서버가 남기는 텍스트 로그와 이름만 같다.</blockquote>
+    <blockquote>여기서 로그는 커밋을 지키는 DB 내부의 로그다. <a data-ref="architecture/message-models">메시지 브로커</a>가 재생하려고 쌓아 두는 이벤트 로그나, 서버가 남기는 텍스트 로그와 이름만 같다.</blockquote>
 
     <h2>선택 기준</h2>
     <div class="table-scroll">

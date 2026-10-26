@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>프로세스 경계: 모으기와 나누기 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="architecture/process-boundary">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="server-topology.html">게임 서버 토폴로지</a> · <a href="../csharp/gc-modes.html">GC 모드와 멈춤</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      기능마다 프로세스를 따로 둘지, 한 프로세스에 모을지는 유행으로 정할 일이 아니다. 일반 백엔드에서는 마이크로서비스로 잘게 나눴다가 다시 합친 사례도, 그 반대 사례도 있다. 어느 쪽이 요즘 방식인지가 아니라, <strong>무엇을 얻고 무엇을 내주는지</strong>로 고른다.
+    </p>
+    <p>
+      나누면 장애가 갇히고, 기능마다 따로 배포하고 늘릴 수 있다. 대신 함수 호출이던 것이 직렬화와 네트워크 왕복이 되고, 한 트랜잭션으로 끝나던 일이 여러 단계의 합의가 된다. .NET 서버에서는 축이 하나 더 있다. <span class="blank"><a data-ref="csharp/gc-basics">GC</a>와 <a data-ref="operating-system/thread-pool">스레드 풀</a>이 프로세스마다 하나</span>라서, 한 프로세스에 모은 기능들은 멈춤과 스레드 부족을 함께 겪는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>"한 프로세스에 모은다"는 서로 다른 셋을 가리킨다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>형태</th><th>무엇을 말하나</th><th>지켜 주는 경계</th></tr></thead>
+        <tbody>
+          <tr><td>모놀리스</td><td>경계 없이 한 배포 단위에 다 넣는다</td><td>없다</td></tr>
+          <tr><td>모듈러 모놀리스</td><td>배포 단위는 하나지만, 코드 안에서 모듈 사이 경계를 강제한다. 다른 모듈의 내부 타입을 못 쓰게 막는다</td><td>코드 경계</td></tr>
+          <tr><td>단일 바이너리, 역할은 설정</td><td>같은 실행 파일을 역할만 바꿔 여러 프로세스로 띄운다. 로컬에서는 한 프로세스에 모든 역할을 켠다</td><td>운영에서는 실행 경계</td></tr>
+          <tr><td>서비스 분리</td><td>기능마다 코드베이스와 배포를 따로 둔다</td><td>코드 경계와 실행 경계</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      셋을 섞어 말하면 이야기가 어긋난다. <strong>코드 경계</strong>는 배포를 하나로 두고도 지킬 수 있다. 하지만 한 기능의 크래시가 다른 기능을 끌고 내려가지 않게 하는 <strong>실행 경계</strong>는 프로세스를 나누지 않으면 생기지 않는다. "모듈러 모놀리스로 가자"와 "프로세스를 하나로 합치자"는 다른 제안이다.
+    </p>
+
+    <h3>나누면 얻고, 모으면 얻는 것</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="한 프로세스에 모으면 기능들이 GC 힙과 스레드 풀을 함께 쓰고 서로 함수로 부른다. 나누면 기능마다 GC와 스레드 풀을 따로 갖고 직렬화와 네트워크로 부른다">
+        <defs><marker id="pb-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="26">한 프로세스</text>
+        <rect class="f-box" x="20" y="38" width="330" height="190" rx="8"/>
+        <rect class="f-hit" x="40" y="58" width="90" height="44" rx="6"/>
+        <text class="f-text" x="85" y="85" text-anchor="middle">월드</text>
+        <rect class="f-hit" x="140" y="58" width="90" height="44" rx="6"/>
+        <text class="f-text" x="185" y="85" text-anchor="middle">채팅</text>
+        <rect class="f-hit" x="240" y="58" width="90" height="44" rx="6"/>
+        <text class="f-text" x="285" y="85" text-anchor="middle">길드</text>
+        <text class="f-sub" x="185" y="126" text-anchor="middle">서로 함수로 부른다 · 수십 ns</text>
+        <rect class="f-miss" x="40" y="142" width="290" height="32" rx="6"/>
+        <text class="f-on" x="185" y="163" text-anchor="middle">GC 힙 하나 · 스레드 풀 하나</text>
+        <text class="f-sub" x="185" y="204" text-anchor="middle">채팅이 일으킨 GC 멈춤에 월드 틱도 멈춘다</text>
+
+        <text class="f-strong" x="400" y="26">나눈 프로세스</text>
+        <rect class="f-box" x="400" y="38" width="100" height="100" rx="8"/>
+        <text class="f-text" x="450" y="66" text-anchor="middle">월드</text>
+        <text class="f-sub" x="450" y="96" text-anchor="middle">GC · 풀</text>
+        <text class="f-sub" x="450" y="114" text-anchor="middle">따로</text>
+        <rect class="f-box" x="520" y="38" width="100" height="100" rx="8"/>
+        <text class="f-text" x="570" y="66" text-anchor="middle">채팅</text>
+        <text class="f-sub" x="570" y="96" text-anchor="middle">GC · 풀</text>
+        <text class="f-sub" x="570" y="114" text-anchor="middle">따로</text>
+        <rect class="f-box" x="640" y="38" width="100" height="100" rx="8"/>
+        <text class="f-text" x="690" y="66" text-anchor="middle">길드</text>
+        <text class="f-sub" x="690" y="96" text-anchor="middle">GC · 풀</text>
+        <text class="f-sub" x="690" y="114" text-anchor="middle">따로</text>
+        <line class="f-line f-dash" x1="450" y1="138" x2="450" y2="170"/>
+        <line class="f-line f-dash" x1="690" y1="138" x2="690" y2="170"/>
+        <line class="f-line f-dash" x1="450" y1="170" x2="690" y2="170"/>
+        <line class="f-line" x1="570" y1="170" x2="570" y2="142" marker-end="url(#pb-a)"/>
+        <text class="f-sub" x="570" y="194" text-anchor="middle">직렬화 + 네트워크 왕복 · 수백 µs 이상</text>
+        <text class="f-sub" x="570" y="214" text-anchor="middle">상대가 죽거나 느릴 수 있다</text>
+      </svg>
+      <figcaption>모으면 호출이 싸고 일관성을 맞추기 쉽지만, 기능들이 같은 GC 힙과 스레드 풀을 나눠 쓴다. 나누면 서로의 멈춤과 크래시가 갇히는 대신, 호출 하나하나가 실패할 수 있는 원격 호출이 된다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>축</th><th>프로세스를 나누면</th><th>한 프로세스에 모으면</th></tr></thead>
+        <tbody>
+          <tr><td>호출 비용</td><td>직렬화, <a data-ref="operating-system/kernel-boundary">시스템 콜</a>, 네트워크 왕복이 붙는다(<a href="../operating-system/ipc.html">프로세스 간 통신</a>)</td><td>함수 호출이다</td></tr>
+          <tr><td>실패 방식</td><td>시간 초과와 부분 실패를 처리해야 한다</td><td>호출은 실패하지 않는다. 예외는 같은 스택에서 잡힌다</td></tr>
+          <tr><td>장애 격리</td><td>한 기능이 죽어도 나머지는 산다</td><td>처리 안 된 예외나 메모리 부족 하나가 전부를 내린다(<a href="../system-programming/crash-dump.html">크래시 덤프와 심볼</a>)</td></tr>
+          <tr><td>배포</td><td>기능마다 따로 배포하고 되돌린다</td><td>작은 수정에도 전체를 다시 띄운다</td></tr>
+          <tr><td>확장</td><td>바쁜 기능만 대수를 늘린다</td><td>통째로 늘린다</td></tr>
+          <tr><td>일관성</td><td>여러 프로세스에 걸친 변경은 한 트랜잭션이 아니다(<a href="saga.html">사가</a>, <a href="transactional-outbox.html">아웃박스</a>)</td><td>메모리와 DB 트랜잭션 하나로 맞춘다</td></tr>
+          <tr><td>관측</td><td>요청 하나를 여러 프로세스의 로그로 이어 붙여야 한다</td><td>스택 하나, 덤프 하나에 다 있다</td></tr>
+          <tr><td>운영 표면</td><td>배포 경로, 감시 대상, 설정이 기능 수만큼 는다</td><td>하나로 끝난다</td></tr>
+          <tr><td>자원</td><td>런타임과 공용 데이터가 프로세스마다 중복된다</td><td>한 벌로 쓴다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>.NET에서는 GC가 프로세스마다 하나다</h3>
+    <p>
+      .NET의 관리 힙과 GC는 프로세스 단위다. 서버 GC는 코어마다 힙을 나눠 수집을 병렬로 하지만, 블로킹 수집이 일어나면 그 프로세스의 관리 스레드가 모두 멈춘다(<a href="../csharp/gc-modes.html">GC 모드와 멈춤</a>).
+    </p>
+    <p>
+      한 프로세스에 월드 시뮬레이션과 채팅을 모았다고 하자. 채팅이 메시지마다 문자열과 버퍼를 대량으로 만들면 GC가 자주 돈다. 그 멈춤은 채팅만 멈추지 않는다. 같은 프로세스의 월드 틱도 함께 멈춘다. 프로세스를 나누면 채팅의 쓰레기는 채팅 프로세스의 GC만 돌린다. GC 설정도 기능마다 다르게 줄 수 있다. 지연이 중요한 월드 서버와 처리량이 중요한 배치 작업은 원하는 설정이 다르다.
+    </p>
+
+    <h3>스레드 풀도 함께 쓴다</h3>
+    <p>
+      스레드 풀 역시 프로세스에 하나다. 한 기능이 비동기 작업을 <code>.Result</code>로 기다리는 식으로 풀 스레드를 붙잡으면, 같은 프로세스의 다른 기능이 올린 비동기 작업도 스레드를 받지 못한다. 풀은 스레드를 천천히 늘리므로 그동안 프로세스 전체가 느려진다(<a href="../csharp/sync-context.html">동기화 컨텍스트</a>). 게임과 상관없는 관리 API 하나의 실수가 월드 서버 전체의 지연으로 번지는 경로다.
+    </p>
+    <p>
+      프로세스를 나누지 않고 막는 중간 방법도 있다. 월드 시뮬레이션은 스레드 풀이 아닌 전용 로직 스레드에서 돌리고(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>), 풀은 입출력과 부수 기능에만 쓴다. 이렇게 하면 GC 멈춤은 공유하지만, 풀 고갈이 틱을 직접 굶기지는 않는다.
+    </p>
+
+    <h3>나눴는데 함께 움직이면 분산 모놀리스다</h3>
+    <p>
+      프로세스는 나눴지만 서로 강하게 묶인 상태를 <span class="blank">분산 모놀리스</span>라고 부른다. 나누기의 비용은 모두 내면서 얻는 것은 없다. 이런 신호가 보이면 경계가 잘못 그어진 것이다.
+    </p>
+    <ul>
+      <li>요청 하나가 서비스 다섯 개를 차례로 동기 호출한다. 그중 하나만 느려도 전체가 느리고, 하나만 죽어도 전체가 실패한다.</li>
+      <li>여러 서비스가 같은 DB 테이블을 직접 읽고 쓴다. 스키마를 바꾸면 모두 함께 배포해야 한다.</li>
+      <li>기능 하나를 고칠 때마다 서비스 여러 개를 같은 날 함께 배포한다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <p>
+      경계는 <strong>호출이 드문 자리</strong>에 둔다. 틱 안에서 수천 번 주고받는 두 기능을 나누면 그 호출이 모두 네트워크를 탄다. 하루에 몇 번 주고받는 두 기능은 나눠도 비용이 거의 없다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>이런 경우</th><th>기울 쪽</th></tr></thead>
+        <tbody>
+          <tr><td>한 기능의 멈춤이나 크래시를 다른 기능이 견딜 수 없다</td><td>나눈다</td></tr>
+          <tr><td>배포 주기가 다르다. 한쪽은 매일, 한쪽은 점검 때만 바꾼다</td><td>나눈다</td></tr>
+          <tr><td>한 기능만 부하가 다르게 늘어난다</td><td>나눈다</td></tr>
+          <tr><td>보안이나 감사 때문에 접근 범위를 좁혀야 한다(결제, 인증)</td><td>나눈다</td></tr>
+          <tr><td>두 기능이 한 판정 안에서 자주 서로를 부른다</td><td>모은다</td></tr>
+          <tr><td>두 기능의 변경이 늘 한 트랜잭션으로 맞아야 한다</td><td>모은다</td></tr>
+          <tr><td>운영 인원이 적고 기능이 아직 자주 바뀐다</td><td>모으고, 코드 경계부터 지킨다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      나누기는 되돌리기 어렵다. 처음에는 모듈 경계가 분명한 한 프로세스로 시작하고, 위 신호가 실제로 보이는 경계부터 떼는 편이 안전하다. 코드 경계를 미리 지켜 두면 나중에 실행 경계를 긋는 일이 쉬워진다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>존 시뮬레이션은 한 프로세스에 둔다.</strong> 이동, 전투, AI, 시야는 한 틱 안에서 서로를 수없이 부른다. 이 사이를 나누면 틱 예산이 네트워크에 다 쓰인다.</li>
+      <li><strong>채팅, 우편, 길드, 랭킹은 떼기 좋은 후보다.</strong> 월드와 주고받는 일이 드물고, 장애가 나도 전투는 계속돼야 한다. 배포 주기도 다르다(<a href="server-topology.html">게임 서버 토폴로지</a>).</li>
+      <li><strong>단일 바이너리에 역할을 설정으로 주는 방식이 흔하다.</strong> 개발할 때는 한 프로세스에 모든 역할을 켜서 디버깅하고, 운영에서는 역할마다 프로세스를 띄운다. 이때 로컬에서는 함수 호출이던 것이 운영에서는 원격 호출이 된다. 시간 초과와 재시도 경로는 로컬에서 시험되지 않으므로, 역할 사이 호출에 일부러 지연과 실패를 넣는 시험을 둔다.</li>
+      <li><strong>같은 호스트에 여러 프로세스를 두면 중간을 고를 수 있다.</strong> 실행 경계는 생기고, 통신은 같은 머신 안이라 네트워크보다 싸다. 다만 머신이 죽으면 함께 죽는다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>"요즘은 다시 한 프로세스로 모으는 추세"라는 말은 일반 백엔드 일부 사례에서 나온 이야기다. 게임 서버에 그대로 옮기기 전에, 위 축에서 우리 쪽이 무엇을 얻고 잃는지를 따진다.</li>
+      <li>프로세스를 나눠도 같은 DB를 함께 쓰면 장애가 DB에서 다시 만난다. 경계는 프로세스뿐 아니라 데이터 소유에도 긋는다.</li>
+      <li>나눈 뒤에는 서버 간 호출에 시간 초과를 반드시 건다. 시간 초과가 없는 원격 호출 하나가 호출한 쪽의 스레드와 연결을 끝없이 붙잡는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
