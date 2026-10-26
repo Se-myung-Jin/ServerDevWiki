@@ -104,7 +104,7 @@ await host.RunAsync();   // 시작하고, 종료 신호가 올 때까지 기다�
         <thead><tr><th>수명</th><th>언제 만들어지나</th><th>언제 정리되나</th><th>맞는 것</th></tr></thead>
         <tbody>
           <tr><td>Singleton</td><td>처음 요청할 때 하나</td><td>호스트가 끝날 때 컨테이너가 Dispose</td><td>세션 관리자, 기획 데이터 표, 설정, 상태 없는 서비스</td></tr>
-          <tr><td>Scoped</td><td>범위마다 하나. 웹이라면 요청 하나가 범위다</td><td>그 범위가 Dispose될 때</td><td>DB 컨텍스트(EF Core의 DbContext), 작업 단위</td></tr>
+          <tr><td>Scoped</td><td>범위마다 하나. 웹이라면 요청 하나가 범위다</td><td>그 범위가 Dispose될 때</td><td>DB 컨텍스트(EF Core의 DbContext, <a href="../database/data-access.html">ORM과 저장 설계</a>), 작업 단위</td></tr>
           <tr><td>Transient</td><td>요청할 때마다 새로</td><td>그것을 만든 범위가 끝날 때(Dispose를 구현했다면)</td><td>가볍고 상태가 없는 도우미</td></tr>
         </tbody>
       </table>

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ORM과 저장 설계 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/data-access">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="transaction.html">트랜잭션과 ACID</a>, <a href="concurrency-control.html">동시성 제어와 데드락</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">ORM</span>은 객체와 테이블 사이를 대신 옮겨 준다. EF Core는 객체를 고치면 무엇이 바뀌었는지 추적해 SQL을 만들어 준다. Dapper는 직접 쓴 SQL의 결과를 객체에 채워 주기만 한다. 앞쪽은 덜 쓰고 더 감추고, 뒤쪽은 더 쓰고 덜 감춘다. 무엇을 고르든 <strong>어떤 SQL이 몇 번 나가는지</strong>는 개발자가 알고 있어야 한다.
+    </p>
+    <p>
+      게임 서버는 웹 서버와 저장 방식이 다르다. 캐릭터 상태는 서버 메모리에 있고 DB는 그 사본이다. 그래서 변경마다 저장하지 않는다. <strong>바뀐 것만, 모아서, 정해진 때에</strong> 저장하고, 거래나 결제처럼 잃으면 안 되는 사건만 그 자리에서 트랜잭션으로 내린다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>EF Core와 Dapper는 감추는 양이 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>EF Core</th><th>Dapper (ADO.NET 위)</th></tr></thead>
+        <tbody>
+          <tr><td>쿼리 작성</td><td>LINQ로 쓰고 SQL은 번역된다</td><td>SQL을 직접 쓴다</td></tr>
+          <tr><td>생성되는 SQL 통제</td><td>번역 결과를 로그로 확인해야 안다. 복잡한 LINQ는 예상과 다른 SQL이 된다</td><td>쓴 그대로 나간다</td></tr>
+          <tr><td>변경 저장</td><td>추적 중인 객체를 고치고 <code>SaveChanges</code>를 부르면 바뀐 컬럼만 <code>UPDATE</code>한다</td><td><code>UPDATE</code> 문을 직접 쓴다</td></tr>
+          <tr><td>마이그레이션</td><td>모델에서 스키마 변경 스크립트를 만든다</td><td>없다. 별도 도구를 쓴다</td></tr>
+          <tr><td>오버헤드</td><td>번역, 변경 추적, 객체 구성 비용이 있다. 컴파일된 쿼리와 추적 끄기로 줄인다</td><td>얇다. 거의 ADO.NET 그대로다</td></tr>
+          <tr><td>Native AOT</td><td>.NET 9부터 미리 컴파일된 쿼리로 실험적으로 지원한다</td><td>런타임에 코드를 생성하므로 그대로는 맞지 않는다. 소스 생성 방식의 Dapper.AOT를 쓴다(<a href="../csharp/jit-aot.html">JIT와 AOT</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      둘은 함께 쓸 수 있다. 일반 조회와 운영 도구는 EF Core로 쓰고, 접속이 몰릴 때 많이 불리는 경로나 손으로 다듬은 쿼리는 Dapper로 쓰는 식이다. 같은 <code>DbConnection</code>과 트랜잭션을 공유할 수도 있다.
+    </p>
+
+    <h3>변경 추적은 공짜가 아니다</h3>
+    <p>
+      EF Core는 조회한 엔티티마다 처음 값을 따로 기억해 둔다. <code>SaveChanges</code> 때 현재 값과 비교해 바뀐 컬럼을 찾는다. 이 <span class="blank">변경 추적</span> 덕분에 객체만 고치면 저장이 되지만, 조회한 행 수만큼 메모리와 비교 비용이 든다.
+    </p>
+<pre><code class="language-csharp">// 읽기만 할 목록: 추적하지 않는다
+var top = await db.Characters
+    .AsNoTracking()
+    .Where(c =&gt; c.WorldId == worldId)
+    .OrderByDescending(c =&gt; c.Level)
+    .Take(100)
+    .Select(c =&gt; new RankRow(c.Id, c.Name, c.Level))   // 필요한 컬럼만
+    .ToListAsync(ct);</code></pre>
+    <p>
+      읽기만 하는 조회는 <code>AsNoTracking</code>을 붙인다. 필요한 컬럼만 <code>Select</code>로 뽑으면 추적도 안 되고 읽는 양도 준다. 반대로 추적을 끈 객체를 고쳐도 <code>SaveChanges</code>는 아무것도 저장하지 않는다. 고칠 것은 추적하는 조회로 가져오거나 명시적으로 붙여 준다.
+    </p>
+
+    <h3>컨텍스트는 짧게, 커넥션은 더 짧게</h3>
+    <p>
+      <code>DbContext</code>는 일 하나 동안만 쓰고 버리는 객체다. 스레드에 안전하지 않아서, 같은 컨텍스트로 두 작업을 동시에 시작하면 예외가 난다. 오래 들고 있으면 추적 중인 엔티티가 계속 쌓이고 옛 값을 캐시처럼 돌려준다.
+    </p>
+    <ul>
+      <li><strong>범위가 있는 곳에서는 DI가 수명을 정한다.</strong> ASP.NET Core 요청마다 Scoped로 하나씩 받는다. 생성 비용이 신경 쓰이면 <code>AddDbContextPool</code>로 인스턴스를 재사용한다.</li>
+      <li><strong>범위가 없는 곳에서는 팩토리로 만든다.</strong> 게임 서버의 저장 작업자나 <code>BackgroundService</code>는 요청 범위가 없다. <code>IDbContextFactory&lt;T&gt;</code>를 받아 일 하나마다 <code>CreateDbContextAsync</code>로 만들고 <code>await using</code>으로 닫는다. Singleton이 Scoped를 붙잡는 함정은 <a href="../csharp/generic-host-di.html">Generic Host와 의존성 주입</a>에서 다룬다.</li>
+      <li><strong>커넥션은 쿼리 직전에 열고 끝나면 바로 닫는다.</strong> 닫은 커넥션은 끊기지 않고 풀로 돌아간다. 쿼리 사이에 외부 API 호출이나 긴 계산을 끼우면 그동안 풀의 자리를 하나 차지한다. 풀이 바닥나면 다른 요청이 커넥션을 기다린다(<a href="scaling-db.html">DB 확장: 복제와 샤딩</a>).</li>
+    </ul>
+
+    <h3>많이 바꿀 때는 한 번에 보낸다</h3>
+    <p>
+      객체를 하나씩 불러와 고치고 저장하면 행 수만큼 왕복이 생긴다. 조건으로 정할 수 있는 변경은 DB에서 한 문장으로 끝낸다.
+    </p>
+<pre><code class="language-csharp">// EF Core 7+: 엔티티를 불러오지 않고 한 문장으로
+await db.Mails
+    .Where(m =&gt; m.ExpiresAt &lt; now)
+    .ExecuteDeleteAsync(ct);
+
+await db.Characters
+    .Where(c =&gt; c.GuildId == guildId)
+    .ExecuteUpdateAsync(s =&gt; s.SetProperty(c =&gt; c.GuildId, (long?)null), ct);</code></pre>
+    <ul>
+      <li><strong><code>ExecuteUpdate</code>·<code>ExecuteDelete</code>는 변경 추적을 거치지 않는다.</strong> 바로 SQL로 나가고 곧바로 반영된다. 같은 컨텍스트가 그 행을 추적하고 있었다면 메모리의 값은 옛 값으로 남는다.</li>
+      <li><strong><code>SaveChanges</code>도 여러 문장을 묶어 보낸다.</strong> 변경이 수십 개면 왕복 몇 번으로 끝난다. 그래도 엔티티마다 추적 비용은 든다.</li>
+      <li><strong>수만 행을 넣을 때는 대량 적재 경로를 쓴다.</strong> SQL Server는 <code>SqlBulkCopy</code>, PostgreSQL은 <code>COPY</code>(Npgsql의 <code>BeginBinaryImportAsync</code>), MySQL은 MySqlConnector의 <code>MySqlBulkCopy</code>나 <code>LOAD DATA</code>다. 행 단위 <code>INSERT</code>보다 수십 배 빠르다. 게임 로그를 모아 넣을 때 쓴다.</li>
+    </ul>
+    <p>
+      관계를 따라가며 행마다 쿼리를 하나씩 더 보내는 N+1은 <a href="query-plan.html">실행 계획과 조인</a>에서 다룬다.
+    </p>
+
+    <h3>페이지를 넘길수록 느려지는 OFFSET</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="OFFSET 방식은 앞의 만 개 행을 읽고 버린 뒤 스무 개를 돌려주고, 키셋 방식은 마지막으로 본 키 바로 다음 자리로 인덱스를 타고 내려가 스무 개만 읽는다">
+        <defs><marker id="da-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="30">OFFSET 10000 LIMIT 20</text>
+        <rect class="f-cell2" x="20" y="44" width="540" height="34" rx="4"/>
+        <text class="f-sub" x="290" y="66" text-anchor="middle">1 ~ 10000번째 행: 읽고 버린다</text>
+        <rect class="f-miss" x="566" y="44" width="80" height="34" rx="4"/>
+        <text class="f-on" x="606" y="66" text-anchor="middle">20개</text>
+        <text class="f-sub" x="660" y="66">반환</text>
+
+        <text class="f-strong" x="20" y="120">WHERE (score, id) &lt; (마지막 값) LIMIT 20</text>
+        <rect class="f-cell" x="20" y="134" width="540" height="34" rx="4"/>
+        <text class="f-sub" x="240" y="156" text-anchor="middle">앞의 행은 읽지 않고 인덱스로 바로 내려간다</text>
+        <line class="f-line" x1="470" y1="151" x2="560" y2="151" marker-end="url(#da-a)"/>
+        <rect class="f-hit" x="566" y="134" width="80" height="34" rx="4"/>
+        <text class="f-text" x="606" y="156" text-anchor="middle">20개</text>
+        <text class="f-sub" x="660" y="156">반환</text>
+        <text class="f-sub" x="20" y="196">두 방식 모두 (score DESC, id DESC) 인덱스가 있다고 가정한다</text>
+      </svg>
+      <figcaption>OFFSET은 "몇 번째부터"를 세려고 앞의 행을 전부 지나간다. 페이지 번호가 커질수록 읽는 양이 늘어난다. 키셋은 "마지막으로 본 값 다음"을 조건으로 주므로 몇 페이지째든 읽는 양이 같다.</figcaption>
+    </figure>
+    <p>
+      <code>OFFSET n</code>은 앞의 n개를 건너뛰는 것이 아니라 <strong>읽고 버린다</strong>. 랭킹 500페이지를 보여 주려면 만 개를 읽어야 한다. 그사이 새 행이 끼어들면 같은 행이 두 페이지에 나오거나 한 행이 빠지기도 한다.
+    </p>
+    <p>
+      <span class="blank">키셋 페이지네이션</span>(seek 방식)은 마지막으로 본 행의 정렬 키를 다음 요청의 조건으로 쓴다. 정렬 키가 겹칠 수 있으면 유일한 컬럼(id)을 뒤에 붙여 순서를 하나로 정한다. 인덱스는 정렬 순서와 같게 만든다(<a href="index-kinds.html">인덱스의 종류와 설계</a>).
+    </p>
+<pre><code class="language-sql">-- PostgreSQL, MySQL 8: 행 값 비교
+SELECT id, name, score FROM ranking
+WHERE (score, id) &lt; (@lastScore, @lastId)
+ORDER BY score DESC, id DESC
+LIMIT 20;
+
+-- SQL Server: 행 값 비교가 없으므로 풀어 쓴다
+SELECT TOP (20) id, name, score FROM ranking
+WHERE score &lt; @lastScore OR (score = @lastScore AND id &lt; @lastId)
+ORDER BY score DESC, id DESC;</code></pre>
+    <p>
+      키셋은 "37페이지로 바로 가기"를 못 한다. 다음·이전과 무한 스크롤에 맞다. 우편함, 거래소 목록, 로그 조회처럼 앞에서부터 넘겨 보는 화면이 여기에 해당한다.
+    </p>
+
+    <h3>자주 부르는 쿼리는 미리 번역해 둔다</h3>
+    <p>
+      EF Core는 LINQ 식을 SQL로 번역한 결과를 캐시하지만, 매번 식 트리를 만들고 캐시를 찾는 비용은 남는다. 로그인 때 캐릭터 불러오기처럼 아주 자주 부르는 쿼리는 <code>EF.CompileAsyncQuery</code>로 한 번만 번역해 둔다.
+    </p>
+<pre><code class="language-csharp">static readonly Func&lt;GameDb, long, Task&lt;Character?&gt;&gt; LoadCharacter =
+    EF.CompileAsyncQuery((GameDb db, long id) =&gt;
+        db.Characters.Include(c =&gt; c.Items).FirstOrDefault(c =&gt; c.Id == id));</code></pre>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>고를 것</th></tr></thead>
+        <tbody>
+          <tr><td>운영 도구, 관리 페이지, 스키마가 자주 바뀌는 초기 개발</td><td>EF Core. 마이그레이션과 생산성이 크다</td></tr>
+          <tr><td>로그인, 저장, 랭킹처럼 많이 불리는 경로</td><td>Dapper나 컴파일된 쿼리. 나가는 SQL을 손에 쥔다</td></tr>
+          <tr><td>조건으로 정해지는 대량 변경·삭제</td><td><code>ExecuteUpdate</code>·<code>ExecuteDelete</code>나 직접 쓴 SQL</td></tr>
+          <tr><td>수만 행 적재</td><td>엔진별 대량 적재 API</td></tr>
+          <tr><td>넘겨 보는 목록</td><td>키셋 페이지네이션. 페이지 번호 이동이 꼭 필요하면 OFFSET에 상한을 둔다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="로직 스레드가 바뀐 필드를 더티로 표시하고 주기나 로그아웃 때 저장 큐에 넣으면 저장 작업자가 DB에 쓰고 결과를 로직 큐로 돌려준다. 거래와 결제는 따로 즉시 트랜잭션으로 내린다">
+        <defs><marker id="da-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="170" height="70" rx="6"/>
+        <text class="f-text" x="105" y="58" text-anchor="middle">로직 스레드</text>
+        <text class="f-sub" x="105" y="80" text-anchor="middle">캐릭터 상태(원본)</text>
+
+        <rect class="f-cell2" x="240" y="30" width="150" height="70" rx="6"/>
+        <text class="f-text" x="315" y="58" text-anchor="middle">더티 목록</text>
+        <text class="f-sub" x="315" y="80" text-anchor="middle">gold, 아이템 3칸</text>
+        <line class="f-line" x1="190" y1="65" x2="236" y2="65" marker-end="url(#da-b)"/>
+
+        <rect class="f-hit" x="440" y="30" width="130" height="70" rx="6"/>
+        <text class="f-text" x="505" y="58" text-anchor="middle">저장 큐</text>
+        <text class="f-sub" x="505" y="80" text-anchor="middle">스냅샷 + 버전</text>
+        <line class="f-line" x1="390" y1="65" x2="436" y2="65" marker-end="url(#da-b)"/>
+        <text class="f-sub" x="415" y="22" text-anchor="middle">30초마다 · 로그아웃 · 존 이동</text>
+
+        <rect class="f-box" x="620" y="30" width="120" height="70" rx="6"/>
+        <text class="f-text" x="680" y="58" text-anchor="middle">저장 작업자</text>
+        <text class="f-sub" x="680" y="80" text-anchor="middle">→ DB</text>
+        <line class="f-line" x1="570" y1="65" x2="616" y2="65" marker-end="url(#da-b)"/>
+
+        <path class="f-line f-dash" d="M680,100 C680,140 300,140 120,104" fill="none" marker-end="url(#da-b)"/>
+        <text class="f-sub" x="400" y="146" text-anchor="middle">성공·실패를 로직 큐로 돌려준다</text>
+
+        <rect class="f-miss" x="20" y="180" width="170" height="46" rx="6"/>
+        <text class="f-on" x="105" y="208" text-anchor="middle">거래 · 결제</text>
+        <rect class="f-hit" x="240" y="180" width="330" height="46" rx="6"/>
+        <text class="f-text" x="405" y="208" text-anchor="middle">즉시 트랜잭션, 커밋 확인 뒤에 결과 반영</text>
+        <line class="f-line" x1="190" y1="203" x2="236" y2="203" marker-end="url(#da-b)"/>
+      </svg>
+      <figcaption>위 줄은 평소 저장이다. 잃어도 마지막 저장 이후 몇십 초만 잃는다. 아래 줄은 잃으면 복제나 유실로 이어지는 사건이다. 저장 작업자는 로직 스레드 밖에서 돌고, 결과는 다시 로직 스레드의 큐로 들어온다.</figcaption>
+    </figure>
+    <ul>
+      <li><strong>바뀐 것만 저장한다.</strong> 캐릭터 객체가 바뀐 필드와 아이템 칸을 더티로 표시해 둔다. 저장할 때는 그 부분만 <code>UPDATE</code>한다. 캐릭터 전체를 매번 덮어쓰면 쓰기 양이 늘고, 다른 경로가 고친 컬럼을 옛 값으로 덮는다. 계산으로 다시 만들 수 있는 최종 스탯 같은 값은 저장 대상에서 뺀다(<a href="../game-patterns/stat-modifiers.html">스탯과 버프 계산</a>).</li>
+      <li><strong>모아서 저장한다.</strong> 몬스터를 잡을 때마다 경험치를 저장하면 접속자 수 × 초당 사냥 수만큼 쓰기가 생긴다. 일정 주기, 로그아웃, 존 이동, 서버 종료 때 모아 내린다. 주기는 "서버가 죽으면 몇 초를 잃어도 되는가"로 정한다.</li>
+      <li><strong>잃으면 안 되는 사건은 즉시 저장한다.</strong> 거래, 결제, 강화 결과, 희귀 아이템 획득은 그 자리에서 트랜잭션으로 내린다. 커밋을 확인한 뒤에 메모리와 클라이언트에 반영한다. 반영을 먼저 하면 저장이 실패했을 때 되돌릴 길이 없다.</li>
+      <li><strong>저장은 로직 스레드 밖에서 한다.</strong> 로직 스레드가 DB 응답을 기다리면 그동안 존 전체가 멈춘다. 저장 시점의 값을 복사해 큐에 넣고, 작업자 스레드가 쓰고, 결과는 다시 로직 스레드의 큐로 돌려받는다(<a href="../server/threading-model.html">게임 서버 스레딩 모델</a>).</li>
+      <li><strong>저장에 버전을 붙인다.</strong> 저장 작업이 겹치거나 순서가 뒤바뀌면 오래된 스냅샷이 새것을 덮을 수 있다. 저장마다 증가하는 버전을 함께 보내고 <code>WHERE version &lt; @v</code>로 늦게 도착한 옛 저장을 버린다(<a href="concurrency-control.html">동시성 제어와 데드락</a>). 존 이동 인계도 같은 버전을 쓴다(<a href="../game-patterns/world-partition.html">월드 분할</a>).</li>
+      <li><strong>저장 실패를 처리하는 길을 정해 둔다.</strong> 일시적 오류는 지수 백오프로 재시도한다. 계속 실패하면 해당 캐릭터를 더 바뀌지 않게 잠그고, 스냅샷을 로컬 파일에 남기고, 경보를 띄운다. 실패를 로그만 남기고 넘기면 다음 접속 때 진행이 사라졌다는 문의로 돌아온다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>ORM이 만든 SQL을 한 번은 본다.</strong> EF Core의 <code>LogTo</code>나 <code>ToQueryString</code>으로 확인한다. 클라이언트 평가로 넘어간 부분이나 예상 밖의 조인은 로그로만 보인다.</li>
+      <li><strong>추적하는 컨텍스트에 오래된 값이 남는다.</strong> 같은 컨텍스트로 같은 행을 다시 조회하면 DB가 아니라 이미 추적 중인 객체가 돌아온다. 다른 곳에서 바뀐 값을 보려면 새 컨텍스트를 쓴다.</li>
+      <li><strong>지연 로딩을 켜지 않는다.</strong> 탐색 속성에 접근할 때마다 쿼리가 나가 N+1이 눈에 안 띄게 생긴다. 필요한 관계는 <code>Include</code>나 <code>Select</code>로 명시한다.</li>
+      <li><strong>LINQ의 지연 실행이 커넥션 수명을 늘린다.</strong> <code>IQueryable</code>을 바깥으로 돌려주면 실제 쿼리는 열거하는 쪽에서 나간다. 그때 컨텍스트가 이미 닫혔으면 예외가 나고, 열려 있으면 생각보다 늦게 나간다(<a href="../csharp/linq-deferred.html">LINQ와 지연 실행</a>).</li>
+      <li><strong>스키마 변경은 코드 배포와 순서를 맞춘다.</strong> 마이그레이션을 서버 시작 때 자동으로 돌리면 여러 서버가 동시에 돌리거나, 큰 테이블을 잠근 채 시작이 멈춘다. 운영에서는 따로 검토하고 따로 적용한다(<a data-ref="operations/schema-migration">스키마 마이그레이션</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

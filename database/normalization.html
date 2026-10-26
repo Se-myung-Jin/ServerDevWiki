@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>정규화와 반정규화 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/normalization">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="sql-basics.html">SQL과 키</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">정규화</span>는 같은 사실을 한 곳에만 적도록 테이블을 나누는 일이다. 같은 사실이 여러 행에 적혀 있으면 일부만 고쳐지는 순간 서로 어긋난다. 정규화는 이런 <strong>이상 현상</strong>을 구조로 막는다. 나누는 근거는 <strong>함수 종속</strong>이다. A 값이 정해지면 B 값이 하나로 정해질 때 "B는 A에 종속된다"고 한다.
+    </p>
+    <p>
+      <span class="blank">반정규화</span>는 정규화한 뒤에 성능을 위해 중복을 일부러 되돌리는 일이다. 조인과 집계가 줄어드는 대신, 같은 사실이 두 곳에 생기고 그 둘을 맞추는 책임이 응용으로 넘어온다. 순서는 늘 정규화가 먼저다. 처음부터 중복을 두는 것은 반정규화가 아니라 설계를 하지 않은 것이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>중복은 세 가지 이상 현상을 만든다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 740 260" role="img" aria-label="길드 이름이 길드원 행마다 적힌 테이블을 길드원과 길드 두 테이블로 나눈다">
+        <defs><marker id="nm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">나누기 전: guild_members</text>
+        <rect class="f-cell2" x="20" y="36" width="90" height="26"/><text class="f-sub" x="65" y="54" text-anchor="middle">character</text>
+        <rect class="f-cell2" x="110" y="36" width="70" height="26"/><text class="f-sub" x="145" y="54" text-anchor="middle">guild_id</text>
+        <rect class="f-cell2" x="180" y="36" width="110" height="26"/><text class="f-sub" x="235" y="54" text-anchor="middle">guild_name</text>
+        <rect class="f-cell" x="20" y="62" width="90" height="26"/><text class="f-text" x="65" y="80" text-anchor="middle">아린</text>
+        <rect class="f-cell" x="110" y="62" width="70" height="26"/><text class="f-text" x="145" y="80" text-anchor="middle">7</text>
+        <rect class="f-hit" x="180" y="62" width="110" height="26"/><text class="f-text" x="235" y="80" text-anchor="middle">새벽별</text>
+        <rect class="f-cell" x="20" y="88" width="90" height="26"/><text class="f-text" x="65" y="106" text-anchor="middle">도윤</text>
+        <rect class="f-cell" x="110" y="88" width="70" height="26"/><text class="f-text" x="145" y="106" text-anchor="middle">7</text>
+        <rect class="f-hit" x="180" y="88" width="110" height="26"/><text class="f-text" x="235" y="106" text-anchor="middle">새벽별</text>
+        <rect class="f-cell" x="20" y="114" width="90" height="26"/><text class="f-text" x="65" y="132" text-anchor="middle">서하</text>
+        <rect class="f-cell" x="110" y="114" width="70" height="26"/><text class="f-text" x="145" y="132" text-anchor="middle">7</text>
+        <rect class="f-miss" x="180" y="114" width="110" height="26"/><text class="f-on" x="235" y="132" text-anchor="middle">은하수</text>
+        <text class="f-sub" x="20" y="162">이름을 바꾸다 한 행이 남았다: 갱신 이상</text>
+        <text class="f-sub" x="20" y="182">길드원이 없으면 길드를 적을 곳이 없다: 삽입 이상</text>
+        <text class="f-sub" x="20" y="202">마지막 길드원이 나가면 길드 이름도 사라진다: 삭제 이상</text>
+
+        <line class="f-line" x1="320" y1="90" x2="380" y2="90" marker-end="url(#nm-a)"/>
+        <text class="f-sub" x="350" y="78" text-anchor="middle">나눈다</text>
+
+        <text class="f-strong" x="400" y="24">나눈 뒤</text>
+        <rect class="f-cell2" x="400" y="36" width="90" height="26"/><text class="f-sub" x="445" y="54" text-anchor="middle">character</text>
+        <rect class="f-cell2" x="490" y="36" width="70" height="26"/><text class="f-sub" x="525" y="54" text-anchor="middle">guild_id</text>
+        <rect class="f-cell" x="400" y="62" width="90" height="26"/><text class="f-text" x="445" y="80" text-anchor="middle">아린</text>
+        <rect class="f-cell" x="490" y="62" width="70" height="26"/><text class="f-text" x="525" y="80" text-anchor="middle">7</text>
+        <rect class="f-cell" x="400" y="88" width="90" height="26"/><text class="f-text" x="445" y="106" text-anchor="middle">도윤</text>
+        <rect class="f-cell" x="490" y="88" width="70" height="26"/><text class="f-text" x="525" y="106" text-anchor="middle">7</text>
+        <rect class="f-cell" x="400" y="114" width="90" height="26"/><text class="f-text" x="445" y="132" text-anchor="middle">서하</text>
+        <rect class="f-cell" x="490" y="114" width="70" height="26"/><text class="f-text" x="525" y="132" text-anchor="middle">7</text>
+
+        <rect class="f-cell2" x="600" y="36" width="60" height="26"/><text class="f-sub" x="630" y="54" text-anchor="middle">guild_id</text>
+        <rect class="f-cell2" x="660" y="36" width="70" height="26"/><text class="f-sub" x="695" y="54" text-anchor="middle">name</text>
+        <rect class="f-cell" x="600" y="62" width="60" height="26"/><text class="f-text" x="630" y="80" text-anchor="middle">7</text>
+        <rect class="f-hit" x="660" y="62" width="70" height="26"/><text class="f-text" x="695" y="80" text-anchor="middle">새벽별</text>
+        <path class="f-line f-dash" d="M560,75 L600,75" fill="none"/>
+        <text class="f-sub" x="400" y="170">길드 이름은 한 곳에만 있다</text>
+        <text class="f-sub" x="400" y="190">바꾸려면 한 행만 고친다</text>
+        <text class="f-sub" x="20" y="244">guild_name은 character가 아니라 guild_id에 종속된다. 키가 아닌 것에 기대는 이 종속이 3NF에서 걷어 내는 이행 종속이다</text>
+      </svg>
+      <figcaption>왼쪽은 길드 이름을 길드원마다 적었다. 같은 사실이 세 번 적혀 있어 하나만 고쳐도 어긋난다. 오른쪽은 길드 이름을 길드 테이블로 옮기고 길드원은 guild_id만 들고 있다.</figcaption>
+    </figure>
+    <div class="table-scroll"><table>
+      <thead><tr><th>이상 현상</th><th>무슨 일이 생기나</th></tr></thead>
+      <tbody>
+        <tr><td>갱신 이상</td><td>여러 곳에 적힌 같은 사실 중 일부만 고쳐져 어긋난다</td></tr>
+        <tr><td>삽입 이상</td><td>원하는 사실을 넣으려면 원치 않는 정보까지 있어야 한다</td></tr>
+        <tr><td>삭제 이상</td><td>한 사실을 지우면 같은 행에 있던 다른 사실까지 사라진다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      셋 가운데 갱신 이상이 가장 위험하다. 에러가 나지 않는다. 어긋난 채로 계속 돌다가 길드 목록과 캐릭터 정보 창에 다른 이름이 보인다는 문의로 한참 뒤에 드러난다.
+    </p>
+
+    <h3>정규형은 "무엇을 걷어 내는가"로 외운다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>단계</th><th>조건</th><th>걷어 내는 것</th><th>게임 예</th></tr></thead>
+      <tbody>
+        <tr><td>1NF</td><td>모든 칸이 값 하나</td><td>한 칸에 여러 값, 반복 컬럼</td><td>"item1, item2, item3" 문자열이나 slot1~slot30 컬럼 → 행으로 편다</td></tr>
+        <tr><td>2NF</td><td>1NF + 키가 아닌 속성이 기본 키 전체에 종속</td><td><span class="blank">부분 종속</span></td><td>키가 (character_id, item_id)인데 item_name은 item_id에만 종속 → 아이템 테이블로</td></tr>
+        <tr><td>3NF</td><td>2NF + 키가 아닌 속성이 키가 아닌 속성에 종속되지 않음</td><td><span class="blank">이행 종속</span></td><td>character → guild_id → guild_name → 길드 테이블로</td></tr>
+        <tr><td>BCNF</td><td>모든 결정자가 후보 키</td><td>후보 키가 아닌 결정자</td><td>(캐릭터, 콘텐츠) → 담당 NPC인데 담당 NPC → 콘텐츠 → NPC 배정 테이블로</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      부분 종속은 기본 키가 여러 컬럼일 때만 생긴다. 키가 컬럼 하나면 그 일부라는 것이 없으므로, 1NF를 만족하면 2NF도 저절로 만족한다.
+    </p>
+    <p>
+      나눌 때는 두 가지를 지킨다. 나눈 테이블을 다시 조인하면 원래 행이 그대로 나와야 한다(<strong>무손실 분해</strong>). 원래의 함수 종속을 나눈 테이블 하나만 보고 검사할 수 있어야 한다(<strong>종속성 보존</strong>). 3NF까지는 둘을 함께 지키는 분해가 늘 있다. BCNF는 그렇지 않아서, BCNF로 가려면 종속성 보존을 내줘야 하는 스키마가 있다. 실무에서 3NF를 기준으로 삼는 이유다. 4NF와 5NF는 다치 종속과 조인 종속을 다루는데, 서버 스키마에서 따질 일은 드물다.
+    </p>
+
+    <h3>반정규화는 무엇을 복사하느냐로 나뉜다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>기법</th><th>예</th><th>맞춰야 하는 시점</th></tr></thead>
+      <tbody>
+        <tr><td>컬럼 복사</td><td>우편 테이블에 보낸 캐릭터 이름을 함께 적는다</td><td>이름이 바뀔 때. 보통은 "보낼 때의 이름"으로 남겨 두는 것이 오히려 맞다</td></tr>
+        <tr><td>파생 컬럼</td><td>길드 테이블에 member_count를 둔다</td><td>가입·탈퇴마다 같은 트랜잭션에서</td></tr>
+        <tr><td>요약 테이블</td><td>일별 매출, 주간 랭킹 스냅샷</td><td>배치가 정해진 주기로 다시 만든다</td></tr>
+        <tr><td>테이블 합치기</td><td>1:1 관계인 캐릭터와 캐릭터 설정을 한 테이블로</td><td>합친 뒤에는 따로 맞출 것이 없다. 대신 행이 넓어진다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      어떻게 맞출지를 반정규화와 함께 정한다. 같은 트랜잭션에서 함께 고칠지, 트리거에 맡길지, 배치로 주기적으로 다시 계산할지, 어긋남을 찾는 검사 쿼리를 둘지다. 이것을 정하지 않은 복사본은 언젠가 반드시 어긋난다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <h3>반정규화 전에 확인할 것</h3>
+    <ol>
+      <li><strong>인덱스:</strong> 조인이 느린 이유는 대개 조인 컬럼에 인덱스가 없어서다(<a href="index-basics.html">인덱스가 빠른 이유와 대가</a>).</li>
+      <li><strong>쿼리:</strong> 필요 없는 조인, N+1 쿼리, 하위 쿼리를 정리한다(<a href="query-plan.html">실행 계획과 조인</a>).</li>
+      <li><strong>캐시:</strong> 자주 읽고 드물게 바뀌면 DB 앞에 두는 편이 낫다(<a href="caching.html">DB 앞의 캐시</a>).</li>
+      <li><strong>측정:</strong> 그래도 느리다는 것을 숫자로 확인한 쿼리에만 반정규화한다.</li>
+    </ol>
+    <div class="table-scroll"><table>
+      <thead><tr><th>데이터 성격</th><th>정규화 유지</th><th>반정규화 고려</th></tr></thead>
+      <tbody>
+        <tr><td>재화, 인벤토리, 거래</td><td>어긋나면 복사·유실 사고다</td><td>거의 하지 않는다</td></tr>
+        <tr><td>랭킹, 상점 목록, 통계</td><td></td><td>조금 늦은 값이어도 된다. 요약 테이블이 맞다</td></tr>
+        <tr><td>로그, 이력</td><td></td><td>그때의 값을 남기는 것이 목적이라 처음부터 복사해 적는다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>인벤토리를 행으로 둘지 JSON 컬럼으로 둘지 고른다.</strong> 아이템 하나를 한 행으로 두면 정규형이고, 특정 아이템을 가진 캐릭터 찾기, 거래 시 한 행만 옮기기, 아이템 단위 로그가 쉽다. 캐릭터 한 행에 인벤토리 전체를 JSON으로 넣으면 로그인 때 한 번에 읽고 쓰기 좋다. 대신 1NF를 버리는 것이라 아이템 하나를 바꿔도 전체를 다시 쓰고, DB가 아이템 단위로 무결성을 지켜 주지 못한다. 거래와 경매처럼 아이템이 계정 사이를 오가는 게임이라면 행 쪽이 안전하다.
+      </li>
+      <li>
+        <strong>랭킹은 요약 테이블이나 캐시로 뺀다.</strong> 매 요청마다 전체 캐릭터를 점수로 정렬하면 버티지 못한다. 주기적으로 랭킹 테이블을 다시 만들거나, 실시간이 필요하면 <a data-ref="database/redis">정렬 집합</a>을 가진 캐시를 쓴다(<a href="caching.html">DB 앞의 캐시</a>).
+      </li>
+      <li>
+        <strong>로그 테이블은 처음부터 반정규화한다.</strong> "누가, 언제, 무엇을, 얼마에" 거래했는지는 그때의 이름과 가격이 필요하다. 원본을 조인하면 지금 값이 나온다. 로그에는 ID와 함께 당시 값을 복사해 적는다.
+      </li>
+      <li>
+        <strong>기획 데이터는 정규화의 대상이 아니다.</strong> 아이템 이름, 스탯 같은 고정 데이터는 서버가 메모리에 올려 쓰는 테이블이다(<a href="../game-patterns/data-driven.html">기획 데이터와 데이터 주도 설계</a>). 게임 DB에는 item_id만 두고 이름을 복사해 두지 않는다. 이름이 바뀌면 고칠 곳이 수백만 행이 된다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>"비정규화"라는 말은 두 뜻으로 쓰인다.</strong> 정규화를 아예 거치지 않은 비정규형과, 정규화 뒤 일부러 중복을 넣는 반정규화다. 면접에서 이 말이 나오면 어느 쪽인지부터 가린다.</li>
+      <li><strong>정규화가 늘 느린 것은 아니다.</strong> 테이블이 좁아지면 한 페이지에 행이 더 많이 들어가고 버퍼에 더 많이 올라간다. 조인 비용과 이 이득을 함께 본다.</li>
+      <li><strong>파생 컬럼은 같은 트랜잭션에서 고친다.</strong> member_count를 나중에 따로 고치면 그 사이에 서버가 죽었을 때 영원히 어긋난다.</li>
+      <li><strong>근거 없이 반정규화하지 않는다.</strong> 얻는 것은 추측이고 맞춰야 할 곳이 늘어나는 것은 확실하다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

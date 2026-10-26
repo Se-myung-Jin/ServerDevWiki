@@ -165,7 +165,7 @@
     <h2>게임 서버에서는</h2>
     <ul>
       <li>
-        <strong>순위표는 정렬 구조가 필요한 대표 자리다.</strong> "내 앞뒤 10명", "점수 구간별 인원"은 해시로 할 수 없다. 서버 메모리에 두면 <code>SortedSet</code>에 (점수, ID) 쌍을 넣는 식으로 만들고, 서버가 여러 대면 Redis의 정렬 집합(sorted set)을 쓴다. Redis는 균형 트리 대신 스킵 리스트로 같은 연산을 O(log n)에 한다.
+        <strong>순위표는 정렬 구조가 필요한 대표 자리다.</strong> "내 앞뒤 10명", "점수 구간별 인원"은 해시로 할 수 없다. 서버 메모리에 두면 <code>SortedSet</code>에 (점수, ID) 쌍을 넣는 식으로 만들고, 서버가 여러 대면 <a data-ref="database/redis">Redis</a>의 <a data-ref="database/redis">정렬 집합</a>(sorted set)을 쓴다. Redis는 균형 트리 대신 스킵 리스트로 같은 연산을 O(log n)에 한다.
       </li>
       <li>
         <strong>시간 순서로 처리할 일은 정렬 트리나 힙에 둔다.</strong> 버프 만료, 예약된 이벤트처럼 "가장 이른 것부터"만 필요하면 <a href="heap-btree.html">힙</a>이 더 싸고, 중간 항목을 찾아 취소해야 하면 정렬 트리가 맞다.

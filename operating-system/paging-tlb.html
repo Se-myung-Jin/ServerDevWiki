@@ -110,7 +110,7 @@
         <thead><tr><th>상황</th><th>판단</th></tr></thead>
         <tbody>
           <tr><td>수 GB 이상을 무작위로 읽는 프로세스(대형 캐시, DB)</td><td>큰 페이지로 TLB 미스가 줄어 이득을 볼 수 있다</td></tr>
-          <tr><td>지연 시간에 민감하고 메모리를 자주 할당·해제한다</td><td>Linux의 투명 큰 페이지(THP)는 백그라운드 병합 작업이 지연을 튀게 할 수 있다. Redis 등 여러 DB가 끄기를 권한다</td></tr>
+          <tr><td>지연 시간에 민감하고 메모리를 자주 할당·해제한다</td><td>Linux의 투명 큰 페이지(THP)는 백그라운드 병합 작업이 지연을 튀게 할 수 있다. <a data-ref="database/redis">Redis</a> 등 여러 DB가 끄기를 권한다</td></tr>
           <tr><td>Windows에서 쓰려 한다</td><td>large page는 "메모리 내 페이지 잠금" 권한이 필요하고 물리 메모리에 고정된다. 운영 부담을 함께 따진다</td></tr>
         </tbody>
       </table>

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>분산 ID 생성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/distributed-id">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="index-kinds.html">인덱스의 종류와 설계</a>, <a href="scaling-db.html">DB 확장: 복제와 샤딩</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      DB 하나가 <code>AUTO_INCREMENT</code>로 번호를 매기면 겹칠 일이 없다. 쓰는 곳이 여럿이 되면 이야기가 달라진다. 샤드마다, 서버마다 따로 번호를 만들면서도 전체에서 겹치지 않아야 한다. 방법은 크게 셋이다. <strong>미리 범위를 나눠 받거나</strong>, <strong>충돌이 사실상 안 나는 큰 난수를 쓰거나</strong>, <strong>시각과 노드 번호를 비트로 이어 붙인다</strong>.
+    </p>
+    <p>
+      시각을 앞에 두는 방식(Snowflake, UUIDv7)은 대체로 증가하므로 인덱스 끝에 붙어 쓰기가 싸다. 대신 <span class="blank">시계</span>에 기댄다. 시계가 뒤로 가거나 노드 번호가 겹치면 같은 ID가 조용히 두 번 나온다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>자동 증가 키가 막히는 자리</h3>
+    <p>
+      자동 증가는 번호를 매기는 곳이 한 군데라서 성립한다. 다음 상황에서 막힌다.
+    </p>
+    <ul>
+      <li><strong>샤드가 여럿이다.</strong> 샤드마다 1부터 세면 캐릭터 ID 1이 샤드마다 하나씩 생긴다. 샤드를 합치거나 옮기는 날 충돌한다.</li>
+      <li><strong>쓰기 노드가 여럿이다.</strong> 멀티 마스터에서는 MySQL의 <code>auto_increment_increment</code>와 <code>auto_increment_offset</code>으로 홀짝을 나누는 식의 우회가 있다. 노드를 늘릴 때마다 간격을 다시 정해야 한다.</li>
+      <li><strong>DB에 넣기 전에 ID가 필요하다.</strong> 게임 서버는 아이템을 메모리에서 먼저 만들고 나중에 모아 저장한다(<a href="data-access.html">ORM과 저장 설계</a>). 저장할 때까지 ID가 없으면 로그와 패킷에 쓸 번호가 없다.</li>
+      <li><strong>밖에 보이면 추측된다.</strong> 연속 번호는 다음 번호를 짐작하게 하고, 하루 가입자 수 같은 정보까지 흘린다.</li>
+    </ul>
+
+    <h3>범위를 받아 두고 안에서 센다</h3>
+    <p>
+      가장 단순한 분산 방식은 번호표 묶음을 받아 오는 것이다. 중앙 DB의 시퀀스에서 "1001~2000"처럼 구간을 받아 두고, 서버는 그 안에서 메모리로 센다. 구간을 다 쓰면 다시 받는다. Hibernate와 EF Core가 지원하는 <span class="blank">hi/lo</span> 방식도 같은 생각이다. DB에서 상위 값(hi)을 하나 받고, 하위 값(lo)은 메모리에서 붙인다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="중앙 시퀀스가 서버마다 천 개씩 구간을 나눠 주고, 서버는 받은 구간 안에서 DB에 묻지 않고 번호를 센다">
+        <defs><marker id="did-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-hit" x="20" y="80" width="170" height="56" rx="6"/>
+        <text class="f-text" x="105" y="104" text-anchor="middle">중앙 시퀀스</text>
+        <text class="f-sub" x="105" y="124" text-anchor="middle">다음 구간 시작 = 4001</text>
+
+        <rect class="f-box" x="300" y="20" width="200" height="44" rx="6"/>
+        <text class="f-text" x="400" y="40" text-anchor="middle">게임 서버 1</text>
+        <text class="f-sub" x="400" y="56" text-anchor="middle">1001~2000 중 1342까지 씀</text>
+        <rect class="f-box" x="300" y="86" width="200" height="44" rx="6"/>
+        <text class="f-text" x="400" y="106" text-anchor="middle">게임 서버 2</text>
+        <text class="f-sub" x="400" y="122" text-anchor="middle">2001~3000 중 2017까지 씀</text>
+        <rect class="f-box" x="300" y="152" width="200" height="44" rx="6"/>
+        <text class="f-text" x="400" y="172" text-anchor="middle">게임 서버 3</text>
+        <text class="f-sub" x="400" y="188" text-anchor="middle">3001~4000 중 3999까지 씀</text>
+
+        <line class="f-line" x1="190" y1="96" x2="296" y2="44" marker-end="url(#did-a)"/>
+        <line class="f-line" x1="190" y1="108" x2="296" y2="108" marker-end="url(#did-a)"/>
+        <line class="f-line f-dash" x1="296" y1="172" x2="194" y2="124" marker-end="url(#did-a)"/>
+
+        <text class="f-sub" x="520" y="44">구간 안에서는 DB에 묻지 않는다</text>
+        <text class="f-sub" x="520" y="168">다 써 가면 다음 구간을 받는다</text>
+        <text class="f-sub" x="520" y="186">(4001~5000)</text>
+      </svg>
+      <figcaption>DB 왕복은 구간 하나에 한 번뿐이다. 서버가 죽으면 받아 둔 구간의 남은 번호는 버려지므로 번호에 빈칸이 생긴다. 빈칸은 정상이고, 번호가 이어진다고 가정하는 코드가 문제다.</figcaption>
+    </figure>
+    <p>
+      구간을 받아 오는 순간에만 중앙에 기댄다. 구간을 크게 잡으면 중앙이 잠깐 죽어도 버틸 수 있지만, 서버가 재시작할 때마다 버리는 번호가 늘어난다. 순서는 서버 안에서만 증가하고, 서버 사이에서는 시각 순서와 맞지 않는다.
+    </p>
+
+    <h3>난수 UUID는 묻지 않아도 겹치지 않는다</h3>
+    <p>
+      <span class="blank">UUID v4</span>는 128비트 가운데 버전과 변형 표시를 뺀 122비트가 난수다. 조율 없이 어디서든 만들 수 있고, 충돌 확률은 실무에서 따질 필요가 없을 만큼 작다. 대신 값이 무작위라 클러스터드 키로 쓰면 삽입 자리가 매번 흩어진다(<a href="index-kinds.html">인덱스의 종류와 설계</a>). 16바이트라 8바이트 정수보다 인덱스와 <a data-ref="database/sql-basics">외래 키</a>가 두 배로 커진다.
+    </p>
+    <p>
+      <span class="blank">UUIDv7</span>(RFC 9562, 2024)은 앞 48비트에 유닉스 밀리초 시각을 넣고 나머지를 난수로 채운다. 만든 순서대로 대체로 정렬되므로 v4의 삽입 문제가 크게 줄어든다. .NET 9부터 <code>Guid.CreateVersion7()</code>로 만든다. 저장소마다 비교 순서가 다를 수 있다는 점은 <a href="index-kinds.html">인덱스의 종류와 설계</a>에서 다룬다.
+    </p>
+<pre><code class="language-csharp">Guid itemUid = Guid.CreateVersion7();                     // .NET 9+
+Guid at = Guid.CreateVersion7(DateTimeOffset.UtcNow);     // 시각을 지정할 수도 있다</code></pre>
+    <p>
+      <strong>ULID</strong>도 같은 계열이다. 48비트 밀리초 시각과 80비트 난수를 Crockford Base32 26글자로 적는다. 문자열 그대로 정렬해도 시각 순서가 맞아, 로그나 파일 이름처럼 문자열로 다루는 곳에서 편하다.
+    </p>
+
+    <h3>Snowflake는 시각, 노드, 순번을 비트로 붙인다</h3>
+    <p>
+      <span class="blank">Snowflake</span>는 64비트 정수 하나에 세 가지를 나눠 담는다. 앞에서부터 시각, 노드 번호, 같은 밀리초 안의 순번이다. 노드 번호가 서로 다르면 같은 순간에 만들어도 겹치지 않고, 같은 노드 안에서는 순번이 가른다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="64비트 가운데 부호 1비트, 밀리초 시각 41비트, 노드 번호 10비트, 순번 12비트로 나눈 Snowflake ID 구조">
+        <rect class="f-cell" x="20" y="50" width="30" height="50"/>
+        <text class="f-sub" x="35" y="80" text-anchor="middle">0</text>
+        <rect class="f-hit" x="50" y="50" width="410" height="50"/>
+        <text class="f-text" x="255" y="72" text-anchor="middle">시각 41비트</text>
+        <text class="f-sub" x="255" y="90" text-anchor="middle">기준 시각(epoch) 이후 밀리초</text>
+        <rect class="f-box" x="460" y="50" width="120" height="50"/>
+        <text class="f-text" x="520" y="72" text-anchor="middle">노드 10비트</text>
+        <text class="f-sub" x="520" y="90" text-anchor="middle">0~1023</text>
+        <rect class="f-cell2" x="580" y="50" width="150" height="50"/>
+        <text class="f-text" x="655" y="72" text-anchor="middle">순번 12비트</text>
+        <text class="f-sub" x="655" y="90" text-anchor="middle">0~4095</text>
+
+        <text class="f-sub" x="35" y="36" text-anchor="middle">부호</text>
+        <text class="f-sub" x="255" y="124" text-anchor="middle">2^41 ms ≈ 69.7년</text>
+        <text class="f-sub" x="520" y="124" text-anchor="middle">1024대까지 구분</text>
+        <text class="f-sub" x="655" y="124" text-anchor="middle">노드당 1 ms에 4,096개</text>
+        <text class="f-sub" x="20" y="158">기준 시각을 서비스 시작일로 잡아 수명을 번다. 부호 비트가 0이라 ID는 항상 양수다</text>
+        <text class="f-sub" x="20" y="180">앞자리가 시각이라 숫자 크기 순서가 대체로 만든 순서다</text>
+      </svg>
+      <figcaption>비트 배분은 정해진 규격이 아니다. 노드가 수십 대면 노드 비트를 줄이고 순번을 늘리는 식으로 바꿔 쓴다. 바꾸지 말아야 할 것은 한 번 정한 기준 시각과 배분이다. 중간에 바꾸면 옛 ID와 새 ID가 겹칠 수 있다.</figcaption>
+    </figure>
+<pre><code class="language-csharp">public sealed class SnowflakeGenerator
+{
+    const long Epoch = 1735689600000L;   // 2025-01-01T00:00:00Z, 서비스마다 정한다
+    readonly long _node;                 // 0~1023
+    long _lastMs = -1, _seq;
+    readonly object _gate = new();
+
+    public SnowflakeGenerator(int node) =&gt; _node = node &amp; 0x3FF;
+
+    public long Next()
+    {
+        lock (_gate)
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (now &lt; _lastMs)                           // 시계가 뒤로 갔다
+                throw new InvalidOperationException($"clock moved back {_lastMs - now} ms");
+            if (now == _lastMs)
+            {
+                _seq = (_seq + 1) &amp; 0xFFF;
+                if (_seq == 0)                           // 이 밀리초의 순번을 다 썼다
+                    while ((now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) &lt;= _lastMs) Thread.SpinWait(16);
+            }
+            else _seq = 0;
+            _lastMs = now;
+            return ((now - Epoch) &lt;&lt; 22) | (_node &lt;&lt; 12) | _seq;
+        }
+    }
+}</code></pre>
+    <p>
+      같은 밀리초에 순번 4,096개를 다 쓰면 다음 밀리초까지 기다린다. 초당 수백만 개가 필요한 곳이 아니면 이 대기는 거의 일어나지 않는다.
+    </p>
+
+    <h3>시계가 뒤로 가면 같은 ID가 다시 나온다</h3>
+    <p>
+      벽시계는 NTP가 맞추면서 뒤로 갈 수 있다(<a href="../operating-system/clocks-timers.html">시계와 타이머</a>). Snowflake가 이미 만든 밀리초로 돌아가면, 그 밀리초에 썼던 순번을 다시 쓰게 된다. 그래서 마지막으로 쓴 시각을 기억해 두고 그보다 작은 시각이 오면 대처한다.
+    </p>
+    <ul>
+      <li><strong>조금 뒤로 갔으면 기다린다.</strong> 수 밀리초라면 마지막 시각을 넘을 때까지 쉬었다가 이어 간다.</li>
+      <li><strong>많이 뒤로 갔으면 거부한다.</strong> 위 코드처럼 예외를 던지고 경보를 울린다. 겹친 ID를 만드는 것보다 잠깐 못 만드는 쪽이 낫다.</li>
+      <li><strong>시작 후로는 단조 시계로 센다.</strong> 시작할 때 벽시계를 한 번 읽고 그 뒤 경과는 <code>Stopwatch</code> 같은 단조 시계로 더하면 실행 중에는 뒤로 가지 않는다. 다만 재시작 직후 벽시계가 과거로 가 있으면 여전히 위험하므로, 마지막 시각을 디스크에 남겨 두고 시작할 때 비교한다.</li>
+    </ul>
+
+    <h3>노드 번호가 겹치면 아무도 모르게 겹친다</h3>
+    <p>
+      Snowflake의 안전은 "노드 번호가 서로 다르다"는 가정 하나에 걸려 있다. 설정 파일을 복사해 서버를 늘리다 같은 번호가 두 대에 들어가면, 두 서버는 정상으로 돌면서 같은 ID를 만든다. 오류가 나지 않아 한참 뒤에야 발견된다.
+    </p>
+    <ul>
+      <li><strong>사람이 정하지 않게 한다.</strong> 시작할 때 DB 테이블이나 etcd, ZooKeeper 같은 조정 서비스에서 번호를 임대(lease)받고, 살아 있는 동안 갱신한다. 쿠버네티스 StatefulSet의 순번(pod-0, pod-1)을 쓰는 방법도 있다.</li>
+      <li><strong>임대가 끊기면 만들기를 멈춘다.</strong> 네트워크가 끊긴 서버가 계속 같은 번호로 만들고, 그 사이 번호가 다른 서버에 넘어가면 같은 상황이 된다.</li>
+      <li><strong>저장소의 유니크 제약을 마지막 그물로 둔다.</strong> ID 생성기가 틀려도 DB가 중복을 거부하면 적어도 덮어쓰지는 않는다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>크기</th><th>정렬</th><th>조율</th><th>잘 맞는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>DB 자동 증가</td><td>8바이트</td><td>완전 증가</td><td>DB 하나</td><td>샤딩하지 않는 테이블, 내부 키</td></tr>
+          <tr><td>구간 할당(hi/lo)</td><td>8바이트</td><td>서버 안에서만 증가</td><td>구간 받을 때만</td><td>DB 왕복을 줄이고 정수 키를 지키고 싶을 때</td></tr>
+          <tr><td>UUID v4</td><td>16바이트</td><td>없음</td><td>없음</td><td>외부에 노출하는 토큰, 클러스터드가 아닌 키</td></tr>
+          <tr><td>UUIDv7 · ULID</td><td>16바이트</td><td>밀리초 단위로 대체로 증가</td><td>없음</td><td>조율 없이 만들고 인덱스도 지키고 싶을 때</td></tr>
+          <tr><td>Snowflake</td><td>8바이트</td><td>밀리초 단위로 대체로 증가</td><td>노드 번호 배정</td><td>정수 키가 필요하고 노드 수를 관리할 수 있을 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      시각이 들어간 ID는 서버마다 시계가 조금씩 달라 <strong>전체 순서를 보장하지 않는다</strong>. "ID가 크면 나중에 일어난 일"이라고 가정하고 순서를 판정하면 서버 사이에서 틀린다. 순서가 정말 중요하면 같은 저장소에서 매긴 번호나 별도 버전 값을 쓴다.
+    </p>
+    <p>
+      밖으로 보이는 ID와 안에서 쓰는 ID를 나누는 것도 선택지다. 내부 키는 8바이트 정수로 두고, 공유 링크나 초대 코드처럼 노출되는 값은 추측할 수 없는 난수로 따로 만든다(<a data-ref="security/game-security">게임 보안</a>). 시각이 들어간 ID는 만든 시각이 그대로 드러난다는 점도 기억한다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>아이템마다 고유 UID를 붙인다.</strong> 수량이 있는 소모품이 아니라 강화 장비처럼 하나하나 다른 아이템은 만드는 순간 UID를 받는다. 같은 UID가 두 곳에서 발견되면 복제 버그나 어뷰징의 증거가 된다. 로그로 아이템의 일생(획득, 강화, 거래, 파괴)을 UID 하나로 따라갈 수 있다.</li>
+      <li><strong>거래 ID를 멱등 키로 쓴다.</strong> 요청을 받은 서버가 거래 ID를 먼저 만들고, DB에는 그 ID에 유니크 제약을 건다. 재시도가 와도 같은 ID라 두 번 처리되지 않는다(<a href="transaction.html">트랜잭션과 ACID</a>).</li>
+      <li><strong>로그 ID는 정렬되는 것을 쓴다.</strong> 로그 테이블은 쓰기가 압도적으로 많다. Snowflake나 UUIDv7을 키로 쓰면 삽입이 인덱스 끝에 모이고, 시간 범위로 잘라 보기도 쉽다.</li>
+      <li><strong>64비트 정수를 클라이언트에 그대로 보내지 않는다.</strong> 자바스크립트와 일부 JSON 파서는 숫자를 배정밀도 부동소수로 읽는다. 2^53(9,007,199,254,740,992)을 넘는 정수는 끝자리가 바뀐다. 웹 툴, 운영 도구, 일부 엔진 스크립트로 넘길 때는 문자열로 직렬화한다. Snowflake ID는 서비스 시작 뒤 얼마 지나지 않아 이 범위를 넘는다.</li>
+      <li><strong>ID 생성기는 서버 프로세스 안에 둔다.</strong> 원격 ID 서비스를 매번 부르면 아이템 하나 만드는 데 네트워크 왕복이 붙는다. 노드 번호만 밖에서 받고 생성은 메모리에서 한다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>ID 생성기 비트 배분과 기준 시각은 문서로 남긴다.</strong> 몇 년 뒤 누군가 "이 숫자가 언제 만들어졌나"를 풀어야 할 때 필요하다. 바꾸는 순간 옛 ID와 겹칠 위험이 생긴다.</li>
+      <li><strong>번호의 빈칸을 오류로 보지 않는다.</strong> 구간 할당, 롤백된 트랜잭션, 재시작은 모두 빈칸을 만든다. "마지막 ID + 1"로 다음 값을 짐작하는 코드를 두지 않는다.</li>
+      <li><strong>시각이 든 ID로 만료나 순서를 판정하지 않는다.</strong> 서버 간 시계 차이만큼 틀린다. 판정이 필요하면 시각 컬럼을 따로 둔다.</li>
+      <li><strong>v4와 v7을 한 컬럼에 섞어도 동작은 하지만 정렬 이점은 사라진다.</strong> 옮겨 가는 중이라면 새로 만드는 행부터 v7로 바꾸고, 정렬 이득은 새 행에서만 기대한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

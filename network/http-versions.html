@@ -97,7 +97,7 @@
       <table>
         <thead><tr><th>방법</th><th>어디에 두나</th><th>서버를 늘릴 때</th></tr></thead>
         <tbody>
-          <tr><td>쿠키 + 서버 세션</td><td>서버(메모리나 Redis)에 세션, 클라이언트는 세션 ID만</td><td>세션 저장소를 공유해야 한다</td></tr>
+          <tr><td>쿠키 + 서버 세션</td><td>서버(메모리나 <a data-ref="database/redis">Redis</a>)에 세션, 클라이언트는 세션 ID만</td><td>세션 저장소를 공유해야 한다</td></tr>
           <tr><td>토큰(JWT 등)</td><td>상태를 토큰 안에 서명해 담고 클라이언트가 들고 다닌다</td><td>어느 서버나 서명만 확인하면 된다. 대신 만료 전 강제 무효화가 어렵다</td></tr>
         </tbody>
       </table>

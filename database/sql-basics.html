@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQL과 키 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/sql-basics">
+  <article class="doc-body">
+
+    <h2>핵심 요약</h2>
+    <p>
+      SQL 명령은 무엇을 다루느냐로 나뉜다. 테이블 같은 구조를 만들고 고치면 <strong>DDL</strong>, 행을 넣고 읽고 고치면 <strong>DML</strong>, 권한을 주고 거두면 <strong>DCL</strong>이다. 트랜잭션을 끝내는 COMMIT과 ROLLBACK은 DCL에 넣기도 하고 <strong>TCL</strong>로 따로 떼기도 한다.
+    </p>
+    <p>
+      키는 두 가지 일을 나눠 맡는다. <span class="blank">기본 키</span>는 행 하나를 유일하게 가리킨다. 그래서 비거나 겹칠 수 없다. <span class="blank">외래 키</span>는 다른 테이블의 행을 가리키고, 없는 행을 가리키지 못하게 막는다. 이것을 <strong>참조 무결성</strong>이라 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>구조를 바꾸느냐 데이터를 바꾸느냐</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>구분</th><th>다루는 것</th><th>대표 명령</th><th>되돌릴 수 있나</th></tr></thead>
+      <tbody>
+        <tr><td>DDL</td><td>테이블, 인덱스 같은 구조</td><td>CREATE, ALTER, DROP, TRUNCATE</td><td>엔진마다 다르다. MySQL은 실행하면 바로 커밋된다</td></tr>
+        <tr><td>DML</td><td>행</td><td>SELECT, INSERT, UPDATE, DELETE</td><td>트랜잭션 안이면 되돌린다</td></tr>
+        <tr><td>DCL</td><td>권한</td><td>GRANT, REVOKE</td><td>해당 없음</td></tr>
+        <tr><td>TCL</td><td>트랜잭션 경계</td><td>BEGIN, COMMIT, ROLLBACK, SAVEPOINT</td><td>그 자체가 확정과 취소다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      실무에서 갈리는 것은 마지막 칸이다. MySQL은 DDL을 실행하는 순간 <strong>암시적 커밋</strong>이 일어난다. 트랜잭션 안에서 ALTER를 치면 그 앞의 변경까지 함께 확정된다. PostgreSQL과 SQL Server는 대부분의 DDL을 트랜잭션 안에서 되돌릴 수 있다. 같은 마이그레이션 스크립트가 엔진에 따라 반쯤 적용된 채 멈출 수 있다는 뜻이다.
+    </p>
+    <p>
+      DELETE와 TRUNCATE도 여기서 나뉜다. DELETE는 행을 하나씩 지우며 로그를 남기고, WHERE로 고를 수 있다. TRUNCATE는 테이블을 통째로 비운다. 훨씬 빠르지만 고를 수 없고, MySQL에서는 DDL이라 되돌릴 수 없다.
+    </p>
+
+    <h3>기본 키는 식별하고 외래 키는 참조한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 740 230" role="img" aria-label="계정, 캐릭터, 아이템 테이블. 캐릭터의 account_id는 계정의 기본 키를, 아이템의 character_id는 캐릭터의 기본 키를 가리킨다">
+        <defs><marker id="sq-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="200" height="120" rx="6"/>
+        <text class="f-strong" x="120" y="54" text-anchor="middle">accounts</text>
+        <rect class="f-hit" x="32" y="66" width="176" height="28" rx="4"/>
+        <text class="f-text" x="44" y="85">PK account_id</text>
+        <text class="f-text" x="44" y="115">email (UNIQUE)</text>
+        <text class="f-sub" x="44" y="138">created_at</text>
+
+        <rect class="f-box" x="270" y="30" width="200" height="150" rx="6"/>
+        <text class="f-strong" x="370" y="54" text-anchor="middle">characters</text>
+        <rect class="f-hit" x="282" y="66" width="176" height="28" rx="4"/>
+        <text class="f-text" x="294" y="85">PK character_id</text>
+        <rect class="f-cell2" x="282" y="100" width="176" height="28" rx="4"/>
+        <text class="f-text" x="294" y="119">FK account_id</text>
+        <text class="f-text" x="294" y="148">name (UNIQUE)</text>
+        <text class="f-sub" x="294" y="170">level, gold</text>
+
+        <rect class="f-box" x="520" y="30" width="200" height="150" rx="6"/>
+        <text class="f-strong" x="620" y="54" text-anchor="middle">items</text>
+        <rect class="f-hit" x="532" y="66" width="176" height="28" rx="4"/>
+        <text class="f-text" x="544" y="85">PK item_uid</text>
+        <rect class="f-cell2" x="532" y="100" width="176" height="28" rx="4"/>
+        <text class="f-text" x="544" y="119">FK character_id</text>
+        <text class="f-text" x="544" y="148">item_id, slot</text>
+        <text class="f-sub" x="544" y="170">count</text>
+
+        <path class="f-line" d="M282,114 C250,114 250,80 214,80" fill="none" marker-end="url(#sq-a)"/>
+        <path class="f-line" d="M532,114 C500,114 500,80 464,80" fill="none" marker-end="url(#sq-a)"/>
+        <text class="f-sub" x="20" y="212">진한 칸이 기본 키, 옅은 칸이 외래 키다. 화살표는 "이 값이 저쪽 기본 키에 있어야 한다"는 제약이다</text>
+      </svg>
+      <figcaption>계정 하나에 캐릭터 여럿, 캐릭터 하나에 아이템 여럿이 붙는다. 외래 키가 있으면 없는 캐릭터에 아이템을 넣는 INSERT가 DB에서 거부된다.</figcaption>
+    </figure>
+    <p>
+      기본 키는 후보 가운데서 고른 것이다. 행을 유일하게 가리키는 속성 묶음이 <strong>슈퍼키</strong>이고, 그중 하나라도 빼면 유일성이 깨지는 최소 묶음이 <strong>후보 키</strong>다. 후보 키 하나를 기본 키로 정하면 나머지는 <strong>대체 키</strong>가 되고, 보통 UNIQUE 제약으로 지킨다. 위 그림의 email과 name이 그렇다.
+    </p>
+    <p>
+      기본 키를 무엇으로 할지는 두 갈래다. <strong>자연 키</strong>는 이메일, 캐릭터 이름처럼 업무에 원래 있는 값이다. <strong>대리 키</strong>는 자동 증가 숫자나 UUID처럼 식별만을 위해 만든 값이다. 자연 키는 바뀔 수 있다. 캐릭터 이름 변경권을 팔기 시작하면 그 이름을 참조하던 모든 테이블을 고쳐야 한다. 그래서 대부분은 바뀌지 않는 대리 키를 기본 키로 두고, 자연 키에는 UNIQUE를 건다. 대리 키를 무엇으로 만드느냐는 저장 순서와 얽혀 있어 <a href="index-kinds.html">인덱스의 종류와 설계</a>에서 다룬다.
+    </p>
+
+    <h3>참조된 행이 지워질 때 무엇을 할지 정한다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>동작</th><th>캐릭터를 지우면 아이템은</th><th>쓰는 자리</th></tr></thead>
+      <tbody>
+        <tr><td>RESTRICT / NO ACTION</td><td>아이템이 남아 있으면 삭제를 거부한다</td><td>기본값. 실수로 지우는 것을 막는다</td></tr>
+        <tr><td>CASCADE</td><td>함께 지운다</td><td>부모 없이 의미가 없는 자식</td></tr>
+        <tr><td>SET NULL</td><td>character_id를 NULL로 바꾼다</td><td>주인 없이도 남아야 하는 것</td></tr>
+        <tr><td>SET DEFAULT</td><td>기본값으로 바꾼다. MySQL InnoDB는 지원하지 않는다</td><td>드물다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      CASCADE는 편하지만 한 줄의 DELETE가 몇 단계 아래까지 번진다. 계정 → 캐릭터 → 아이템 → 아이템 로그로 이어져 있으면 계정 하나를 지우는 문장이 수만 행을 지우고, 그동안 락을 오래 잡는다.
+    </p>
+
+    <h3>NULL은 값이 아니라 "모름"이다</h3>
+    <p>
+      NULL과 비교하면 참도 거짓도 아닌 <span class="blank">UNKNOWN</span>이 나온다. 이것을 <strong>3값 논리</strong>라 한다. WHERE는 참인 행만 남기므로 UNKNOWN인 행은 빠진다.
+    </p>
+<pre><code class="language-sql">-- 아무 행도 나오지 않는다. NULL = NULL 은 UNKNOWN 이다
+SELECT * FROM characters WHERE guild_id = NULL;
+-- 이렇게 쓴다
+SELECT * FROM characters WHERE guild_id IS NULL;
+
+-- 함정: 하위 쿼리에 NULL 이 하나라도 있으면 NOT IN 은 아무것도 돌려주지 않는다
+SELECT * FROM characters
+WHERE character_id NOT IN (SELECT owner_id FROM pets);   -- owner_id 에 NULL 이 있으면 결과 0행
+-- NOT EXISTS 는 이 문제가 없다
+SELECT * FROM characters c
+WHERE NOT EXISTS (SELECT 1 FROM pets p WHERE p.owner_id = c.character_id);</code></pre>
+    <p>
+      집계도 NULL을 건너뛴다. <code>COUNT(*)</code>는 행을 세고 <code>COUNT(guild_id)</code>는 guild_id가 NULL이 아닌 행만 센다. <code>COUNT(1)</code>이 <code>COUNT(*)</code>보다 빠르다는 말은 근거가 없다. 주요 엔진은 둘을 같게 처리한다.
+    </p>
+    <p>
+      UNIQUE 제약이 NULL을 어떻게 보느냐도 엔진마다 다르다. MySQL과 PostgreSQL은 NULL끼리 같지 않다고 보아 NULL을 여러 개 허용한다. PostgreSQL 15부터는 <code>UNIQUE NULLS NOT DISTINCT</code>로 하나만 허용하게 바꿀 수 있다. SQL Server의 UNIQUE 제약은 NULL을 하나만 허용하고, 여러 개를 허용하려면 <code>WHERE col IS NOT NULL</code>을 붙인 필터 인덱스를 쓴다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>값은 항상 파라미터로 넘긴다.</strong> C# 서버는 Dapper나 EF Core로 쿼리를 보낸다. 캐릭터 이름처럼 사용자가 정하는 값을 문자열로 이어 붙이면 SQL 인젝션이 된다(<a data-ref="security/injection">인젝션</a>). 파라미터 바인딩은 실행 계획을 다시 쓰게 해 주는 효과도 있다(<a href="query-plan.html">실행 계획과 조인</a>).
+<pre><code class="language-csharp">// Dapper: @name 자리에 값이 따로 전달된다
+var c = await conn.QuerySingleOrDefaultAsync&lt;Character&gt;(
+    "SELECT character_id, name, level FROM characters WHERE name = @name",
+    new { name });</code></pre>
+      </li>
+      <li>
+        <strong>운영 DB에 외래 키를 걸지는 팀마다 다르다.</strong> 걸면 잘못된 참조를 DB가 막아 준다. 대신 INSERT마다 부모를 확인하는 비용과 락이 붙고, 테이블이 서로 다른 샤드에 있으면 걸 수조차 없다(<a href="scaling-db.html">DB 확장</a>). 대량 정리 작업도 순서를 맞춰야 한다. 그래서 아이템·로그처럼 쓰기가 많은 테이블은 외래 키 없이 응용이 검사하는 곳이 많다. 그 경우 무결성 책임은 서버 코드로 넘어오고, 고아 행을 찾는 점검 쿼리를 주기적으로 돌려야 한다.
+      </li>
+      <li>
+        <strong>캐릭터 삭제는 지우지 않고 표시만 하는 경우가 많다.</strong> 복구 요청, 거래 분쟁, 로그 추적 때문이다. <code>deleted_at</code> 컬럼을 두는 <strong>논리 삭제</strong>를 쓰면 이름 UNIQUE와 부딪친다. 지운 캐릭터의 이름을 새 캐릭터가 쓸 수 있어야 하기 때문이다. 살아 있는 행에만 UNIQUE를 거는 부분 인덱스로 푼다(<a href="index-kinds.html">인덱스의 종류와 설계</a>).
+      </li>
+      <li>
+        <strong>스키마 변경은 마이그레이션 도구로 순서를 남긴다.</strong> 큰 테이블의 ALTER는 테이블을 다시 쓰며 오래 잠글 수 있다. 무중단으로 바꾸는 절차는 운영 분야에서 다룬다(<a data-ref="operations/schema-migration">스키마 마이그레이션</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>DCL은 인가를 다룬다.</strong> 누구인지 확인하는 인증과 무엇을 할 수 있는지 정하는 인가는 다르다. 게임 서버 계정에는 필요한 테이블의 DML 권한만 주고, DDL 권한은 마이그레이션 계정에만 둔다.</li>
+      <li><strong>운영 DB에서 DELETE와 UPDATE는 트랜잭션 안에서 먼저 확인한다.</strong> WHERE 없이 실행된 UPDATE는 모든 행을 바꾼다. BEGIN 뒤에 영향받은 행 수를 보고 COMMIT한다.</li>
+      <li><strong><code>SELECT *</code>를 서버 코드에 두지 않는다.</strong> 컬럼이 추가되면 읽는 양이 늘고, 매핑 순서에 기대는 코드가 깨진다. 필요한 컬럼만 적는다.</li>
+      <li><strong>NULL을 허용할지는 처음에 정한다.</strong> 나중에 NOT NULL로 바꾸려면 기존 NULL을 모두 채워야 하고, 큰 테이블에서는 그 자체가 큰 작업이다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

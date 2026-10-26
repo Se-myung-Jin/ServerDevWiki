@@ -104,7 +104,7 @@ bool TryReadMessage(ref ReadOnlySequence&lt;byte&gt; buffer, out ushort type, ou
         <thead><tr><th>방법</th><th>어떻게</th><th>장점</th><th>단점</th></tr></thead>
         <tbody>
           <tr><td>길이를 앞에 붙인다</td><td>헤더에 본문 길이를 적는다</td><td>본문 내용과 상관없이 자를 수 있다. 다 오기 전에 필요한 크기를 안다</td><td>길이 값을 검사하지 않으면 위험하다</td></tr>
-          <tr><td>구분자를 넣는다</td><td>줄바꿈 같은 약속된 바이트로 끊는다</td><td>사람이 읽기 쉽다. 텍스트 프로토콜(HTTP/1.1 헤더, Redis)</td><td>본문에 구분자가 나오면 이스케이프해야 한다. 구분자를 찾으려고 전부 훑는다</td></tr>
+          <tr><td>구분자를 넣는다</td><td>줄바꿈 같은 약속된 바이트로 끊는다</td><td>사람이 읽기 쉽다. 텍스트 프로토콜(HTTP/1.1 헤더, <a data-ref="database/redis">Redis</a>)</td><td>본문에 구분자가 나오면 이스케이프해야 한다. 구분자를 찾으려고 전부 훑는다</td></tr>
           <tr><td>크기를 고정한다</td><td>모든 메시지를 같은 크기로</td><td>가장 단순하다</td><td>작은 메시지도 큰 칸을 다 쓴다. 가변 데이터를 담기 어렵다</td></tr>
         </tbody>
       </table>

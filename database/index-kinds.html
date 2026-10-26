@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>인덱스의 종류와 설계 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/index-kinds">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="index-basics.html">인덱스가 빠른 이유와 대가</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">클러스터드 인덱스</span>는 행 자체를 키 순서로 저장한다. 인덱스의 잎이 곧 데이터라서 찾으면 거기서 끝나고, 데이터를 두 가지 순서로 동시에 놓을 수 없으니 테이블당 하나뿐이다. <span class="blank">논클러스터드(보조) 인덱스</span>는 키와 행을 찾아갈 위치만 담는다. 여러 개 만들 수 있지만 찾은 뒤 원본을 한 번 더 읽어야 한다.
+    </p>
+    <p>
+      이 차이가 설계를 정한다. <a data-ref="database/sql-basics">기본 키</a>를 무엇으로 할지, 복합 인덱스의 컬럼을 어떤 순서로 둘지, 원본을 다시 읽지 않도록 컬럼을 인덱스에 얹을지가 모두 여기서 나온다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>행을 정렬하느냐 위치만 담느냐</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 740 260" role="img" aria-label="InnoDB에서 보조 인덱스 잎은 기본 키 값을 담고, 그 값으로 클러스터드 인덱스를 다시 내려가 행을 읽는다">
+        <defs><marker id="ik-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">보조 인덱스 (name)</text>
+        <rect class="f-box" x="80" y="40" width="120" height="30" rx="4"/>
+        <text class="f-text" x="140" y="60" text-anchor="middle">뿌리</text>
+        <line class="f-line" x1="140" y1="70" x2="140" y2="96" marker-end="url(#ik-a)"/>
+        <rect class="f-cell" x="20" y="100" width="80" height="30" rx="4"/><text class="f-text" x="60" y="120" text-anchor="middle">도윤 → 31</text>
+        <rect class="f-hit" x="104" y="100" width="80" height="30" rx="4"/><text class="f-text" x="144" y="120" text-anchor="middle">서하 → 17</text>
+        <rect class="f-cell" x="188" y="100" width="80" height="30" rx="4"/><text class="f-text" x="228" y="120" text-anchor="middle">아린 → 4</text>
+        <text class="f-sub" x="200" y="152">잎에는 이름과 기본 키 값만 있다</text>
+
+        <path class="f-line" d="M144,130 C150,205 540,205 556,162" fill="none" marker-end="url(#ik-a)"/>
+        <text class="f-sub" x="350" y="208" text-anchor="middle">17로 다시 찾는다</text>
+
+        <text class="f-strong" x="390" y="24">클러스터드 인덱스 (character_id)</text>
+        <rect class="f-box" x="390" y="44" width="120" height="30" rx="4"/>
+        <text class="f-text" x="450" y="64" text-anchor="middle">뿌리</text>
+        <line class="f-line" x1="450" y1="74" x2="520" y2="96" marker-end="url(#ik-a)"/>
+        <rect class="f-cell" x="390" y="100" width="110" height="56" rx="4"/>
+        <text class="f-text" x="445" y="122" text-anchor="middle">4 | 아린 | 60</text>
+        <text class="f-sub" x="445" y="142" text-anchor="middle">행 전체</text>
+        <rect class="f-hit" x="504" y="100" width="110" height="56" rx="4"/>
+        <text class="f-text" x="559" y="122" text-anchor="middle">17 | 서하 | 42</text>
+        <text class="f-sub" x="559" y="142" text-anchor="middle">행 전체</text>
+        <rect class="f-cell" x="618" y="100" width="110" height="56" rx="4"/>
+        <text class="f-text" x="673" y="122" text-anchor="middle">31 | 도윤 | 55</text>
+        <text class="f-sub" x="673" y="142" text-anchor="middle">행 전체</text>
+        <text class="f-sub" x="522" y="64">잎이 곧 데이터이고 키 순서로 놓여 있다</text>
+        <text class="f-sub" x="20" y="230">WHERE name = '서하' 는 보조 인덱스를 한 번, 클러스터드 인덱스를 한 번 내려간다</text>
+        <text class="f-sub" x="20" y="250">PostgreSQL은 클러스터드가 없고, 모든 인덱스 잎이 힙 테이블의 물리 위치(ctid)를 가리킨다</text>
+      </svg>
+      <figcaption>InnoDB에서 보조 인덱스로 찾으면 트리를 두 번 내려간다. 보조 인덱스 잎이 물리 주소 대신 기본 키를 담기 때문이다. 행이 페이지 분할로 옮겨 가도 보조 인덱스를 고치지 않아도 되는 대신, 기본 키가 길면 모든 보조 인덱스가 함께 커진다.</figcaption>
+    </figure>
+    <div class="table-scroll"><table>
+      <thead><tr><th>엔진</th><th>테이블 저장 방식</th><th>보조 인덱스 잎에 든 것</th></tr></thead>
+      <tbody>
+        <tr><td>MySQL InnoDB</td><td>늘 기본 키로 클러스터드. 기본 키가 없으면 NOT NULL UNIQUE 인덱스를, 그것도 없으면 숨은 6바이트 행 ID를 쓴다</td><td>기본 키 값</td></tr>
+        <tr><td>SQL Server</td><td>클러스터드 인덱스를 고를 수 있다. 기본 키를 만들면 기본으로 클러스터드가 되지만 따로 지정할 수 있다. 없으면 힙</td><td>클러스터드 키, 힙이면 행 위치(RID)</td></tr>
+        <tr><td>PostgreSQL</td><td>모든 테이블이 힙이다. <code>CLUSTER</code>는 한 번 재정렬할 뿐 이후 삽입에는 유지되지 않는다</td><td>힙의 물리 위치(ctid)</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      범위 읽기에서 차이가 크다. 클러스터드 인덱스로 character_id 1000~2000을 읽으면 이웃한 페이지를 차례로 읽는다. 보조 인덱스로 같은 범위를 읽으면 잎은 이어져 있어도 가리키는 행은 테이블 곳곳에 흩어져 있다. 행마다 다른 페이지를 읽으러 간다.
+    </p>
+
+    <h3>무작위 키는 삽입 자리를 흩어 놓는다</h3>
+    <p>
+      클러스터드 인덱스는 키 순서대로 행을 놓으므로, 새 행이 들어갈 자리는 키 값이 정한다. 자동 증가 키라면 늘 맨 오른쪽 잎에 붙는다. 고치는 페이지가 하나라 버퍼 풀에 머물고, 꽉 차면 새 페이지를 이어 붙이면 된다.
+    </p>
+    <p>
+      무작위 UUID(v4)를 기본 키로 쓰면 새 행이 트리 아무 곳에나 들어간다. 그러면 세 가지가 나빠진다.
+    </p>
+    <ul>
+      <li>들어갈 페이지가 꽉 차 있으면 <strong>페이지 분할</strong>이 일어난다. 반쯤 빈 페이지 둘이 남아 공간이 늘어난다.</li>
+      <li>고치는 페이지가 매번 달라 버퍼 풀에 없는 페이지를 디스크에서 읽어 와야 한다. 테이블이 메모리보다 커지면 삽입 속도가 크게 떨어진다.</li>
+      <li>InnoDB에서는 16바이트 키가 모든 보조 인덱스에 복사된다.</li>
+    </ul>
+    <p>
+      해법은 순서가 있는 키다. 앞부분이 시각인 <strong>UUIDv7</strong>(RFC 9562)이나 <a data-ref="database/distributed-id">Snowflake</a> 계열 ID는 대체로 증가하므로 오른쪽 끝에 붙는다. 외부에 노출할 ID가 추측되면 안 된다면, 클러스터드 키는 순차 정수로 두고 무작위 공개 ID에 UNIQUE 보조 인덱스를 따로 건다. SQL Server의 <code>NEWSEQUENTIALID()</code>도 같은 목적이다. 다만 SQL Server는 uniqueidentifier를 마지막 바이트 묶음부터 비교하므로, C#에서 만든 UUIDv7을 그대로 넣으면 SQL Server 기준으로는 순서가 맞지 않는다. 엔진의 비교 순서에 맞춰 바이트를 배치해야 한다.
+    </p>
+    <p>
+      순차 키에도 약점은 있다. 모든 삽입이 오른쪽 끝 페이지 하나로 몰려 쓰기가 아주 많으면 그 페이지의 래치가 병목이 된다. SQL Server는 이것을 줄이려고 <code>OPTIMIZE_FOR_SEQUENTIAL_KEY</code> 옵션을 두었다.
+    </p>
+
+    <h3>복합 인덱스는 앞 컬럼부터 정렬된다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 740 200" role="img" aria-label="(guild_id, level) 인덱스는 guild_id로 먼저 묶이고 그 안에서 level 순으로 정렬된다">
+        <text class="f-strong" x="20" y="24">인덱스 (guild_id, level) 의 잎 순서</text>
+        <rect class="f-cell" x="20" y="40" width="80" height="30"/><text class="f-text" x="60" y="60" text-anchor="middle">3, 12</text>
+        <rect class="f-cell" x="100" y="40" width="80" height="30"/><text class="f-text" x="140" y="60" text-anchor="middle">3, 60</text>
+        <rect class="f-hit" x="180" y="40" width="80" height="30"/><text class="f-text" x="220" y="60" text-anchor="middle">7, 15</text>
+        <rect class="f-hit" x="260" y="40" width="80" height="30"/><text class="f-text" x="300" y="60" text-anchor="middle">7, 42</text>
+        <rect class="f-hit" x="340" y="40" width="80" height="30"/><text class="f-text" x="380" y="60" text-anchor="middle">7, 60</text>
+        <rect class="f-cell" x="420" y="40" width="80" height="30"/><text class="f-text" x="460" y="60" text-anchor="middle">9, 33</text>
+        <rect class="f-cell" x="500" y="40" width="80" height="30"/><text class="f-text" x="540" y="60" text-anchor="middle">9, 60</text>
+        <rect class="f-cell" x="580" y="40" width="80" height="30"/><text class="f-text" x="620" y="60" text-anchor="middle">12, 8</text>
+        <text class="f-sub" x="300" y="92" text-anchor="middle">guild_id = 7 은 붙어 있는 한 구간이고, 그 안은 level 순이다</text>
+        <rect class="f-miss" x="100" y="120" width="80" height="30"/><text class="f-on" x="140" y="140" text-anchor="middle">3, 60</text>
+        <rect class="f-miss" x="340" y="120" width="80" height="30"/><text class="f-on" x="380" y="140" text-anchor="middle">7, 60</text>
+        <rect class="f-miss" x="500" y="120" width="80" height="30"/><text class="f-on" x="540" y="140" text-anchor="middle">9, 60</text>
+        <text class="f-sub" x="300" y="172" text-anchor="middle">level = 60 만 주면 맞는 행이 곳곳에 흩어져 있어 범위를 좁히지 못한다</text>
+      </svg>
+      <figcaption>전화번호부가 성으로 먼저 정렬되고 같은 성 안에서 이름으로 정렬되는 것과 같다. 성 없이 이름만으로는 펼칠 자리를 정할 수 없다.</figcaption>
+    </figure>
+    <p>
+      여기서 규칙 셋이 나온다.
+    </p>
+    <ul>
+      <li><strong>왼쪽 접두사만 쓸 수 있다.</strong> (a, b, c) 인덱스는 a, (a, b), (a, b, c) 조건에 쓰인다. b나 c만으로는 범위를 좁히지 못한다. MySQL 8.0의 스킵 스캔이나 PostgreSQL처럼 인덱스 전체를 훑는 경우가 있지만, a의 종류가 적을 때만 쓸 만하다.</li>
+      <li><strong>범위 조건 뒤의 컬럼은 정렬 효과를 잃는다.</strong> <code>a = 1 AND b &gt; 10 ORDER BY c</code>라면 b 구간 안에서 c는 정렬돼 있지 않다.</li>
+      <li><strong>그래서 순서는 등호 → 정렬 → 범위다.</strong> 등호는 구간을 한 점으로 좁혀 그 뒤 컬럼의 정렬을 그대로 남긴다. 범위는 구간을 열어 뒤를 흩는다. <code>WHERE guild_id = ? AND level &gt;= ? ORDER BY last_login</code>이라면 정렬을 피하는 (guild_id, last_login, level)과, 범위로 많이 거르는 (guild_id, level, last_login) 가운데 데이터 분포를 보고 고른다.</li>
+    </ul>
+
+    <h3>커버링 인덱스는 원본을 읽지 않는다</h3>
+    <p>
+      쿼리에 필요한 컬럼이 모두 인덱스 안에 있으면 원본 행을 읽으러 가지 않는다. 이것을 <span class="blank">커버링 인덱스</span>라 한다. 보조 인덱스의 약점인 두 번째 읽기가 사라진다. InnoDB 보조 인덱스에는 기본 키가 늘 들어 있으므로 기본 키 컬럼은 따로 넣지 않아도 커버된다.
+    </p>
+<pre><code class="language-sql">-- 캐릭터 목록 화면: 이름, 레벨, 직업만 필요하다
+-- SQL Server, PostgreSQL 11+: 검색에 쓰지 않는 컬럼은 INCLUDE 로 잎에만 둔다
+CREATE INDEX ix_char_account ON characters (account_id) INCLUDE (name, level, class_id);
+
+-- MySQL 은 INCLUDE 가 없어 키 컬럼으로 덧붙인다
+CREATE INDEX ix_char_account ON characters (account_id, name, level, class_id);</code></pre>
+    <p>
+      INCLUDE 컬럼은 중간 노드에 올라가지 않으므로 트리가 덜 커진다. <a data-ref="database/query-plan">실행 계획</a>에서 MySQL은 <code>Using index</code>, PostgreSQL은 <code>Index Only Scan</code>, SQL Server는 Key Lookup이 사라진 것으로 확인한다. PostgreSQL의 Index Only Scan은 가시성 맵이 최신이어야 원본을 건너뛴다. VACUUM이 밀려 있으면 이름만 Index Only이고 힙을 계속 읽는다.
+    </p>
+
+    <h3>특수한 인덱스</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>종류</th><th>무엇인가</th><th>엔진</th></tr></thead>
+      <tbody>
+        <tr><td>부분(필터) 인덱스</td><td>조건을 만족하는 행만 담는다. <code>WHERE deleted_at IS NULL</code></td><td>PostgreSQL, SQL Server(필터 인덱스). MySQL은 없다</td></tr>
+        <tr><td>함수(식) 인덱스</td><td>컬럼이 아니라 식의 결과로 정렬한다. <code>(lower(email))</code></td><td>PostgreSQL, MySQL 8.0.13+. SQL Server는 계산 열에 인덱스</td></tr>
+        <tr><td>해시 인덱스</td><td>등호 전용. 범위와 정렬 불가</td><td>PostgreSQL. InnoDB는 사용자가 만들 수 없고 내부 적응형 해시만 있다</td></tr>
+        <tr><td>전문 검색 인덱스</td><td>단어 단위 역인덱스. <code>LIKE '%검사%'</code> 대신</td><td>세 엔진 모두. 한국어는 형태소 분석기 설정이 따로 필요하다</td></tr>
+        <tr><td>GIN, GiST, BRIN</td><td>배열·JSON, 공간, 정렬된 큰 테이블의 블록 범위 요약</td><td>PostgreSQL</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>선택 기준</h2>
+    <h3>무엇을 클러스터드 키로 둘 것인가</h3>
+    <ul>
+      <li><strong>짧고</strong> 바뀌지 않는 값. InnoDB에서는 모든 보조 인덱스에 복사된다.</li>
+      <li><strong>대체로 증가하는</strong> 값. 삽입이 오른쪽 끝에 몰려 분할과 무작위 읽기가 줄어든다.</li>
+      <li><strong>범위로 자주 읽는</strong> 순서. 한 캐릭터의 아이템을 늘 함께 읽는다면 (character_id, item_uid)를 클러스터드로 두는 것도 방법이다. 한 캐릭터의 아이템이 이웃한 페이지에 모인다.</li>
+    </ul>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>인벤토리는 (character_id, slot) 순서로 묶는다.</strong> 로그인할 때 "이 캐릭터의 아이템 전부"를 읽고, 이동할 때 "이 캐릭터의 이 칸"을 찾는다. 둘 다 character_id가 등호로 앞에 온다. 같은 칸에 두 아이템이 있으면 안 되므로 이 조합에 UNIQUE를 걸면 동시에 같은 칸으로 옮기는 버그를 DB가 막아 준다.
+<pre><code class="language-sql">CREATE UNIQUE INDEX ux_items_slot ON items (character_id, slot);</code></pre>
+      </li>
+      <li>
+        <strong>랭킹 조회는 점수 내림차순 인덱스로 상위 N개만 읽는다.</strong> <code>ORDER BY score DESC LIMIT 100</code>은 (score DESC) 인덱스가 있으면 앞쪽 100개만 읽고 멈춘다. 다만 "내 순위가 몇 등인가"는 내 위까지 전부 세야 해서 인덱스로도 비싸다. 이 부분은 캐시의 <a data-ref="database/redis">정렬 집합</a>이나 주기적인 순위 스냅샷으로 푼다(<a href="caching.html">DB 앞의 캐시</a>).
+      </li>
+      <li>
+        <strong>로그 테이블은 시간으로 파티션을 나눈다.</strong> 날짜별이나 월별 파티션으로 나누면 "어제 이 캐릭터의 거래"는 해당 파티션만 읽고, 보관 기한이 지난 데이터는 DELETE 대신 파티션을 통째로 떼어 낸다. 수억 행을 DELETE하는 것보다 훨씬 싸고 로그도 거의 남기지 않는다(<a href="scaling-db.html">DB 확장</a>).
+      </li>
+      <li>
+        <strong>논리 삭제한 캐릭터는 이름 UNIQUE에서 빼야 한다.</strong> PostgreSQL과 SQL Server는 부분 인덱스로 살아 있는 행에만 UNIQUE를 건다. MySQL은 부분 인덱스가 없으므로, 삭제할 때 이름을 바꿔 두거나 살아 있을 때만 값이 있는 생성 컬럼에 UNIQUE를 건다.
+<pre><code class="language-sql">-- PostgreSQL
+CREATE UNIQUE INDEX ux_char_name_alive ON characters (name) WHERE deleted_at IS NULL;</code></pre>
+      </li>
+      <li>
+        <strong>EF Core를 쓰면 마이그레이션이 만드는 인덱스를 확인한다.</strong> 외래 키마다 인덱스가 자동으로 생기고, 복합 인덱스 순서는 직접 지정해야 한다. 생성된 SQL을 리뷰 대상에 넣는다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>클러스터드 키를 나중에 바꾸면 테이블 전체를 다시 쓴다.</strong> 처음 정할 때 신중해야 한다.</li>
+      <li><strong>"PK = 클러스터드"는 엔진마다 다르다.</strong> InnoDB는 늘 그렇고, SQL Server는 기본값일 뿐이고, PostgreSQL에는 클러스터드가 없다.</li>
+      <li><strong>복합 인덱스를 컬럼마다 따로 만든 단일 인덱스로 대신할 수 없다.</strong> 엔진이 둘을 합쳐 쓰는 경우가 있어도 복합 인덱스 하나보다 느리다.</li>
+      <li><strong>인덱스에 컬럼을 많이 얹으면 커버링은 되지만 쓰기가 무거워진다.</strong> 가장 자주 도는 쿼리에만 쓴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

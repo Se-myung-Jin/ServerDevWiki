@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>로그와 지속성 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/durability-wal">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../operating-system/file-system.html">파일 시스템</a> · <a href="transaction.html">트랜잭션과 ACID</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      DB는 커밋할 때 고친 데이터 페이지를 디스크에 내리지 않는다. 바뀐 내용을 <strong>로그</strong>에 이어 쓰고, 그 로그만 확실히 내린 뒤 커밋 응답을 준다. 데이터 페이지는 메모리(버퍼 풀)에 고친 채로 두었다가 나중에 모아서 내린다. 이 규칙이 <span class="blank">WAL(Write-Ahead Logging)</span>이다. 이름 그대로 데이터 페이지보다 그 페이지를 바꾼 로그가 <strong>먼저</strong> 디스크에 닿아야 한다.
+    </p>
+    <p>
+      빠른 이유는 둘이다. 흩어진 여러 페이지를 제자리에서 고치는 임의 쓰기 대신 로그 끝에 이어 쓰는 순차 쓰기 하나로 바뀐다. 그리고 커밋마다 데이터 페이지를 기다리지 않는다. 죽었다 살아나면 로그를 읽어 커밋된 것은 마저 반영하고 커밋되지 않은 것은 되돌린다. 그래서 로그가 원자성과 지속성을 함께 만든다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>로그가 먼저 닿고, 페이지는 나중에 따라간다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 300" role="img" aria-label="커밋은 로그를 이어 쓰고 fsync한 뒤 응답한다. 버퍼 풀의 더티 페이지는 체크포인트 때 데이터 파일로 흩어져 내려간다">
+        <defs><marker id="wal-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="40" width="130" height="44" rx="6"/>
+        <text class="f-text" x="85" y="67" text-anchor="middle">COMMIT</text>
+
+        <line class="f-line" x1="150" y1="62" x2="218" y2="62" marker-end="url(#wal-a)"/>
+        <text class="f-strong" x="224" y="28">로그 버퍼 → 로그 파일(순차)</text>
+        <rect class="f-hit" x="224" y="40" width="56" height="44" rx="3"/>
+        <rect class="f-hit" x="284" y="40" width="56" height="44" rx="3"/>
+        <rect class="f-hit" x="344" y="40" width="56" height="44" rx="3"/>
+        <rect class="f-miss" x="404" y="40" width="56" height="44" rx="3"/>
+        <text class="f-on" x="432" y="67" text-anchor="middle">새 기록</text>
+        <line class="f-line" x1="460" y1="62" x2="528" y2="62" marker-end="url(#wal-a)"/>
+        <text class="f-sub" x="494" y="52" text-anchor="middle">fsync</text>
+        <rect class="f-box" x="534" y="40" width="206" height="44" rx="6"/>
+        <text class="f-text" x="637" y="67" text-anchor="middle">커밋 응답</text>
+        <text class="f-sub" x="224" y="104">커밋이 기다리는 것은 이 한 줄뿐이다</text>
+
+        <text class="f-strong" x="20" y="150">버퍼 풀(메모리)</text>
+        <rect class="f-cell2" x="20" y="162" width="70" height="40" rx="3"/>
+        <rect class="f-hit" x="94" y="162" width="70" height="40" rx="3"/>
+        <text class="f-text" x="129" y="187" text-anchor="middle">더티</text>
+        <rect class="f-cell2" x="168" y="162" width="70" height="40" rx="3"/>
+        <rect class="f-hit" x="242" y="162" width="70" height="40" rx="3"/>
+        <text class="f-text" x="277" y="187" text-anchor="middle">더티</text>
+        <rect class="f-hit" x="316" y="162" width="70" height="40" rx="3"/>
+        <text class="f-text" x="351" y="187" text-anchor="middle">더티</text>
+
+        <line class="f-line f-dash" x1="386" y1="182" x2="528" y2="182" marker-end="url(#wal-a)"/>
+        <text class="f-sub" x="457" y="172" text-anchor="middle">체크포인트·백그라운드</text>
+        <text class="f-strong" x="534" y="150">데이터 파일(임의 위치)</text>
+        <rect class="f-cell2" x="534" y="162" width="44" height="40" rx="3"/>
+        <rect class="f-cell2" x="582" y="162" width="44" height="40" rx="3"/>
+        <rect class="f-cell2" x="630" y="162" width="44" height="40" rx="3"/>
+        <rect class="f-cell2" x="678" y="162" width="62" height="40" rx="3"/>
+        <text class="f-sub" x="534" y="222">나중에, 모아서, 흩어진 자리로</text>
+
+        <line class="f-inval" x1="20" y1="250" x2="740" y2="250"/>
+        <text class="f-sub" x="20" y="276">규칙: 페이지를 데이터 파일에 내리기 전에, 그 페이지를 바꾼 로그가 먼저 디스크에 있어야 한다</text>
+      </svg>
+      <figcaption>위 줄이 커밋의 길이고 아래 줄은 커밋과 떨어져 돈다. 죽으면 버퍼 풀의 더티 페이지는 사라지지만, 그 내용을 만든 로그가 디스크에 있으니 다시 만들 수 있다.</figcaption>
+    </figure>
+    <p>
+      로그에는 두 종류의 정보가 필요하다. 커밋됐는데 페이지가 아직 안 내려간 것을 다시 만드는 <strong>redo</strong>, 커밋되지 않았는데 페이지가 이미 내려간 것을 되돌리는 <strong>undo</strong>다. 버퍼 풀은 커밋 전 페이지도 공간이 모자라면 내릴 수 있기 때문에 undo가 필요하다. 엔진마다 담는 방식이 다르다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>redo</th><th>되돌리기</th></tr></thead>
+        <tbody>
+          <tr><td>InnoDB(MySQL)</td><td>redo 로그(<code>#innodb_redo</code>)</td><td>undo 로그. <a data-ref="database/isolation-mvcc">MVCC</a>의 옛 버전 읽기에도 쓴다</td></tr>
+          <tr><td>PostgreSQL</td><td>WAL(<code>pg_wal</code>)</td><td>undo가 따로 없다. 옛 행 버전이 테이블에 남아 있고, 트랜잭션 상태 기록(커밋 로그)이 "이 트랜잭션은 중단됐다"고 표시하면 그 버전이 안 보일 뿐이다</td></tr>
+          <tr><td>SQL Server</td><td colspan="2">트랜잭션 로그 하나에 redo와 undo 정보를 함께 담는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>체크포인트가 로그의 길이를 끊는다</h3>
+    <p>
+      로그만 계속 쌓으면 두 가지가 문제다. 로그 파일이 끝없이 커지고, 죽었다 살아날 때 처음부터 다 재생해야 한다. 그래서 주기적으로 더티 페이지를 데이터 파일에 내리고 "이 지점 앞의 변경은 모두 데이터 파일에 있다"는 표시를 남긴다. 이것이 <strong>체크포인트</strong>다. 그 앞의 로그는 복구에 필요 없으므로 지우거나 재사용한다.
+    </p>
+    <p>
+      간격이 맞바꿈이다. 짧으면 복구가 빨리 끝나지만 평소에 페이지를 자주 내려 디스크가 바쁘다. 길면 평소엔 조용하지만 복구가 오래 걸리고, 체크포인트 순간에 쓰기가 몰린다. PostgreSQL은 <code>checkpoint_timeout</code>(기본 5분)과 <code>max_wal_size</code>(기본 1GB) 중 먼저 닿는 쪽에서 체크포인트를 하고, <code>checkpoint_completion_target</code>으로 그 쓰기를 다음 체크포인트까지 흩는다. InnoDB는 멈추지 않고 조금씩 내리는 퍼지 체크포인트를 쓰며, redo 로그 크기(<code>innodb_redo_log_capacity</code>, 8.0.30부터)가 사실상 간격을 정한다. redo 로그가 차면 더티 페이지를 급히 내리느라 쓰기가 멈칫한다.
+    </p>
+
+    <h3>복구는 정해진 순서로 돈다</h3>
+    <ol>
+      <li><strong>마지막 체크포인트를 찾는다.</strong> 거기서부터 로그를 읽는다.</li>
+      <li><strong>redo: 로그를 앞으로 재생한다.</strong> 커밋 여부와 관계없이 로그에 있는 변경을 페이지에 다시 적용해, 죽기 직전 상태를 그대로 만든다. 페이지마다 마지막으로 반영된 로그 번호(LSN)가 있어 이미 반영된 것은 건너뛴다.</li>
+      <li><strong>undo: 끝나지 않은 트랜잭션을 되돌린다.</strong> InnoDB는 undo 로그로 되돌리고, 이 일은 서버가 연결을 받기 시작한 뒤에도 뒤에서 이어진다. PostgreSQL은 그 트랜잭션을 중단으로 표시하는 것으로 끝난다.</li>
+    </ol>
+    <p>
+      반쯤 쓰인 페이지(torn page)는 로그로도 못 고친다. 8KB나 16KB 페이지를 쓰는 도중 전원이 나가면 앞쪽만 새 값인 페이지가 남는다. PostgreSQL은 체크포인트 뒤 처음 고치는 페이지를 통째로 WAL에 적고(<code>full_page_writes</code>), InnoDB는 페이지를 한 번 다른 곳에 먼저 쓰는 더블라이트 버퍼로 이것을 막는다.
+    </p>
+
+    <h3>그룹 커밋은 fsync 한 번을 나눠 쓴다</h3>
+    <p>
+      로그를 확실히 내리는 <code>fsync</code>는 비싸다. 디스크가 쓰기를 마쳤다고 답할 때까지 기다리기 때문이다(<a href="../operating-system/file-system.html">파일 시스템</a>). 트랜잭션마다 한 번씩 하면 초당 커밋 수가 디스크의 fsync 횟수에 묶인다. <strong>그룹 커밋</strong>은 비슷한 시점에 커밋하려는 트랜잭션의 로그를 모아 한 번에 내린다. fsync 한 번에 수십 건이 함께 끝난다.
+    </p>
+    <p>
+      동시에 커밋하는 것이 많을 때만 효과가 있다. 커밋이 하나씩 띄엄띄엄 오면 모을 것이 없다. 일부러 조금 기다렸다 모으는 설정(PostgreSQL <code>commit_delay</code>, MySQL <code>binlog_group_commit_sync_delay</code>)은 부하가 낮으면 기다린 시간만 남는다.
+    </p>
+    <p>
+      fsync가 끝났다고 해도 디스크가 거짓말을 할 수 있다. 쓰기 캐시를 가진 디스크가 정전 보호 없이 "다 썼다"고 답하면, 전원이 나갈 때 그 캐시와 함께 커밋이 사라진다. 서버용 SSD는 정전 보호 회로(PLP)로 이것을 막는다. 클라우드 블록 스토리지는 제공자가 이 보장을 대신 진다.
+    </p>
+
+    <h3>설정은 무엇을 잃을지를 정한다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>설정</th><th>커밋 때 하는 일</th><th>잃을 수 있는 것</th></tr></thead>
+        <tbody>
+          <tr><td>InnoDB <code>innodb_flush_log_at_trx_commit=1</code>(기본)</td><td>로그를 쓰고 fsync까지</td><td>없다</td></tr>
+          <tr><td><code>=2</code></td><td>OS에 쓰기만 하고 fsync는 1초마다</td><td>mysqld만 죽으면 없다. OS가 죽거나 전원이 나가면 마지막 1초쯤</td></tr>
+          <tr><td><code>=0</code></td><td>쓰기와 fsync 모두 1초마다</td><td>mysqld만 죽어도 마지막 1초쯤</td></tr>
+          <tr><td>MySQL <code>sync_binlog=1</code>(기본)</td><td>바이너리 로그도 커밋마다 fsync</td><td>없다. 0이나 N이면 복제본·복원에 쓰는 binlog가 redo보다 뒤처질 수 있다</td></tr>
+          <tr><td>PostgreSQL <code>synchronous_commit=off</code></td><td>WAL을 기다리지 않고 응답</td><td>마지막 수백 ms의 커밋. DB는 깨지지 않고, 그 커밋들이 없었던 것처럼 된다</td></tr>
+          <tr><td>PostgreSQL <code>fsync=off</code></td><td>fsync 자체를 안 한다</td><td>전원이 나가면 <strong>DB 파일이 깨질 수 있다</strong>. 운영에서 쓰면 안 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      "최근 커밋 몇 개를 잃는다"와 "파일이 깨진다"는 다른 종류의 손실이다. 앞쪽은 살아난 DB가 조금 과거로 돌아간 것처럼 일관되고, 뒤쪽은 복구 자체가 안 될 수 있다. PostgreSQL의 <code>synchronous_commit</code>은 트랜잭션마다 바꿀 수 있어서, 잃어도 되는 쓰기만 골라 빠르게 할 수 있다.
+    </p>
+<pre><code class="language-sql">-- PostgreSQL: 이 트랜잭션만 커밋을 기다리지 않는다
+BEGIN;
+SET LOCAL synchronous_commit = off;
+INSERT INTO play_log (account_id, action, at) VALUES (42, 'enter_dungeon', now());
+COMMIT;</code></pre>
+
+    <h3>복제도 이 로그를 쓴다</h3>
+    <p>
+      로그에 모든 변경이 순서대로 있으니, 그 로그를 다른 서버로 보내 재생하면 복제본이 된다. PostgreSQL 스트리밍 복제는 WAL을 그대로 보내고 받는 쪽이 복구하듯 재생한다. MySQL은 redo가 아니라 SQL 수준의 변경을 담은 바이너리 로그(binlog)를 보낸다. 그래서 MySQL은 커밋 하나에 redo와 binlog 두 로그를 맞춰 내리는 내부 2단계 커밋을 한다. 복제 지연과 페일오버는 <a href="scaling-db.html">DB 확장</a>에서 다룬다.
+     같은 로그를 백업 위에 이어 재생하면 원하는 시점으로 되돌릴 수 있다(<a href="backup-recovery.html">백업과 복구</a>).</p>
+    <blockquote>여기서 로그는 커밋을 지키는 DB 내부의 로그다. 메시지 브로커가 재생하려고 쌓아 두는 이벤트 로그나, 서버가 남기는 텍스트 로그와 이름만 같다.</blockquote>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>데이터</th><th>고를 것</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>결제, 유료 재화, 거래</td><td>커밋마다 fsync. 기본값 그대로</td><td>결제사 기록과 어긋나면 복구할 근거가 없다</td></tr>
+          <tr><td>캐릭터 진행도, 인벤토리</td><td>대개 기본값. 쓰기가 병목이면 쓰기 횟수를 줄이는 쪽을 먼저 본다</td><td>잃으면 롤백 민원이 된다. 설정보다 저장 주기와 묶음으로 조절한다</td></tr>
+          <tr><td>행동 로그, 통계</td><td>트랜잭션 단위로 동기 커밋을 끈다</td><td>몇 백 ms를 잃어도 되고, DB는 깨지지 않는다</td></tr>
+          <tr><td>다시 만들 수 있는 집계, 임시 테이블</td><td>PostgreSQL <code>UNLOGGED</code> 테이블 등</td><td>WAL을 안 쓰는 대신 비정상 종료 뒤 비워진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>쓰기 폭주는 설정보다 저장 방식으로 막는다.</strong> 몬스터를 잡을 때마다 경험치를 UPDATE하면 커밋 수가 접속자 수에 비례해 는다. 세션 서버가 메모리에서 값을 들고 있다가 주기적으로, 또는 중요한 순간에 모아서 저장하면 커밋 수 자체가 준다(<a href="caching.html">DB 앞의 캐시</a>). 그룹 커밋도 이렇게 묶인 쓰기에서 잘 듣는다.
+      </li>
+      <li>
+        <strong>로그 DB와 게임 DB를 나눈다.</strong> 행동 로그처럼 쓰기만 많고 잃어도 되는 데이터를 계정 DB와 같은 인스턴스에 두면 같은 WAL과 같은 디스크를 두고 다툰다. 로그 쪽을 떼어 다른 지속성 설정을 주면 게임 DB의 커밋 지연이 안정된다.
+      </li>
+      <li>
+        <strong>점검 뒤 첫 기동이 느린 이유를 안다.</strong> 비정상 종료 뒤 DB는 마지막 체크포인트부터 redo를 재생해야 연결을 받는다. 로그가 길수록 오래 걸린다. 서버 점검 전에는 정상 종료로 체크포인트를 끝내 두면 기동이 빠르다.
+      </li>
+      <li>
+        <strong>C# 쪽에서 커밋 결과를 확인한다.</strong> <code>CommitAsync</code>가 예외 없이 끝나야 지속성이 보장된 것이다. 커밋 도중 연결이 끊겨 결과를 모르는 경우가 있으므로, 재화 지급처럼 중요한 쓰기는 요청 ID를 같이 저장해 재시도 때 이미 들어갔는지 확인한다(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>로그와 데이터 파일 두 번 쓰는데도 빠르다.</strong> 로그는 순차라 싸고, 데이터 파일 쓰기는 모아서 커밋 밖에서 한다. 같은 페이지를 여러 번 고쳐도 내릴 때는 한 번이다.</li>
+      <li><strong>벤치마크 숫자에 속지 않는다.</strong> 지속성 설정을 내리면 커밋이 몇 배 빨라 보인다. 같은 설정으로 비교했는지, 디스크가 fsync를 실제로 지키는지부터 확인한다.</li>
+      <li><strong>DB 밖의 쓰기는 이 보장 밖이다.</strong> 커밋은 DB 안의 변경만 지킨다. 같은 처리 안에서 보낸 패킷, 외부 결제 API 호출, 다른 저장소 쓰기는 롤백되지 않는다. 묶어야 하면 <a data-ref="architecture/transactional-outbox">트랜잭셔널 아웃박스</a> 같은 장치가 필요하다.</li>
+      <li><strong>WAL 디스크가 차면 DB가 멈춘다.</strong> 복제본이 끊겨 복제 슬롯이 로그를 붙잡고 있거나 아카이빙이 실패하면, 지우지 못한 로그가 쌓여 디스크를 채운다. 로그 디스크 사용량을 지표로 본다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

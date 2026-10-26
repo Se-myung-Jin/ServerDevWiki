@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>실행 계획과 조인 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/query-plan">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="index-basics.html">인덱스가 빠른 이유와 대가</a> · <a href="index-kinds.html">인덱스의 종류와 설계</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      SQL은 무엇을 원하는지만 적는다. 어떻게 가져올지는 <strong>옵티마이저</strong>가 정한다. 어느 인덱스를 탈지, 어느 테이블을 먼저 읽을지, 두 테이블을 어떤 방식으로 붙일지를 고른 결과가 <span class="blank">실행 계획</span>이다. 옵티마이저는 통계로 각 후보의 비용을 추정하고 가장 싸 보이는 것을 고른다.
+    </p>
+    <p>
+      그래서 튜닝은 계획을 읽는 데서 시작한다. 가장 먼저 볼 것은 <strong>추정 행 수와 실제 행 수의 차이</strong>다. 크게 벌어진 곳이 있으면 옵티마이저가 틀린 숫자로 판단했다는 뜻이고, 그 위에 쌓인 방식 선택도 함께 틀어진다. 그때는 인덱스를 더 만들기 전에 통계부터 의심한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>옵티마이저는 통계로 비용을 추정한다</h3>
+    <p>
+      DB는 테이블마다 통계를 들고 있다. 행 수, 컬럼의 고유값 개수, 값이 어떻게 퍼져 있는지 보여 주는 히스토그램 같은 것이다. 옵티마이저는 이것으로 조건 하나가 전체의 몇 퍼센트를 고를지(<strong>선택도</strong>)를 계산하고, 단계마다 몇 행이 나올지 추정한다. 행 수가 정해지면 읽을 페이지 수와 비교 횟수가 정해지고, 그것이 비용이 된다.
+    </p>
+    <p>
+      비용은 시간 단위가 아니다. 옵티마이저 안에서 후보끼리 비교하려고 쓰는 상대값이다. 그래서 계획의 비용 숫자는 같은 쿼리의 다른 계획과 견줄 때만 의미가 있다.
+    </p>
+
+    <h3>EXPLAIN은 추정을, ANALYZE는 실제를 보여 준다</h3>
+    <p>
+      쿼리 앞에 <code>EXPLAIN</code>을 붙이면 고른 계획이 나온다. 여기 적힌 행 수는 모두 추정치다. 실제 행 수와 걸린 시간을 보려면 쿼리를 정말 실행해야 하고, 그것이 <code>EXPLAIN ANALYZE</code> 계열이다. 이름은 엔진마다 다르다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>추정 계획</th><th>실제 실행 결과</th></tr></thead>
+        <tbody>
+          <tr><td>MySQL</td><td><code>EXPLAIN</code>, <code>EXPLAIN FORMAT=TREE</code></td><td><code>EXPLAIN ANALYZE</code>(8.0.18부터)</td></tr>
+          <tr><td>PostgreSQL</td><td><code>EXPLAIN</code></td><td><code>EXPLAIN (ANALYZE, BUFFERS)</code>. 읽은 페이지 수까지 나온다</td></tr>
+          <tr><td>SQL Server</td><td>예상 실행 계획(<code>SET SHOWPLAN_XML ON</code>)</td><td>실제 실행 계획(<code>SET STATISTICS XML ON</code>), 지난 실행은 쿼리 저장소(Query Store)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      계획은 트리다. 가장 안쪽, 가장 아래의 노드가 먼저 실행되어 위로 행을 올려 보낸다. 그래서 안쪽에서 바깥으로 읽으며 추정과 실제가 처음 크게 갈라지는 노드를 찾는다. 그 위의 선택은 모두 틀린 행 수를 믿고 내린 것이다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 270" role="img" aria-label="실행 계획 트리에서 안쪽의 인덱스 범위 스캔이 추정 12행, 실제 48,000행으로 크게 빗나가고 그 위의 중첩 루프 조인 선택이 함께 틀어진다">
+        <defs><marker id="qp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="270" y="16" width="220" height="44" rx="6"/>
+        <text class="f-text" x="380" y="36" text-anchor="middle">정렬 (ORDER BY level)</text>
+        <text class="f-sub" x="380" y="52" text-anchor="middle">추정 12 · 실제 48,000</text>
+
+        <line class="f-line" x1="380" y1="104" x2="380" y2="64" marker-end="url(#qp-a)"/>
+        <rect class="f-hit" x="250" y="106" width="260" height="44" rx="6"/>
+        <text class="f-text" x="380" y="126" text-anchor="middle">중첩 루프 조인</text>
+        <text class="f-sub" x="380" y="142" text-anchor="middle">추정 12 · 실제 48,000 → 방식 선택이 틀어졌다</text>
+
+        <line class="f-line" x1="250" y1="196" x2="320" y2="154" marker-end="url(#qp-a)"/>
+        <line class="f-line" x1="510" y1="196" x2="440" y2="154" marker-end="url(#qp-a)"/>
+        <rect class="f-miss" x="40" y="198" width="300" height="44" rx="6"/>
+        <text class="f-on" x="190" y="218" text-anchor="middle">인덱스 범위 스캔: guild_member</text>
+        <text class="f-on" style="font-weight:400;font-size:11px" x="190" y="234" text-anchor="middle">추정 12 · 실제 48,000 ← 여기서 처음 갈라진다</text>
+        <rect class="f-box" x="420" y="198" width="300" height="44" rx="6"/>
+        <text class="f-text" x="570" y="218" text-anchor="middle">PK 조회: character</text>
+        <text class="f-sub" x="570" y="234" text-anchor="middle">바깥 행마다 한 번 · 48,000번 반복</text>
+        <text class="f-sub" x="380" y="264" text-anchor="middle">아래에서 위로 행이 올라간다. 읽을 때도 아래에서 위로 읽는다</text>
+      </svg>
+      <figcaption>옵티마이저는 길드원이 12명쯤이라고 보고 중첩 루프를 골랐다. 실제로는 48,000행이라 안쪽 PK 조회가 48,000번 돌았다. 고칠 곳은 조인이 아니라 맨 아래 추정이다.</figcaption>
+    </figure>
+    <blockquote>
+      <code>EXPLAIN ANALYZE</code>는 쿼리를 정말 실행한다. <code>UPDATE</code>나 <code>DELETE</code>에 붙이면 데이터가 바뀐다. 갱신 문장의 계획을 볼 때는 <code>BEGIN</code>으로 열고 확인한 뒤 <code>ROLLBACK</code>한다.
+    </blockquote>
+
+    <h3>계획에서 무엇을 보나</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>볼 것</th><th>왜 보나</th><th>엔진에서 보이는 모양</th></tr></thead>
+        <tbody>
+          <tr><td>추정 행 수와 실제 행 수</td><td>열 배 넘게 벌어지면 옵티마이저가 틀린 정보로 골랐다</td><td>PostgreSQL <code>rows=</code>와 <code>actual ... rows=</code>, SQL Server 예상 행 수와 실제 행 수</td></tr>
+          <tr><td>접근 방식</td><td>전체 스캔인지, 인덱스를 어떻게 탔는지</td><td>MySQL <code>type</code>: <code>const</code>, <code>eq_ref</code>, <code>ref</code>, <code>range</code>, <code>index</code>, <code>ALL</code>. 뒤로 갈수록 넓게 읽고 <code>ALL</code>이 전체 스캔이다</td></tr>
+          <tr><td>조인 방식과 순서</td><td>어느 쪽을 먼저 읽고 어떻게 붙이는지</td><td>Nested Loop, Hash Join, Merge Join</td></tr>
+          <tr><td>정렬과 임시 테이블</td><td>메모리에서 끝나는지, 디스크로 넘쳤는지</td><td>MySQL <code>Using filesort</code>, <code>Using temporary</code>, PostgreSQL <code>Sort Method: external merge</code></td></tr>
+          <tr><td>읽은 페이지 수</td><td>같은 행 수라도 얼마나 흩어 읽었는지</td><td>PostgreSQL <code>BUFFERS</code>, SQL Server <code>SET STATISTICS IO ON</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>전체 스캔이 항상 나쁜 것은 아니다</h3>
+    <p>
+      인덱스로 찾은 행은 원본 페이지를 하나씩 찾아가야 한다(커버링 인덱스가 아니라면). 이 왕복은 흩어진 읽기다. 조건이 전체의 상당 부분을 고르면 흩어진 읽기를 수만 번 하느니 테이블을 처음부터 순서대로 한 번 읽는 편이 싸다. 테이블이 몇 페이지밖에 안 되면 더 그렇다.
+    </p>
+    <p>
+      그래서 전체 스캔이 보여도 바로 문제로 보지 않는다. 행 수와 함께 본다. 수백만 행 중 몇 행만 고르는데 전체를 읽고 있으면 그때가 문제다. 인덱스가 없거나, 있는데 못 쓰는 모양으로 조건을 썼거나(<a data-ref="database/index-basics">인덱스가 빠른 이유와 대가</a>), 추정이 틀린 것이다.
+    </p>
+
+    <h3>두 테이블을 붙이는 방식은 셋이다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 250" role="img" aria-label="중첩 루프는 바깥 행마다 안쪽 인덱스를 찾고, 해시 조인은 작은 쪽으로 해시 표를 만든 뒤 큰 쪽을 한 번 읽어 맞추고, 머지 조인은 정렬된 양쪽을 나란히 앞으로 읽는다">
+        <defs><marker id="qp-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="26">중첩 루프</text>
+        <rect class="f-cell2" x="20" y="44" width="72" height="28" rx="4"/>
+        <text class="f-text" x="56" y="63" text-anchor="middle">바깥 1</text>
+        <rect class="f-cell2" x="20" y="80" width="72" height="28" rx="4"/>
+        <text class="f-text" x="56" y="99" text-anchor="middle">바깥 2</text>
+        <rect class="f-cell2" x="20" y="116" width="72" height="28" rx="4"/>
+        <text class="f-text" x="56" y="135" text-anchor="middle">바깥 3</text>
+        <rect class="f-hit" x="148" y="44" width="80" height="100" rx="6"/>
+        <text class="f-text" x="188" y="90" text-anchor="middle">안쪽</text>
+        <text class="f-sub" x="188" y="108" text-anchor="middle">인덱스</text>
+        <line class="f-line" x1="92" y1="58" x2="144" y2="74" marker-end="url(#qp-b)"/>
+        <line class="f-line" x1="92" y1="94" x2="144" y2="94" marker-end="url(#qp-b)"/>
+        <line class="f-line" x1="92" y1="130" x2="144" y2="114" marker-end="url(#qp-b)"/>
+        <text class="f-sub" x="20" y="178">바깥 행마다 안쪽을 찾는다</text>
+        <text class="f-sub" x="20" y="198">바깥이 작고 안쪽에</text>
+        <text class="f-sub" x="20" y="216">인덱스가 있을 때</text>
+
+        <text class="f-strong" x="268" y="26">해시 조인</text>
+        <rect class="f-cell2" x="268" y="44" width="80" height="28" rx="4"/>
+        <text class="f-text" x="308" y="63" text-anchor="middle">작은 쪽</text>
+        <line class="f-line" x1="308" y1="72" x2="308" y2="94" marker-end="url(#qp-b)"/>
+        <rect class="f-hit" x="268" y="98" width="80" height="46" rx="6"/>
+        <text class="f-text" x="308" y="126" text-anchor="middle">해시 표</text>
+        <rect class="f-cell2" x="404" y="44" width="80" height="28" rx="4"/>
+        <text class="f-text" x="444" y="63" text-anchor="middle">큰 쪽 1</text>
+        <rect class="f-cell2" x="404" y="80" width="80" height="28" rx="4"/>
+        <text class="f-text" x="444" y="99" text-anchor="middle">큰 쪽 2</text>
+        <rect class="f-cell2" x="404" y="116" width="80" height="28" rx="4"/>
+        <text class="f-text" x="444" y="135" text-anchor="middle">큰 쪽 3</text>
+        <line class="f-line" x1="404" y1="58" x2="352" y2="112" marker-end="url(#qp-b)"/>
+        <line class="f-line" x1="404" y1="94" x2="352" y2="120" marker-end="url(#qp-b)"/>
+        <line class="f-line" x1="404" y1="130" x2="352" y2="128" marker-end="url(#qp-b)"/>
+        <text class="f-sub" x="268" y="178">작은 쪽으로 표를 만들고</text>
+        <text class="f-sub" x="268" y="198">큰 쪽을 한 번 읽어 맞춘다</text>
+        <text class="f-sub" x="268" y="216">등호 조건, 양쪽이 클 때</text>
+
+        <text class="f-strong" x="540" y="26">머지 조인</text>
+        <rect class="f-cell2" x="540" y="44" width="56" height="26" rx="4"/>
+        <text class="f-text" x="568" y="62" text-anchor="middle">1</text>
+        <rect class="f-cell2" x="540" y="76" width="56" height="26" rx="4"/>
+        <text class="f-text" x="568" y="94" text-anchor="middle">3</text>
+        <rect class="f-cell2" x="540" y="108" width="56" height="26" rx="4"/>
+        <text class="f-text" x="568" y="126" text-anchor="middle">5</text>
+        <rect class="f-cell2" x="540" y="140" width="56" height="26" rx="4"/>
+        <text class="f-text" x="568" y="158" text-anchor="middle">8</text>
+        <rect class="f-cell2" x="670" y="44" width="56" height="26" rx="4"/>
+        <text class="f-text" x="698" y="62" text-anchor="middle">1</text>
+        <rect class="f-cell2" x="670" y="76" width="56" height="26" rx="4"/>
+        <text class="f-text" x="698" y="94" text-anchor="middle">5</text>
+        <rect class="f-cell2" x="670" y="108" width="56" height="26" rx="4"/>
+        <text class="f-text" x="698" y="126" text-anchor="middle">5</text>
+        <rect class="f-cell2" x="670" y="140" width="56" height="26" rx="4"/>
+        <text class="f-text" x="698" y="158" text-anchor="middle">9</text>
+        <line class="f-line f-dash" x1="596" y1="57" x2="670" y2="57"/>
+        <line class="f-line f-dash" x1="596" y1="121" x2="670" y2="89"/>
+        <line class="f-line f-dash" x1="596" y1="121" x2="670" y2="121"/>
+        <text class="f-sub" x="540" y="196">정렬된 양쪽을 나란히</text>
+        <text class="f-sub" x="540" y="214">앞으로만 읽는다</text>
+        <text class="f-sub" x="540" y="232">이미 정렬됐거나 범위 조건</text>
+      </svg>
+      <figcaption>중첩 루프만 바깥 행 수만큼 안쪽을 다시 찾는다. 해시와 머지는 양쪽을 한 번씩 읽는 대신 해시 표를 만들거나 정렬해 두는 준비가 든다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>어떻게</th><th>유리할 때</th><th>약점</th></tr></thead>
+        <tbody>
+          <tr><td>중첩 루프</td><td>바깥 행마다 안쪽에서 맞는 행을 찾는다</td><td>바깥이 작고 안쪽 조인 컬럼에 인덱스가 있을 때</td><td>바깥이 크면 안쪽 조회가 그 횟수만큼 반복된다</td></tr>
+          <tr><td>해시 조인</td><td>작은 쪽으로 해시 표를 만들고, 큰 쪽을 읽으며 표에서 찾는다</td><td>양쪽이 크고 등호 조건일 때. 인덱스가 없어도 된다</td><td>등호에만 쓴다. 표가 작업 메모리를 넘치면 디스크로 나눠 내려가 느려진다</td></tr>
+          <tr><td>머지 조인</td><td>조인 키로 정렬된 양쪽을 나란히 앞으로 읽는다</td><td>양쪽이 이미 정렬돼 있을 때(인덱스 순서). 범위 조건, 정렬된 결과가 필요할 때</td><td>정렬이 안 돼 있으면 정렬 비용이 먼저 든다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      엔진마다 갖춘 방식이 다르다. PostgreSQL과 SQL Server는 셋을 다 쓴다. MySQL은 오랫동안 중첩 루프 계열(인덱스가 없을 때는 블록 중첩 루프)만 있었고, 8.0.18부터 해시 조인이 들어와 8.0.20부터 블록 중첩 루프를 대신한다. 머지 조인은 아직 없다. 해시 표 크기는 PostgreSQL이 <code>work_mem</code>, MySQL이 <code>join_buffer_size</code>, SQL Server가 쿼리별 메모리 허가(memory grant)로 정한다.
+    </p>
+
+    <h3>추정이 빗나가는 이유</h3>
+    <ul>
+      <li><strong>통계가 낡았다.</strong> 대량으로 넣거나 지운 뒤 통계가 아직 갱신되지 않았다. 패치 점검 때 이벤트 아이템을 수백만 건 넣은 직후가 대표적이다. MySQL은 <code>ANALYZE TABLE</code>, PostgreSQL은 <code>ANALYZE</code>, SQL Server는 <code>UPDATE STATISTICS</code>로 다시 만든다.</li>
+      <li><strong>컬럼끼리 얽혀 있다.</strong> 옵티마이저는 기본적으로 조건마다 선택도를 따로 구해 곱한다. "서버 = 3"과 "길드 = 용맹" 처럼 서로 묶인 컬럼이면 곱한 값이 실제보다 훨씬 작아진다. PostgreSQL은 <code>CREATE STATISTICS</code>로 컬럼 묶음 통계를 만들 수 있다.</li>
+      <li><strong>값이 한쪽에 쏠려 있다.</strong> 대부분의 길드는 수십 명인데 한 길드만 수만 명이면, 평균으로 본 추정은 그 길드에서 크게 빗나간다. 히스토그램이 이 쏠림을 얼마나 잡느냐에 달렸다.</li>
+      <li><strong>계획 시점에 값을 모른다.</strong> 컬럼을 함수로 감쌌거나, 변수나 매개변수로 들어온 값은 계획을 세울 때 정확히 알 수 없다. 그러면 평균적인 추정으로 대신한다.</li>
+    </ul>
+
+    <h3>플랜 캐시와 파라미터 스니핑</h3>
+    <p>
+      계획을 세우는 것도 비용이다. 그래서 매개변수만 다른 같은 쿼리는 계획을 한 번 세워 다시 쓴다. SQL Server는 처음 컴파일할 때 들어온 매개변수 값을 보고(스니핑) 계획을 세워 캐시에 둔다. 처음 들어온 값이 작은 길드였으면 중첩 루프 계획이 캐시되고, 이후 수만 명짜리 길드에도 그 계획이 쓰인다. 어제까지 빠르던 쿼리가 재시작이나 통계 갱신으로 계획이 다시 만들어진 뒤 갑자기 느려지는 일이 이렇게 생긴다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>계획 재사용</th><th>대응</th></tr></thead>
+        <tbody>
+          <tr><td>SQL Server</td><td>처음 값으로 만든 계획을 캐시해 계속 쓴다</td><td><code>OPTION (RECOMPILE)</code>, <code>OPTIMIZE FOR</code>, 쿼리 저장소로 좋은 계획 고정. 2022부터는 매개변수 값 구간별로 계획을 여럿 두는 PSP 최적화가 있다</td></tr>
+          <tr><td>PostgreSQL</td><td>준비된 문장은 처음 다섯 번은 값마다 계획을 세우고, 그 뒤 일반 계획이 비싸지 않으면 일반 계획으로 바꾼다</td><td><code>plan_cache_mode</code>로 매번 값별 계획을 강제할 수 있다</td></tr>
+          <tr><td>MySQL</td><td>세션을 넘어 공유하는 플랜 캐시가 없고 실행마다 최적화한다</td><td>이 문제는 덜 겪는 대신 최적화 비용을 매번 낸다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>N+1 쿼리는 계획에 나오지 않는다</h3>
+    <p>
+      캐릭터 목록을 한 번 가져온 뒤, 캐릭터마다 장비를 따로 조회하면 쿼리가 1 + N번 나간다. 쿼리 하나하나는 PK 조회라 계획이 완벽하다. 그래서 실행 계획만 보면 찾을 수 없다. 느린 원인은 쿼리 한 개가 아니라 왕복 횟수다. ORM의 지연 로딩(lazy loading)이 켜져 있으면 코드에서 속성 하나를 읽을 때마다 쿼리가 나가 눈에 잘 띄지 않는다.
+    </p>
+<pre><code class="language-csharp">// N+1: 캐릭터마다 장비 조회가 한 번씩 더 나간다
+var chars = await db.Characters.Where(c =&gt; c.AccountId == accountId).ToListAsync(ct);
+foreach (var c in chars)
+    c.Equipment = await db.Equipment.Where(e =&gt; e.CharacterId == c.Id).ToListAsync(ct);
+
+// 조인 한 번으로 함께 가져온다
+var chars2 = await db.Characters
+    .Where(c =&gt; c.AccountId == accountId)
+    .Include(c =&gt; c.Equipment)
+    .AsSplitQuery()          // 컬렉션이 여럿이면 행이 곱으로 부푸는 것을 쿼리 나누기로 막는다
+    .ToListAsync(ct);</code></pre>
+    <p>
+      EF Core의 <code>Include</code>는 연관 데이터를 조인으로 함께 가져온다. 컬렉션 탐색을 여러 개 <code>Include</code>하면 결과 행이 곱으로 늘어나는데(데카르트 폭발), <code>AsSplitQuery</code>는 이것을 컬렉션마다 쿼리 하나로 나눠 피한다. 추적 끄기와 컴파일된 쿼리는 <a href="data-access.html">ORM과 저장 설계</a>에서 다룬다. 그래도 N+1과 달리 쿼리 수는 고정이다. N+1은 쿼리 로그에서 같은 모양의 쿼리가 줄줄이 찍히는 것으로 찾는다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <p>느린 쿼리를 만나면 다음 순서로 좁힌다.</p>
+    <ol>
+      <li><strong>쿼리 수부터 센다.</strong> 하나가 느린지, 많이 나가는지 먼저 가른다. 많이 나가면 N+1이나 캐시 문제다.</li>
+      <li><strong>실제 실행 계획을 본다.</strong> 추정과 실제가 처음 갈라지는 노드를 찾는다.</li>
+      <li><strong>갈라졌으면 통계를 갱신한다.</strong> 이것만으로 풀리는 경우가 적지 않다. 통계가 원인이면 인덱스를 아무리 만들어도 옵티마이저가 쓰지 않는다.</li>
+      <li><strong>인덱스를 확인한다.</strong> 없는지, 있는데 조건 모양 때문에 못 쓰는지, 복합 인덱스 컬럼 순서가 맞는지 본다(<a data-ref="database/index-kinds">인덱스의 종류와 설계</a>).</li>
+      <li><strong>쿼리를 고친다.</strong> 조건을 인덱스를 쓸 수 있는 모양으로 바꾸고, 서브쿼리를 조인으로 풀고, 필요한 컬럼만 고른다.</li>
+      <li><strong>힌트와 계획 고정은 마지막이다.</strong> 힌트는 옵티마이저의 판단을 고정한다. 데이터가 변하면 그 고정이 틀린 선택이 되는데, 아무도 알아차리지 못한다. 쓴다면 이유를 주석으로 남긴다.</li>
+    </ol>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>슬로우 쿼리 로그를 늘 켜 둔다.</strong> MySQL은 <code>slow_query_log</code>와 <code>long_query_time</code>, PostgreSQL은 <code>log_min_duration_statement</code>와 쿼리별 누적 통계 <code>pg_stat_statements</code>, SQL Server는 쿼리 저장소가 있다. 한 번 느린 쿼리보다 자주 나가는 중간 속도 쿼리가 합계로는 더 큰 부하인 경우가 많으므로, 누적 시간 순으로도 본다.</li>
+      <li><strong>접속 피크에 터지는 쿼리가 따로 있다.</strong> 점검이 끝나고 수만 명이 한꺼번에 들어오면 로그인, 캐릭터 목록, 우편함 조회가 동시에 몰린다. 평소에는 가볍던 쿼리가 이때 커넥션 풀을 다 잡아먹는다(<a data-ref="database/scaling-db">DB 확장: 복제와 샤딩</a>). 피크 쿼리는 운영 데이터 크기로 미리 계획을 확인한다.</li>
+      <li><strong>패치 뒤 통계를 갱신한다.</strong> 대량 지급이나 테이블 정리로 분포가 바뀐 직후는 계획이 틀어지기 쉬운 때다. 점검 절차에 통계 갱신을 넣는다.</li>
+      <li><strong>ORM이 만든 SQL을 본다.</strong> EF Core는 <code>LogTo</code>나 로깅 설정으로 실제 SQL을 남길 수 있다. 코드만 봐서는 몇 번, 어떤 모양으로 나가는지 알 수 없다.</li>
+      <li><strong>DB가 매번 계산할 필요가 없는 것은 DB에서 뺀다.</strong> 전체 랭킹처럼 큰 정렬을 요청마다 돌리는 쿼리는 계획을 아무리 다듬어도 비싸다. 주기적으로 계산해 캐시에 두는 쪽이 맞다(<a data-ref="database/caching">DB 앞의 캐시</a>).</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>비용 숫자는 시간이 아니다.</strong> 같은 쿼리의 계획끼리 비교할 때만 쓴다.</li>
+      <li><strong>ANALYZE는 실행한다.</strong> 갱신 문장은 트랜잭션 안에서 보고 되돌린다. 운영 DB에서 무거운 쿼리에 붙이면 그 부하도 그대로 생긴다.</li>
+      <li><strong>개발 DB의 계획은 운영과 다르다.</strong> 데이터 양과 분포가 다르면 옵티마이저가 다르게 고른다. 운영에서 느린 쿼리는 운영 계획을 본다.</li>
+      <li><strong>계획은 바뀐다.</strong> 통계 갱신, 재시작, 버전 업그레이드, 데이터 증가로 같은 쿼리의 계획이 하루아침에 바뀔 수 있다. 쿼리 저장소나 누적 통계로 계획 변화를 추적한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

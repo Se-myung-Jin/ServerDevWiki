@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>트랜잭션과 ACID · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/transaction">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="sql-basics.html">SQL과 키</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">트랜잭션</span>은 여러 문장을 하나의 작업 단위로 묶은 구간이다. <code>BEGIN</code>으로 열고 <code>COMMIT</code>이나 <code>ROLLBACK</code>으로 닫는다. 그 안의 변경은 전부 반영되거나 전부 없던 일이 된다. 아이템을 넘기는 거래에서 "내 인벤토리에서는 빠졌는데 상대에게는 안 들어간" 상태가 남지 않게 하는 장치다.
+    </p>
+    <p>
+      ACID 네 글자를 외우는 것보다 <strong>각 성질을 무엇이 만드는지</strong> 아는 것이 중요하다. 원자성과 지속성은 로그가, 격리성은 락이나 MVCC가 만든다. 일관성만 DB가 혼자 지켜 주지 못한다. 무엇이 올바른 상태인지는 제약 조건과 애플리케이션 코드가 정한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>열고 닫는 법과 오토커밋</h3>
+<pre><code class="language-sql">BEGIN;  -- SQL Server는 BEGIN TRANSACTION
+UPDATE inventory SET owner_id = 2002 WHERE item_id = 77 AND owner_id = 1001;
+UPDATE character  SET gold = gold + 500 WHERE id = 1001;
+UPDATE character  SET gold = gold - 500 WHERE id = 2002 AND gold &gt;= 500;
+INSERT INTO trade_log (trade_id, item_id, seller, buyer, price) VALUES ('t-9f3a', 77, 1001, 2002, 500);
+COMMIT; -- 문제가 있으면 ROLLBACK</code></pre>
+    <p>
+      트랜잭션을 명시하지 않으면 세 엔진 모두 <strong>오토커밋</strong>으로 돈다. 문장 하나가 끝날 때마다 바로 커밋된다. 위 거래를 <code>BEGIN</code> 없이 보내면 문장 네 개가 각자 확정되고, 세 번째에서 구매자 골드가 모자라도 앞의 두 문장은 이미 반영돼 있다. 위 예에서 조건부 <code>UPDATE</code>가 0행을 바꿨는지 애플리케이션이 확인하고 롤백하는 것까지가 트랜잭션을 쓰는 쪽의 몫이다.
+    </p>
+    <p>
+      오류가 났을 때의 동작은 엔진마다 다르다. 이 차이를 모르면 "오류가 났으니 다 롤백됐겠지"라는 가정이 깨진다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>트랜잭션 안에서 문장 하나가 실패하면</th></tr></thead>
+        <tbody>
+          <tr><td>MySQL InnoDB</td><td>대부분 <strong>그 문장만</strong> 되돌리고 트랜잭션은 계속 열려 있다. 그대로 <code>COMMIT</code>하면 앞의 성공한 문장은 확정된다. <a data-ref="operating-system/deadlock">데드락</a>은 예외로 트랜잭션 전체를 롤백한다</td></tr>
+          <tr><td>PostgreSQL</td><td>트랜잭션 전체가 실패 상태가 된다. 이후 문장은 모두 거부되고 <code>ROLLBACK</code>만 받는다</td></tr>
+          <tr><td>SQL Server</td><td>기본(<code>XACT_ABORT OFF</code>)에서는 오류 종류에 따라 문장만 되돌리기도 한다. <code>SET XACT_ABORT ON</code>이면 실행 중 오류에서 전체를 롤백한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>네 성질은 서로 다른 장치가 만든다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="원자성과 지속성은 로그가, 격리성은 락이나 MVCC가 만들고, 일관성은 제약 조건과 애플리케이션 규칙이 함께 만든다">
+        <defs><marker id="tx-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="20" width="150" height="40" rx="6"/>
+        <text class="f-text" x="95" y="45" text-anchor="middle">원자성</text>
+        <rect class="f-box" x="20" y="72" width="150" height="40" rx="6"/>
+        <text class="f-text" x="95" y="97" text-anchor="middle">지속성</text>
+        <rect class="f-box" x="20" y="124" width="150" height="40" rx="6"/>
+        <text class="f-text" x="95" y="149" text-anchor="middle">격리성</text>
+        <rect class="f-box" x="20" y="176" width="150" height="40" rx="6"/>
+        <text class="f-text" x="95" y="201" text-anchor="middle">일관성</text>
+
+        <rect class="f-hit" x="270" y="34" width="210" height="64" rx="6"/>
+        <text class="f-text" x="375" y="60" text-anchor="middle">로그</text>
+        <text class="f-sub" x="375" y="80" text-anchor="middle">되돌릴 정보 · 다시 할 정보</text>
+        <line class="f-line" x1="170" y1="40" x2="266" y2="56" marker-end="url(#tx-a)"/>
+        <line class="f-line" x1="170" y1="92" x2="266" y2="78" marker-end="url(#tx-a)"/>
+
+        <rect class="f-hit" x="270" y="124" width="210" height="40" rx="6"/>
+        <text class="f-text" x="375" y="149" text-anchor="middle">락 · MVCC</text>
+        <line class="f-line" x1="170" y1="144" x2="266" y2="144" marker-end="url(#tx-a)"/>
+
+        <rect class="f-cell2" x="270" y="176" width="210" height="40" rx="6"/>
+        <text class="f-text" x="375" y="201" text-anchor="middle">제약 조건 + 애플리케이션 규칙</text>
+        <line class="f-line f-dash" x1="170" y1="196" x2="266" y2="196" marker-end="url(#tx-a)"/>
+
+        <text class="f-sub" x="500" y="60">커밋 전에 로그를 디스크에 내린다</text>
+        <text class="f-sub" x="500" y="78">데이터 파일은 나중에 내린다</text>
+        <text class="f-sub" x="500" y="149">동시에 돌아도 혼자 돈 것처럼</text>
+        <text class="f-sub" x="500" y="192">"골드는 음수가 될 수 없다"는</text>
+        <text class="f-sub" x="500" y="210">사람이 정해 준다</text>
+      </svg>
+      <figcaption>일관성으로 가는 선만 점선이다. 나머지 셋은 DB가 기능으로 제공하지만, 일관성은 DB가 규칙을 모르면 지킬 수 없다. 나머지 셋은 그 규칙이 동시 실행과 장애 속에서도 깨지지 않게 돕는다.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>성질</th><th>보장하는 것</th><th>무엇이 만드나</th></tr></thead>
+        <tbody>
+          <tr><td>원자성(Atomicity)</td><td>전부 되거나 전부 안 된다</td><td>되돌릴 정보. InnoDB는 언두 로그에 옛 값을 남기고, PostgreSQL은 옛 행 버전이 테이블에 그대로 있어 실패한 트랜잭션의 새 버전을 보이지 않게 처리한다</td></tr>
+          <tr><td>일관성(Consistency)</td><td>규칙을 어긴 상태로 끝나지 않는다</td><td>기본 키, 외래 키, <code>CHECK</code>, <code>UNIQUE</code> 같은 제약 조건과 애플리케이션의 검사</td></tr>
+          <tr><td>격리성(Isolation)</td><td>동시에 도는 트랜잭션이 서로의 중간 상태를 보지 않는다</td><td>락 또는 MVCC. 얼마나 엄격할지는 <a data-ref="database/isolation-mvcc">격리 수준</a>으로 고른다</td></tr>
+          <tr><td>지속성(Durability)</td><td>커밋 응답을 받았으면 장애 뒤에도 남는다</td><td>커밋 응답 전에 redo 로그(WAL)를 디스크에 확실히 내린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      원자성과 지속성은 같은 로그 체계에서 나온다. 데이터 페이지를 고치기 전에 무엇을 바꿀지 로그에 먼저 적고, 커밋할 때는 로그만 디스크에 내린다. 데이터 파일은 나중에 천천히 내려도 된다. 장애 뒤에는 로그를 보고 커밋된 것은 다시 하고(redo), 커밋되지 않은 것은 되돌린다. 왜 이 방식이 빠르고 안전한지는 <a data-ref="database/durability-wal">로그와 지속성</a>에서 다룬다.
+    </p>
+
+    <h3>세이브포인트는 안쪽 일부만 되돌린다</h3>
+<pre><code class="language-sql">BEGIN;
+UPDATE character SET gold = gold - 1000 WHERE id = 1001;
+SAVEPOINT before_bonus;
+INSERT INTO mail (receiver, item_id) VALUES (1001, 501);  -- 우편함이 가득 차 실패
+ROLLBACK TO SAVEPOINT before_bonus;                     -- 우편만 취소
+COMMIT;                                                  -- 골드 차감은 확정</code></pre>
+    <p>
+      세이브포인트는 트랜잭션 안에 되돌아갈 지점을 찍어 둔다. 그 지점 뒤의 변경만 취소하고 트랜잭션은 이어 간다. 중첩 트랜잭션과는 다르다. 세이브포인트까지 되돌린 뒤에도 바깥 트랜잭션이 커밋돼야 무엇이든 확정된다. SQL Server는 <code>SAVE TRANSACTION</code>을 쓰고, 안에서 다시 부르는 <code>BEGIN TRANSACTION</code>은 새 트랜잭션이 아니라 <code>@@TRANCOUNT</code> 숫자만 올린다. 안쪽 <code>ROLLBACK</code>은 바깥까지 전부 되돌린다.
+    </p>
+
+    <h3>트랜잭션은 짧게 둔다</h3>
+    <p>
+      트랜잭션이 열려 있는 동안 비용이 계속 쌓인다.
+    </p>
+    <ul>
+      <li><strong>잡은 락을 계속 쥐고 있다.</strong> 같은 행을 원하는 다른 요청이 그동안 줄을 선다(<a data-ref="database/concurrency-control">동시성 제어와 데드락</a>).</li>
+      <li><strong>옛 버전을 치우지 못한다.</strong> MVCC는 열려 있는 가장 오래된 트랜잭션이 볼 수 있는 버전을 지우지 못한다. 몇 분짜리 트랜잭션 하나가 DB 전체의 정리를 막는다.</li>
+      <li><strong>커넥션을 붙잡는다.</strong> 트랜잭션 하나에 커넥션 하나가 묶인다. 열려 있는 트랜잭션이 많으면 풀이 바닥난다.</li>
+    </ul>
+    <p>
+      그래서 트랜잭션 안에서는 DB 일만 한다. 외부 HTTP 호출, 다른 서버의 응답 기다리기, 사용자 확인 기다리기는 트랜잭션 밖으로 뺀다. 필요한 값은 미리 읽고 계산해 두고, 트랜잭션은 쓰기만 짧게 묶는다.
+    </p>
+
+    <h3>DDL은 엔진마다 다르게 묶인다</h3>
+    <p>
+      MySQL에서 <code>CREATE TABLE</code>, <code>ALTER TABLE</code> 같은 DDL은 실행 직전에 열려 있던 트랜잭션을 암묵적으로 커밋하고 그 자체도 바로 확정된다. 롤백을 기대하고 실행하면 되돌릴 수 없다. PostgreSQL은 대부분의 DDL을 트랜잭션 안에서 실행하고 롤백할 수 있다. SQL Server도 대부분의 DDL이 트랜잭션에 묶인다. 스키마 변경 절차를 엔진마다 따로 확인해야 하는 이유다(<a data-ref="operations/schema-migration">스키마 마이그레이션</a>).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>주고받는 것은 한 트랜잭션에 넣는다.</strong> 거래는 양쪽 인벤토리와 골드, 거래 로그까지 한 트랜잭션이다. 우편 수령도 "우편 수령 표시"와 "아이템 지급"을 한 트랜잭션에 넣는다. 둘을 따로 커밋하면 사이에서 서버가 죽었을 때 우편은 남고 아이템도 받은 상태, 혹은 우편은 사라지고 아이템은 못 받은 상태가 된다.</li>
+      <li><strong>같은 요청이 두 번 와도 한 번만 지급한다.</strong> 클라이언트 재전송, 결제 콜백 재시도, 서버의 타임아웃 재시도로 같은 지급 요청이 두 번 올 수 있다. 롤백은 이것을 막아 주지 못한다. 거래 ID나 주문 ID를 유니크 키로 기록하고, 두 번째 삽입이 키 충돌로 실패하면 이미 처리된 요청으로 본다(<a data-ref="architecture/idempotent-consumer">멱등 소비자</a>).</li>
+      <li><strong>롤백은 DB 밖의 일을 되돌리지 않는다.</strong> 트랜잭션 안에서 다른 서버로 메시지를 보냈거나 클라이언트에 결과를 보냈다면, 롤백해도 그것은 이미 나갔다. 외부로 알리는 일은 커밋 뒤에 하고, 반드시 나가야 하는 알림은 같은 트랜잭션에 이벤트 행으로 적어 두었다가 따로 보낸다(<a data-ref="architecture/transactional-outbox">트랜잭셔널 아웃박스</a>).</li>
+      <li><strong>DB가 다르면 한 트랜잭션이 아니다.</strong> 게임 DB와 로그 DB, 서로 다른 샤드에 걸친 변경은 하나의 <code>COMMIT</code>으로 묶이지 않는다(<a data-ref="database/scaling-db">DB 확장: 복제와 샤딩</a>). 이때는 보상 단계를 둔 사가로 설계한다(<a data-ref="architecture/saga">사가</a>).</li>
+    </ul>
+    <p>C# 서버에서는 커넥션의 트랜잭션 객체를 직접 다루는 방식이 가장 예측하기 쉽다.</p>
+<pre><code class="language-csharp">await using var conn = new MySqlConnection(connString);
+await conn.OpenAsync(ct);
+await using var tx = await conn.BeginTransactionAsync(ct);
+
+int moved = await conn.ExecuteAsync(       // Dapper
+    "UPDATE inventory SET owner_id = @to WHERE item_id = @item AND owner_id = @from",
+    new { to, item, from }, tx);
+if (moved == 0) { await tx.RollbackAsync(ct); return TradeResult.ItemGone; }
+
+int paid = await conn.ExecuteAsync(
+    "UPDATE character SET gold = gold - @price WHERE id = @to AND gold &gt;= @price",
+    new { to, price }, tx);
+if (paid == 0) { await tx.RollbackAsync(ct); return TradeResult.NotEnoughGold; }
+
+await conn.ExecuteAsync("UPDATE character SET gold = gold + @price WHERE id = @from",
+    new { from, price }, tx);
+await tx.CommitAsync(ct);
+// 커밋하지 않고 tx가 Dispose되면 롤백된다</code></pre>
+    <ul>
+      <li><strong>모든 명령에 같은 트랜잭션을 넘긴다.</strong> 같은 커넥션이라도 명령에 트랜잭션을 지정하지 않으면 드라이버에 따라 오류가 나거나 의도와 다르게 동작한다.</li>
+      <li><strong><code>TransactionScope</code>는 async에서 옵션이 필요하다.</strong> <code>TransactionScopeAsyncFlowOption.Enabled</code>를 주지 않으면 <code>await</code> 뒤 다른 스레드로 이어질 때 앰비언트 트랜잭션이 따라가지 않는다(<a href="../csharp/async-basics.html">async/await 기초</a>). 스코프 안에서 커넥션을 둘 이상 열면 분산 트랜잭션으로 승격하려 하는데, .NET에서는 7부터 Windows에서만 지원한다. 서버 코드에서는 피한다.</li>
+      <li><strong>EF Core의 <code>SaveChanges</code>는 그 자체로 트랜잭션이다.</strong> 한 번의 <code>SaveChanges</code>로 모은 변경은 한 트랜잭션에 들어간다. 여러 번 나눠 부르면서 묶으려면 <code>Database.BeginTransactionAsync</code>로 감싼다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>MySQL에서 오류는 트랜잭션을 끝내지 않는다.</strong> 실패한 문장만 되돌아가고 트랜잭션은 열린 채다. 예외를 잡았으면 반드시 롤백한다.</li>
+      <li><strong>열어 두고 잊은 트랜잭션이 가장 위험하다.</strong> 예외 경로에서 커밋도 롤백도 하지 않은 커넥션이 풀로 돌아가면, 락과 옛 버전이 그대로 남는다. <code>using</code>으로 수명을 묶는다.</li>
+      <li><strong>트랜잭션은 같은 요청의 두 번 처리를 막지 않는다.</strong> 원자성은 한 번의 실행 안에서만 성립한다. 재시도와 중복 요청은 유니크 키로 막는다.</li>
+      <li><strong>격리성은 켜고 끄는 값이 아니다.</strong> 트랜잭션을 썼다고 다른 트랜잭션의 간섭이 모두 사라지지 않는다. 무엇이 허용되는지는 격리 수준이 정한다(<a data-ref="database/isolation-mvcc">격리 수준과 MVCC</a>).</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>동시성 제어와 데드락 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/concurrency-control">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="isolation-mvcc.html">격리 수준과 MVCC</a> · <a href="../operating-system/deadlock.html">데드락</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      격리 수준을 고른 뒤에도 남는 문제가 있다. 값을 <strong>읽고, 검사하고, 쓰는</strong> 사이에 다른 요청이 끼어들면 아이템이 복제되고 골드가 사라진다. 이것을 막는 방법은 네 가지다. 한 문장으로 끝내기, 미리 잠그기(<span class="blank">비관적 락</span>), 쓸 때 확인하기(<span class="blank">낙관적 락</span>), 유니크 제약으로 두 번 기록 막기다.
+    </p>
+    <p>
+      비관적이냐 낙관적이냐를 가르는 것은 <strong>실제 충돌 빈도</strong>다. 잦으면 미리 잠그고, 드물면 확인만 한다. 락을 쓰면 DB 데드락도 생긴다. DB는 트랜잭션을 롤백할 수 있으므로 데드락을 탐지해 한쪽을 되돌린다. 그래서 DB를 쓰는 코드는 데드락 오류를 받으면 다시 하는 경로를 갖춰야 한다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>읽고 검사하고 쓰는 사이가 위험하다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="두 거래 요청이 모두 아이템이 있다를 읽은 뒤 각자 지우고 상대에게 넣어 아이템이 둘이 된다">
+        <defs><marker id="cc-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="56">요청 1</text>
+        <text class="f-strong" x="20" y="146">요청 2</text>
+        <line class="f-line" x1="90" y1="52" x2="740" y2="52" marker-end="url(#cc-a)"/>
+        <line class="f-line" x1="90" y1="142" x2="740" y2="142" marker-end="url(#cc-a)"/>
+        <rect class="f-cell2" x="110" y="32" width="140" height="40" rx="6"/>
+        <text class="f-text" x="180" y="57" text-anchor="middle">있나? → 있다</text>
+        <rect class="f-cell2" x="160" y="122" width="140" height="40" rx="6"/>
+        <text class="f-text" x="230" y="147" text-anchor="middle">있나? → 있다</text>
+        <rect class="f-box" x="360" y="32" width="120" height="40" rx="6"/>
+        <text class="f-text" x="420" y="57" text-anchor="middle">지운다</text>
+        <rect class="f-box" x="400" y="122" width="120" height="40" rx="6"/>
+        <text class="f-text" x="460" y="147" text-anchor="middle">지운다</text>
+        <rect class="f-miss" x="540" y="32" width="160" height="40" rx="6"/>
+        <text class="f-on" x="620" y="57" text-anchor="middle">상대 A에게 넣는다</text>
+        <rect class="f-miss" x="570" y="122" width="160" height="40" rx="6"/>
+        <text class="f-on" x="650" y="147" text-anchor="middle">상대 B에게 넣는다</text>
+        <line class="f-line f-dash" x1="300" y1="20" x2="300" y2="176"/>
+        <line class="f-line f-dash" x1="356" y1="20" x2="356" y2="176"/>
+        <text class="f-sub" x="328" y="196" text-anchor="middle">이 틈</text>
+        <text class="f-sub" x="20" y="226">둘 다 보장 없는 "있다"를 근거로 다음을 결정했다. 아이템 하나가 둘이 된다</text>
+      </svg>
+      <figcaption>요청 2가 읽을 때는 아직 요청 1이 지우기 전이다. "지운다"가 없는 행을 지우며 조용히 0행으로 끝나도, 그 결과를 확인하지 않으면 넣기는 그대로 실행된다.</figcaption>
+    </figure>
+    <p>
+      같은 구조가 골드에서도 생긴다. 1000을 읽고, 100을 빼서 900을 쓰는 동안 다른 요청이 같은 1000을 읽고 200을 빼서 800을 쓰면, 한쪽의 차감이 사라진다(갱신 손실). 격리 수준이 무엇이든, 읽은 값이 쓸 때까지 그대로라는 보장이 없으면 생긴다.
+    </p>
+
+    <h3>막는 방법은 네 가지다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>대가</th></tr></thead>
+        <tbody>
+          <tr><td>한 문장으로 끝낸다</td><td>검사 조건을 <code>UPDATE</code>의 <code>WHERE</code>에 넣고 바뀐 행 수를 본다</td><td>복잡한 로직은 한 문장에 담기 어렵다</td></tr>
+          <tr><td>비관적 락</td><td>읽을 때 <code>SELECT ... FOR UPDATE</code>로 잠근다</td><td>다른 요청이 커밋까지 기다린다</td></tr>
+          <tr><td>낙관적 락</td><td>버전을 함께 읽고, 쓸 때 버전이 그대로인지 조건으로 건다</td><td>충돌하면 실패하고 처음부터 다시 한다</td></tr>
+          <tr><td>유니크 제약</td><td>거래 ID 같은 키를 유니크로 두어 두 번 기록되면 DB가 거부한다</td><td>거부를 오류로 받아 "이미 처리됨"으로 해석해야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      앞의 셋은 끼어들 틈을 없애고, 유니크 제약은 틈이 남았을 때 결과가 두 번 기록되는 것을 막는다. 대신 쓰는 것이 아니라 뒤에 하나 더 두는 안전망이다.
+    </p>
+
+    <h3>한 문장으로 끝내는 것이 가장 싸다</h3>
+<pre><code class="language-sql">-- 골드가 충분할 때만 뺀다. 바뀐 행이 0이면 모자란 것이다
+UPDATE character SET gold = gold - 100 WHERE id = 1001 AND gold &gt;= 100;
+
+-- 아이템이 아직 내 것일 때만 옮긴다. 0행이면 이미 누가 가져갔다
+UPDATE inventory SET owner_id = 2002 WHERE item_id = 77 AND owner_id = 1001;</code></pre>
+    <p>
+      DB가 행을 고칠 때는 그 행의 최신 값을 잠그고 조건을 다시 확인한다. 그래서 읽기와 쓰기 사이의 틈이 아예 없다. 조건이 안 맞으면 바뀐 행 수 0이 돌아오고, 그것으로 실패를 안다. 락을 따로 잡을 필요도, 재시도도 없다. 바뀐 뒤의 값이 필요하면 PostgreSQL은 <code>RETURNING</code>, SQL Server는 <code>OUTPUT</code>으로 같은 문장에서 받는다.
+    </p>
+
+    <h3>비관적 락: 읽을 때 잠근다</h3>
+<pre><code class="language-sql">BEGIN;
+SELECT gold, level FROM character WHERE id = 1001 FOR UPDATE;  -- 커밋까지 다른 쓰기와 잠그는 읽기를 막는다
+-- 애플리케이션에서 조건을 검사하고 계산한다
+UPDATE character SET gold = 900, level = 31 WHERE id = 1001;
+COMMIT;</code></pre>
+    <p>
+      <code>FOR UPDATE</code>는 읽은 행에 쓰기 락을 걸고 커밋이나 롤백까지 쥔다. 다른 트랜잭션의 <code>UPDATE</code>와 <code>FOR UPDATE</code>는 그동안 기다린다. MVCC 엔진에서 잠그지 않는 보통 조회는 기다리지 않고 옛 버전을 읽는다. SQL Server는 <code>WITH (UPDLOCK, ROWLOCK)</code> 힌트로 같은 일을 한다.
+    </p>
+    <p>
+      기다리지 않는 선택지도 있다. MySQL 8.0과 PostgreSQL은 <code>FOR UPDATE NOWAIT</code>(잠겨 있으면 바로 오류)와 <code>FOR UPDATE SKIP LOCKED</code>(잠긴 행은 건너뛴다)를 지원한다. 여러 서버가 한 테이블에서 할 일을 나눠 가져가는 작업 큐에 <code>SKIP LOCKED</code>가 잘 맞는다.
+    </p>
+    <p>
+      <code>FOR UPDATE</code>는 트랜잭션 안에서만 의미가 있다. 오토커밋 상태에서 보내면 문장이 끝나는 순간 커밋되며 락도 풀린다.
+    </p>
+
+    <h3>낙관적 락: 쓸 때 확인한다</h3>
+<pre><code class="language-sql">SELECT gold, version FROM character WHERE id = 1001;            -- gold = 1000, version = 7
+UPDATE character SET gold = 900, version = version + 1
+ WHERE id = 1001 AND version = 7;                                -- 0행이면 그사이 누가 고쳤다</code></pre>
+    <p>
+      잠그지 않고 진행하되, 행에 버전 번호를 두고 쓸 때 "내가 읽은 버전 그대로일 때만"이라는 조건을 붙인다. 사이에 누가 고쳤으면 버전이 올라가 있어 0행이 바뀐다. 그러면 다시 읽고 처음부터 계산한다. EF Core에서는 버전 속성에 <code>[ConcurrencyCheck]</code>를 붙이거나 SQL Server의 <code>rowversion</code>을 <code>IsRowVersion()</code>으로 잡는다. 충돌하면 <code>SaveChanges</code>가 <code>DbUpdateConcurrencyException</code>을 던진다.
+    </p>
+<pre><code class="language-csharp">for (int attempt = 0; ; attempt++)
+{
+    var ch = await db.Characters.SingleAsync(c =&gt; c.Id == id, ct);
+    if (ch.Gold &lt; cost) return Result.NotEnoughGold;
+    ch.Gold -= cost;                                  // Version 속성은 [ConcurrencyCheck]
+    ch.Version++;
+    try { await db.SaveChangesAsync(ct); return Result.Ok; }
+    catch (DbUpdateConcurrencyException) when (attempt &lt; 3)
+    {
+        db.ChangeTracker.Clear();                      // 낡은 엔티티를 버리고 다시 읽는다
+        await Task.Delay(Random.Shared.Next(5, 20) * (attempt + 1), ct);
+    }
+}</code></pre>
+
+    <h3>충돌 빈도로 고른다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>비관적 락</th><th>낙관적 락</th></tr></thead>
+        <tbody>
+          <tr><td>전제</td><td>자주 부딪힌다</td><td>드물게 부딪힌다</td></tr>
+          <tr><td>언제 아나</td><td>잠글 때 기다린다</td><td>쓸 때 0행으로 안다</td></tr>
+          <tr><td>충돌하면</td><td>기다렸다 이어 간다</td><td>버리고 처음부터 다시 한다</td></tr>
+          <tr><td>잘못 고르면</td><td>충돌이 없는데도 매번 락 비용과 대기를 낸다</td><td>충돌이 잦으면 재시도가 몰려 아무도 끝내지 못한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      한 시스템 안에서도 데이터마다 다르게 고른다. 본인만 고치는 설정과 프로필은 거의 부딪히지 않으니 낙관적으로 둔다. 경매 입찰이나 한정 수량 상품처럼 한 행에 요청이 몰리는 것은 비관적으로 가거나, 아예 한 문장 조건부 갱신으로 만든다. 판단은 감이 아니라 지표로 한다. 낙관적 락의 재시도 비율, 비관적 락의 대기 시간을 남겨 두고 본다.
+    </p>
+
+    <h3>DB 데드락은 탐지하고 되돌린다</h3>
+    <p>
+      락을 쓰면 두 트랜잭션이 서로가 쥔 행을 기다리는 고리가 생길 수 있다. 운영체제는 중간까지 한 일을 되돌릴 수단이 없어 순서 고정으로 예방하지만(<a href="../operating-system/deadlock.html">데드락</a>), DB는 트랜잭션을 롤백할 수 있다. 그래서 생기게 두고 찾아서 푼다. DB는 누가 어느 락을 기다리는지 전부 알고 있으므로, 대기 관계를 그래프로 보고 고리를 찾으면 한쪽을 <strong>희생자</strong>로 골라 롤백한다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>탐지</th><th>희생자가 받는 오류</th><th>락 대기 한도</th></tr></thead>
+        <tbody>
+          <tr><td>MySQL InnoDB</td><td>락을 기다리기 시작할 때 바로 검사(<code>innodb_deadlock_detect</code>). 되돌릴 양이 적은 쪽을 고른다</td><td>1213</td><td><code>innodb_lock_wait_timeout</code> 기본 50초. 넘으면 1205 오류인데, 기본 설정에서는 그 문장만 되돌리고 트랜잭션은 열려 있다</td></tr>
+          <tr><td>PostgreSQL</td><td>락을 <code>deadlock_timeout</code>(기본 1초) 동안 기다린 뒤 검사</td><td>SQLSTATE <code>40P01</code></td><td><code>lock_timeout</code>(기본 없음)</td></tr>
+          <tr><td>SQL Server</td><td>백그라운드 모니터가 주기적으로 검사. <code>DEADLOCK_PRIORITY</code>로 희생자 우선순위를 줄 수 있다</td><td>1205</td><td><code>SET LOCK_TIMEOUT</code>(기본 무한)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>재시도와 락 순서</h3>
+    <p>
+      데드락과 직렬화 실패는 장애가 아니라 정상적으로 일어나는 결과다. 받으면 <strong>트랜잭션 전체를 처음부터</strong> 다시 한다. 실패한 문장만 다시 보내면 안 된다. 희생자의 트랜잭션은 이미 통째로 롤백됐다. 곧바로 다시 하면 같은 상대와 또 부딪히므로 무작위 간격을 두고, 횟수 상한을 정한다. EF Core의 재시도 실행 전략(<code>EnableRetryOnFailure</code>)을 켰다면, 직접 연 트랜잭션은 <code>CreateExecutionStrategy().ExecuteAsync</code> 안에 넣어야 전략이 트랜잭션 단위로 다시 실행한다.
+    </p>
+    <p>
+      예방도 함께 한다. 여러 행을 잠글 때는 <strong>항상 같은 순서로</strong> 잠근다. 거래라면 판매자와 구매자를 요청 방향과 상관없이 캐릭터 ID 오름차순으로 잠근다.
+    </p>
+<pre><code class="language-sql">-- A→B 거래와 B→A 거래가 같은 순서로 잠그므로 서로 물고 늘어지지 않는다
+SELECT id, gold FROM character WHERE id IN (1001, 2002) ORDER BY id FOR UPDATE;</code></pre>
+    <p>
+      트랜잭션을 짧게 두는 것이 가장 효과가 크다. 락을 쥔 시간이 짧을수록 부딪힐 확률도 준다. 트랜잭션 안에서 외부 호출을 하거나 다른 서버의 응답을 기다리면 그동안 락을 쥔 채로 있다(<a href="transaction.html">트랜잭션과 ACID</a>).
+    </p>
+
+    <h2>선택 기준</h2>
+    <ol>
+      <li><strong>트랜잭션을 짧게 만든다.</strong> DB 밖의 일은 밖으로 뺀다.</li>
+      <li><strong>한 문장으로 끝낼 수 있으면 그렇게 한다.</strong> 조건부 <code>UPDATE</code>와 바뀐 행 수 확인으로 대부분의 재화·수량 처리가 끝난다.</li>
+      <li><strong>여러 행을 읽고 판단해야 하면 충돌 빈도를 보고 고른다.</strong> 몰리는 행은 비관적, 드문 것은 낙관적.</li>
+      <li><strong>잠그는 순서를 통일한다.</strong> 테이블 순서와 행 순서(ID 오름차순)를 규칙으로 정한다.</li>
+      <li><strong>재시도와 중복 방지를 짝으로 갖춘다.</strong> 다시 실행해도 결과가 한 번만 남도록 유니크 키를 둔다.</li>
+    </ol>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>거래는 두 캐릭터를 ID 순서로 잠근다.</strong> 요청 방향 순서로 잠그면 서로를 향한 두 거래가 데드락을 만든다. 거래 로그에는 거래 ID 유니크 키를 둔다.</li>
+      <li><strong>경매 입찰은 한 문장 조건부 갱신이 맞다.</strong> <code>UPDATE auction SET price = @bid, bidder = @me WHERE id = @a AND price &lt; @bid AND end_at &gt; NOW()</code>로 "더 높은 입찰이고 아직 끝나지 않았을 때만"을 DB가 판정한다. 0행이면 밀렸거나 끝난 것이다. 이전 입찰자 환불은 같은 트랜잭션에서 처리한다.</li>
+      <li><strong>재화 차감은 DB가 계산하게 한다.</strong> 서버 메모리에 든 값으로 최종 골드를 계산해 덮어쓰면, 다른 서버나 운영 도구가 같은 캐릭터를 고친 것이 사라진다.</li>
+      <li><strong>핫 로우는 DB 앞에서 줄인다.</strong> 길드 금고, 월드 보스 누적 피해, 서버 전체 이벤트 카운터처럼 모든 요청이 한 행으로 몰리면 락으로는 줄만 길어진다. 길드나 존 단위로 서버 메모리에서 한 스레드가 모아 처리하고 주기적으로 묶어 쓰거나(<a href="../server/threading-model.html">스레딩 모델</a>), 카운터를 여러 행으로 나눠 더하고 읽을 때 합친다.</li>
+      <li><strong>락 대기 한도를 짧게 잡는다.</strong> InnoDB 기본 50초는 게임 요청에 너무 길다. 클라이언트가 이미 포기한 요청이 그동안 락을 기다리며 커넥션을 붙잡는다. 요청 성격에 맞게 몇 초로 줄이고, 시간 초과를 재시도나 실패 응답으로 처리한다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>읽은 뒤에 거는 락은 늦다.</strong> 보통 조회로 읽고 나서 <code>UPDATE</code>로 잠그면 그사이 틈은 이미 지나갔다. 판단의 근거가 될 읽기부터 잠근다.</li>
+      <li><strong>바뀐 행 수를 확인한다.</strong> 조건부 <code>UPDATE</code>와 낙관적 락은 0행을 확인하지 않으면 아무것도 막지 못한다.</li>
+      <li><strong>데드락 오류를 장애로 올리지 않는다.</strong> 재시도하면 되는 일을 사용자 실패로 보이게 만든다. 다만 빈도는 지표로 남겨 늘어나면 원인을 찾는다.</li>
+      <li><strong>InnoDB 락 대기 시간 초과는 트랜잭션을 끝내지 않는다.</strong> 기본 설정에서는 그 문장만 실패한다. 잡아서 반드시 롤백한다.</li>
+      <li><strong>재시도는 바깥 효과를 두 번 낸다.</strong> 롤백은 DB에 쓴 것만 되돌린다. 트랜잭션 안에서 이미 보낸 알림이나 메시지는 다시 할 때 또 나간다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

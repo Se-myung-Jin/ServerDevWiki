@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Redis 활용 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/redis">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="caching.html">DB 앞의 캐시</a>, <a href="concurrency-control.html">동시성 제어와 데드락</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      Redis는 메모리에 자료구조를 두는 서버다. 명령은 <span class="blank">스레드 하나</span>가 차례로 실행한다. 그래서 명령 하나는 다른 명령과 섞이지 않고 원자적으로 끝난다. <code>INCR</code> 한 줄이 락 없는 카운터가 되고, <code>ZADD</code> 한 줄이 랭킹 갱신이 된다.
+    </p>
+    <p>
+      같은 성질이 약점도 된다. 오래 걸리는 명령 하나가 그동안 다른 모든 클라이언트를 세운다. 데이터는 기본적으로 메모리에 있고 복제는 비동기라, 원본으로 쓰면 잃을 수 있는 구간이 생긴다. 무엇을 Redis에 맡기고 무엇을 DB에 남길지가 설계의 대부분이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>스레드 하나가 명령을 차례로 실행한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="여러 클라이언트의 명령이 한 줄로 서서 하나씩 실행되고, 느린 KEYS 명령 하나가 뒤의 명령을 모두 기다리게 한다">
+        <defs><marker id="rds-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="24" width="120" height="34" rx="6"/>
+        <text class="f-text" x="80" y="46" text-anchor="middle">게임 서버 1</text>
+        <rect class="f-box" x="20" y="80" width="120" height="34" rx="6"/>
+        <text class="f-text" x="80" y="102" text-anchor="middle">게임 서버 2</text>
+        <rect class="f-box" x="20" y="136" width="120" height="34" rx="6"/>
+        <text class="f-text" x="80" y="158" text-anchor="middle">운영 도구</text>
+        <line class="f-line" x1="140" y1="41" x2="196" y2="84" marker-end="url(#rds-a)"/>
+        <line class="f-line" x1="140" y1="97" x2="196" y2="97" marker-end="url(#rds-a)"/>
+        <line class="f-line" x1="140" y1="153" x2="196" y2="110" marker-end="url(#rds-a)"/>
+
+        <rect class="f-cell2" x="200" y="80" width="90" height="34" rx="4"/>
+        <text class="f-sub" x="245" y="102" text-anchor="middle">INCR</text>
+        <rect class="f-cell2" x="292" y="80" width="90" height="34" rx="4"/>
+        <text class="f-sub" x="337" y="102" text-anchor="middle">ZADD</text>
+        <rect class="f-miss" x="384" y="80" width="130" height="34" rx="4"/>
+        <text class="f-on" x="449" y="102" text-anchor="middle">KEYS *</text>
+        <rect class="f-cell2" x="516" y="80" width="90" height="34" rx="4"/>
+        <text class="f-sub" x="561" y="102" text-anchor="middle">GET</text>
+        <line class="f-line" x1="606" y1="97" x2="650" y2="97" marker-end="url(#rds-a)"/>
+        <rect class="f-hit" x="654" y="72" width="90" height="50" rx="6"/>
+        <text class="f-text" x="699" y="94" text-anchor="middle">실행</text>
+        <text class="f-sub" x="699" y="112" text-anchor="middle">스레드 하나</text>
+
+        <text class="f-sub" x="200" y="66">도착한 순서로 한 줄로 선다</text>
+        <text class="f-sub" x="384" y="140">키 수백만 개를 훑는 동안</text>
+        <text class="f-sub" x="384" y="158">뒤의 GET도, 다른 서버의 명령도 멈춘다</text>
+        <text class="f-sub" x="200" y="200">명령 하나는 중간에 끼어들 틈이 없다. INCR 두 개가 동시에 와도 결과는 정확히 2가 오른다</text>
+      </svg>
+      <figcaption>Redis 6.0부터 있는 I/O 스레드는 소켓을 읽고 쓰는 일만 나눠 맡는다. 명령 실행은 여전히 한 스레드다. 원자성도, 느린 명령이 전체를 막는 성질도 그대로다.</figcaption>
+    </figure>
+    <p>
+      막는 명령의 대표가 <code>KEYS</code>다. 모든 키를 한 번에 훑으므로 키가 많으면 수백 밀리초에서 초 단위로 서버가 멈춘다. 운영에서는 커서로 조금씩 나눠 훑는 <code>SCAN</code>을 쓴다. 원소가 수백만 개인 큰 해시나 정렬 집합을 <code>HGETALL</code>이나 <code>DEL</code>로 한 번에 다루는 것도 같다. 큰 키는 <code>UNLINK</code>로 지운다. 키를 먼저 떼어 내고 메모리 해제는 백그라운드 스레드에 넘긴다.
+    </p>
+
+    <h3>자료구조를 고르면 기능이 명령 하나가 된다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>자료구조</th><th>대표 명령</th><th>게임 서버에서 쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>String</td><td><code>INCR</code>, <code>SET ... NX EX</code></td><td>카운터, 레이트 리밋, 락, 짧은 토큰</td></tr>
+          <tr><td>Hash</td><td><code>HSET</code>, <code>HINCRBY</code>, <code>HGET</code></td><td>세션 정보, 캐릭터 요약(레벨, 위치한 서버)</td></tr>
+          <tr><td>Sorted Set</td><td><code>ZADD</code>, <code>ZRANGE ... REV</code>, <code>ZREVRANK</code></td><td>랭킹, 점수순 매칭 대기열, 시각순 예약 작업</td></tr>
+          <tr><td>Set</td><td><code>SADD</code>, <code>SISMEMBER</code>, <code>SCARD</code></td><td>접속자 목록, 오늘 보상 받은 계정</td></tr>
+          <tr><td>List</td><td><code>LPUSH</code>, <code>RPOP</code>, <code>BLMOVE</code></td><td>단순 작업 큐</td></tr>
+          <tr><td>Stream</td><td><code>XADD</code>, <code>XREADGROUP</code>, <code>XACK</code></td><td>처리 확인이 필요한 이벤트 큐</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Sorted Set은 원소마다 점수(배정밀도 부동소수)를 붙여 정렬해 둔다. 넣기와 순위 조회가 모두 O(log N)이라 수백만 명 랭킹에서도 "내 순위"를 바로 답한다. 상위 N명은 <code>ZRANGE key 0 N-1 REV</code>로 가져온다. Redis 6.2부터는 이 형태가 권장되고, <code>ZREVRANGE</code>는 호환용으로 남아 있다.
+    </p>
+
+    <h3>여러 명령을 묶는 세 가지 방법</h3>
+    <p>
+      명령 하나는 원자적이지만, "읽고 판단해서 쓴다"를 두 명령으로 나누면 그 사이에 다른 클라이언트가 끼어든다. DB의 갱신 손실과 같은 문제다(<a href="concurrency-control.html">동시성 제어와 데드락</a>).
+    </p>
+    <ul>
+      <li><strong><code>MULTI</code>/<code>EXEC</code>는 모아서 한 번에 실행한다.</strong> 그 사이 다른 명령이 끼지 않는다. 하지만 <span class="blank">롤백이 없다</span>. 실행 중 한 명령이 타입 오류로 실패해도 나머지는 그대로 반영된다. 또 묶인 명령은 앞 명령의 결과를 보고 분기할 수 없다.</li>
+      <li><strong><code>WATCH</code>는 낙관적 락이다.</strong> 키를 지켜보다가 <code>EXEC</code> 전에 누가 그 키를 바꿨으면 트랜잭션 전체를 버리고 null을 돌려준다. 클라이언트가 처음부터 다시 시도한다. 버전 컬럼으로 하는 낙관적 락과 같은 모양이다.</li>
+      <li><strong>Lua 스크립트는 서버에서 판단까지 한다.</strong> <code>EVAL</code>로 보낸 스크립트는 통째로 원자적으로 돈다. 읽고, 조건을 보고, 쓰는 것을 한 번에 할 수 있어 가장 많이 쓴다. Redis 7부터는 스크립트를 이름 붙여 서버에 등록해 두는 Functions(<code>FUNCTION LOAD</code>, <code>FCALL</code>)도 있다. 스크립트가 도는 동안 서버 전체가 멈추므로 짧게 쓴다.</li>
+    </ul>
+<pre><code class="language-plaintext">-- 재화가 충분할 때만 차감한다. 읽기와 쓰기 사이에 끼어들 틈이 없다
+local cur = tonumber(redis.call('HGET', KEYS[1], 'gold') or '0')
+local cost = tonumber(ARGV[1])
+if cur &lt; cost then return -1 end
+return redis.call('HINCRBY', KEYS[1], 'gold', -cost)</code></pre>
+
+    <h3>만료는 읽을 때와 주기적으로 지운다</h3>
+    <p>
+      TTL을 건 키는 시각이 되는 순간 지워지지 않는다. 두 길로 지운다. 누가 그 키를 읽으려 할 때 만료됐으면 그 자리에서 지운다(지연 삭제). 그리고 주기적으로 TTL이 있는 키를 표본으로 골라 만료된 것을 지운다. 그래서 만료된 키가 한동안 메모리를 차지할 수 있고, 같은 시각에 대량으로 만료되게 해 두면 그 정리가 한꺼번에 몰린다. TTL에 지터를 주는 이유는 <a href="caching.html">DB 앞의 캐시</a>에서 다룬다.
+    </p>
+
+    <h3>분산 락은 만료가 있어서 어렵다</h3>
+    <p>
+      서버 여러 대가 같은 일을 한 번만 하게 하려고 Redis로 락을 잡는다. 기본형은 키 하나다.
+    </p>
+<pre><code class="language-plaintext">SET lock:guild-war:17 &lt;무작위 토큰&gt; NX PX 30000   -- 없을 때만, 30초 뒤 자동 만료
+
+-- 풀 때는 내 토큰일 때만 지운다(Lua로 한 번에)
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0</code></pre>
+    <p>
+      만료(<code>PX</code>)를 거는 이유는 락을 잡은 서버가 죽어도 영원히 잠기지 않게 하려는 것이다. 토큰을 확인하고 지우는 이유는, 내 락이 이미 만료되어 다른 서버가 잡은 뒤에 내가 그 락을 지우는 사고를 막으려는 것이다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 220" role="img" aria-label="서버 A가 락을 잡은 뒤 GC로 멈춘 사이 락이 만료되고, 서버 B가 락을 잡아 쓰는 동안 깨어난 A도 써서 두 주인이 생긴다. 펜싱 토큰을 확인하는 저장소는 A의 늦은 쓰기를 거절한다">
+        <defs><marker id="rds-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="54">서버 A</text>
+        <text class="f-strong" x="20" y="124">서버 B</text>
+        <line class="f-line" x1="90" y1="50" x2="740" y2="50"/>
+        <line class="f-line" x1="90" y1="120" x2="740" y2="120"/>
+
+        <rect class="f-hit" x="100" y="34" width="110" height="32" rx="4"/>
+        <text class="f-text" x="155" y="55" text-anchor="middle">락 잡음 (33)</text>
+        <rect class="f-cell" x="220" y="34" width="200" height="32" rx="4"/>
+        <text class="f-sub" x="320" y="55" text-anchor="middle">GC 멈춤 · 그 사이 락 만료</text>
+        <rect class="f-miss" x="560" y="34" width="150" height="32" rx="4"/>
+        <text class="f-on" x="635" y="55" text-anchor="middle">깨어나서 씀 (33)</text>
+
+        <rect class="f-hit" x="440" y="104" width="110" height="32" rx="4"/>
+        <text class="f-text" x="495" y="125" text-anchor="middle">락 잡음 (34)</text>
+        <rect class="f-hit" x="560" y="104" width="150" height="32" rx="4"/>
+        <text class="f-text" x="635" y="125" text-anchor="middle">씀 (34)</text>
+
+        <line class="f-line f-dash" x1="420" y1="40" x2="420" y2="150"/>
+        <text class="f-sub" x="424" y="164">만료</text>
+
+        <text class="f-sub" x="440" y="190">둘 다 "내가 주인"이라고 믿는 구간이 생긴다</text>
+        <text class="f-sub" x="440" y="208">저장소가 "34를 봤으니 33은 거절"하면 막힌다</text>
+      </svg>
+      <figcaption>괄호 안 숫자가 펜싱 토큰이다. 락을 잡을 때마다 하나씩 커지는 번호를 받아 쓰기와 함께 보낸다. 저장소가 이미 본 번호보다 작은 쓰기를 거절하면, 늦게 깨어난 옛 주인의 쓰기가 막힌다.</figcaption>
+    </figure>
+    <p>
+      문제는 만료와 멈춤이 겹칠 때다. 락을 잡은 서버가 <a data-ref="csharp/gc-basics">GC</a>나 스왑으로 멈춘 사이 락이 만료되면(<a href="../csharp/gc-modes.html">GC 모드와 멈춤</a>), 다른 서버가 락을 잡는다. 멈췄던 서버는 깨어나서 자기가 아직 주인이라고 믿고 쓴다. 락만으로는 이 구간을 없앨 수 없다. 그래서 정확성이 걸린 곳에는 <span class="blank">펜싱 토큰</span>을 쓴다. 락을 잡을 때마다 증가하는 번호(<code>INCR</code>로 만들 수 있다)를 받고, 실제로 쓰는 저장소가 그 번호를 확인해 옛 번호의 쓰기를 거절한다.
+    </p>
+    <p>
+      Redis 여러 대의 과반에서 락을 잡는 <strong>Redlock</strong>은 Redis 한 대가 죽는 경우까지 견디려는 알고리즘이다. 이를 두고 Martin Kleppmann과 Redis 작성자 antirez 사이에 논쟁이 있었다. 비판의 요지는, 시계와 멈춤에 대한 가정이 깨지면 안전하지 않고 펜싱 토큰도 주지 않는다는 것이다. 실무 정리는 이렇다. 같은 일을 두 번 해도 손해가 작은 "효율용" 락이면 Redis 한 대의 락으로 충분하다. 두 번 하면 안 되는 "정확성용"이면 Redis 락에 기대지 말고, DB의 유니크 제약이나 조건부 갱신, 펜싱 토큰으로 막는다.
+    </p>
+
+    <h3>Pub/Sub은 흘려보내고 Streams는 남긴다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>Pub/Sub</th><th>Streams</th></tr></thead>
+        <tbody>
+          <tr><td>보관</td><td>안 한다. 그 순간 구독 중인 쪽에만 보낸다</td><td>로그로 남긴다. 길이나 ID로 잘라 낸다</td></tr>
+          <tr><td>끊겼던 구독자</td><td>끊긴 동안의 메시지를 놓친다</td><td>마지막으로 읽은 ID부터 이어 읽는다</td></tr>
+          <tr><td>나눠 받기</td><td>모든 구독자가 같은 메시지를 받는다</td><td>소비자 그룹 안에서 메시지를 하나씩 나눠 받는다</td></tr>
+          <tr><td>처리 확인</td><td>없다</td><td><code>XACK</code>. 확인 안 된 것은 <code>XPENDING</code>으로 보고 <code>XAUTOCLAIM</code>으로 넘긴다</td></tr>
+          <tr><td>쓰는 곳</td><td>놓쳐도 되는 알림(공지, 캐시 무효화 신호)</td><td>놓치면 안 되는 작업(우편 발송, 보상 지급)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Streams도 확인 전에 소비자가 죽으면 다른 소비자가 다시 가져가므로 <strong>최소 한 번</strong> 전달이다. 받는 쪽은 같은 메시지를 두 번 받아도 괜찮게 짜야 한다. 본격적인 메시지 큐와의 비교는 <a data-ref="architecture/message-models">메시지 모델</a>에서 다룬다.
+    </p>
+
+    <h3>영속성: RDB 스냅숏과 AOF</h3>
+    <ul>
+      <li><strong>RDB는 주기적인 스냅숏이다.</strong> Redis가 <code>fork</code>로 자식 프로세스를 만들고, 자식이 그 순간의 메모리를 파일로 쓴다. 부모와 자식은 처음에 메모리 페이지를 공유하다가, 부모가 고치는 페이지만 복사된다(쓸 때 복사, <a href="../operating-system/virtual-memory.html">가상 메모리</a>). 쓰기가 많은 동안 스냅숏을 뜨면 복사되는 페이지가 늘어 메모리가 크게 오른다. 최대 두 배까지 잡아 두고 여유를 남긴다. 마지막 스냅숏 이후의 변경은 장애 때 잃는다.</li>
+      <li><strong>AOF는 쓰기 명령을 로그로 남긴다.</strong> <code>appendfsync everysec</code>이 흔한 기본이다. 1초마다 디스크에 내리므로 장애 때 잃는 것은 대략 마지막 1초다. <code>always</code>는 명령마다 내려 안전하지만 느리다. 로그가 커지면 현재 상태로 다시 써서 줄인다(rewrite).</li>
+      <li><strong>둘을 함께 켜는 구성이 많다.</strong> 재시작할 때는 AOF로 복구하고, RDB는 백업과 복제 초기 동기화에 쓴다. DB의 로그 원리와 같은 맞바꿈이다(<a href="durability-wal.html">로그와 지속성</a>).</li>
+    </ul>
+
+    <h3>복제, Sentinel, Cluster</h3>
+    <p>
+      복제는 비동기다. 주 서버가 응답한 쓰기가 복제본에 닿기 전에 주 서버가 죽으면 그 쓰기는 사라진다. <code>WAIT</code>로 복제본 몇 대가 받을 때까지 기다릴 수는 있지만, 그래도 장애 조치 중 유실이 없다고 보장하지는 않는다. <strong>Sentinel</strong>은 주 서버를 감시하다 죽으면 복제본을 올리는 장애 조치 담당이다.
+    </p>
+    <p>
+      <strong>Cluster</strong>는 데이터를 여러 주 서버에 나눈다. 키를 CRC16으로 해시해 <span class="blank">16384개 해시 슬롯</span> 가운데 하나에 넣고, 슬롯을 서버들이 나눠 맡는다. 여러 키를 한 명령이나 한 스크립트로 다루려면 그 키들이 같은 슬롯에 있어야 한다. 다르면 <code>CROSSSLOT</code> 오류가 난다. 키 이름에 중괄호를 쓰면 중괄호 안의 부분만 해시한다. <code>{char:1001}:inv</code>와 <code>{char:1001}:gold</code>는 같은 슬롯에 들어간다. 이것이 해시 태그다.
+    </p>
+    <ul>
+      <li><strong>핫 키:</strong> 모두가 읽는 키 하나(전체 랭킹, 이벤트 공지)는 한 서버에만 있어 그 서버만 바빠진다. 서버 로컬 캐시에 잠깐 들고 있거나, 키를 여러 벌로 나눠 둔다.</li>
+      <li><strong>큰 키:</strong> 원소 수백만 개짜리 키는 명령이 느리고, 슬롯 이동과 복제 때 한 덩어리로 움직이며, 메모리가 한 서버로 쏠린다. 시즌별, 구간별로 나눠 담는다.</li>
+    </ul>
+    <p>
+      2024년 Redis 7.4부터 라이선스가 소스 공개 라이선스로 바뀌었고, 이에 리눅스 재단 아래 오픈 소스 포크인 Valkey가 나왔다. Redis 8에는 AGPL이 선택지로 더해졌다. 명령과 프로토콜은 대부분 호환되므로 이 문서의 내용은 둘 다에 해당한다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>데이터</th><th>Redis에 맡기나</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>랭킹, 접속자 수, 매칭 대기열</td><td>원본으로 맡긴다</td><td>잃어도 다시 만들 수 있고, 다른 저장소로는 같은 속도를 내기 어렵다</td></tr>
+          <tr><td>세션, 중복 로그인 표시</td><td>원본으로 맡긴다</td><td>잃으면 다시 로그인하면 된다. TTL이 수명 관리를 대신한다</td></tr>
+          <tr><td>캐릭터 정보 조회</td><td>캐시로만</td><td>원본은 DB에 두고 앞에 둔다(<a href="caching.html">DB 앞의 캐시</a>)</td></tr>
+          <tr><td>재화, 결제, 아이템 소유</td><td>맡기지 않는다</td><td>비동기 복제와 everysec는 잃는 구간이 있다. 트랜잭션과 롤백이 DB만큼 되지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>동점자 순서는 점수에 섞어 넣는다.</strong> 정렬 집합은 점수가 같으면 멤버 이름의 사전 순으로 놓는다. "먼저 달성한 사람이 위"를 원하면 점수와 시각을 하나로 합친다. 예를 들어 <code>점수 × 2^22 + (2^22 − 1 − 시즌 시작 후 경과 초)</code>로 두면 같은 점수에서는 먼저 달성한 쪽이 크다. 2^22초는 약 48일이라 시즌 길이가 그 안이어야 한다. 점수는 배정밀도라 합친 값이 2^53을 넘으면 정수가 정확하지 않으니, 점수 상한을 2^31 안으로 잡는다.</li>
+      <li><strong>중복 로그인은 키 하나로 막는다.</strong> 로그인할 때 <code>SET session:{account} &lt;서버ID:세션ID&gt; EX 60</code>으로 현재 세션을 적고, 접속 중인 서버가 주기적으로 TTL을 늘린다. 새 로그인이 다른 값을 보면 옛 서버에 끊으라고 알린다. 서버가 죽으면 TTL이 지나 자동으로 풀린다.</li>
+      <li><strong>서버 간 알림은 Pub/Sub, 놓치면 안 되면 Streams.</strong> "공지를 띄워라", "이 캐릭터 캐시를 지워라"는 Pub/Sub로 충분하다. 길드 전체 우편이나 보상 지급처럼 놓치면 민원이 되는 일은 Streams나 DB 큐로 보낸다.</li>
+      <li><strong>매칭 대기열은 정렬 집합으로 둔다.</strong> 점수에 MMR을 넣으면 <code>ZRANGE ... BYSCORE</code>로 비슷한 실력대를 꺼낸다. 꺼내고 지우는 것은 Lua로 묶어 두 매칭 서버가 같은 사람을 데려가지 않게 한다.</li>
+      <li><strong>레이트 리밋은 카운터와 TTL로 만든다.</strong> 계정별로 "1분에 채팅 30번"이면 <code>INCR</code>하고 첫 증가 때 <code>EXPIRE</code>를 건다. 두 명령 사이에 서버가 죽으면 만료 없는 키가 남으므로 Lua로 묶거나 <code>SET key 0 EX 60 NX</code>로 먼저 만든 뒤 증가시킨다.</li>
+      <li><strong>StackExchange.Redis는 연결 하나를 공유한다.</strong> <code>ConnectionMultiplexer</code>는 스레드 안전하고 비싸게 만들어지므로 프로세스에 하나 두고 계속 쓴다. 요청마다 만들면 연결이 쌓인다. <code>IDatabase</code>는 가볍게 얻어 써도 된다. 비동기 메서드를 쓰면 명령이 자동으로 파이프라이닝되어, 여러 명령을 기다리지 않고 연달아 보낸다. <code>BLPOP</code> 같은 막는 명령은 공유 연결 전체를 묶으므로 이 클라이언트에서는 쓰지 않는다.</li>
+    </ul>
+<pre><code class="language-csharp">// 시작할 때 한 번 만들어 DI에 싱글턴으로 둔다
+var mux = await ConnectionMultiplexer.ConnectAsync("redis:6379,abortConnect=false");
+services.AddSingleton&lt;IConnectionMultiplexer&gt;(mux);
+
+// 쓰는 쪽
+IDatabase db = mux.GetDatabase();
+await db.SortedSetAddAsync("rank:season7", charId, encodedScore);
+long? rank = await db.SortedSetRankAsync("rank:season7", charId, Order.Descending);  // 0부터</code></pre>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>운영에서 <code>KEYS</code>와 큰 키 통째 조회를 쓰지 않는다.</strong> 실수로 한 번 부른 것이 전체 서버의 응답을 멈춘다. <code>rename-command</code>나 ACL로 막아 두는 곳도 많다.</li>
+      <li><strong>캐시가 아닌 데이터가 있으면 메모리 정책을 확인한다.</strong> <code>allkeys-lru</code>로 두면 메모리가 찼을 때 세션이나 랭킹도 지워진다. 원본을 담는 인스턴스와 캐시 인스턴스를 나누고, 원본 쪽은 <code>noeviction</code>으로 둔다.</li>
+      <li><strong>Lua 스크립트와 <code>MULTI</code>를 길게 쓰지 않는다.</strong> 도는 동안 서버 전체가 멈춘다. 반복이 원소 수에 비례하면 큰 키에서 터진다.</li>
+      <li><strong>Cluster로 옮길 계획이 있으면 처음부터 해시 태그를 고려한다.</strong> 한 명령에서 여러 키를 다루는 코드는 슬롯이 갈라지면 깨진다.</li>
+      <li><strong>Redis 락을 정확성의 유일한 장치로 두지 않는다.</strong> 만료와 멈춤이 겹치면 주인이 둘이 된다. 아이템 지급처럼 두 번 되면 안 되는 일은 DB 제약으로 한 번 더 막는다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

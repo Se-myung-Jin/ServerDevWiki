@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>격리 수준과 MVCC · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="database/isolation-mvcc">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="transaction.html">트랜잭션과 ACID</a> · <a href="index-kinds.html">인덱스의 종류와 설계</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      동시에 도는 트랜잭션을 완전히 한 줄로 세우면 이상한 일은 없지만 느리다. <span class="blank">격리 수준</span>은 그 사이에서 <strong>어떤 이상 현상까지 허용할지</strong> 고르는 값이다. 엄격할수록 이상 현상이 줄고, 기다림과 재시도가 는다.
+    </p>
+    <p>
+      <strong>MVCC</strong>는 이 맞바꿈을 누그러뜨리는 장치다. 값을 덮어쓰지 않고 새 버전을 만들어 두면, 읽는 쪽은 자기 시점의 버전을 읽으면 되므로 쓰는 쪽을 기다리지 않는다. 다만 쓰기끼리의 충돌은 그대로 남고, 같은 이름의 격리 수준이 엔진마다 다른 것을 보장한다. 기본값만 믿고 쓰다 나는 버그가 여기서 나온다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>막아야 할 이상 현상</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>현상</th><th>무엇이 일어나나</th><th>게임 서버 예</th></tr></thead>
+        <tbody>
+          <tr><td>더티 리드</td><td>커밋되지 않은 값을 읽는다. 상대가 롤백하면 없던 값을 근거로 움직인 것이 된다</td><td>롤백될 강화 성공 결과를 보고 랭킹에 올린다</td></tr>
+          <tr><td>반복 불가능 읽기</td><td>같은 행을 두 번 읽었는데 값이 다르다. 사이에 누가 고치고 커밋했다</td><td>정산 중 처음 읽은 골드와 나중에 읽은 골드가 다르다</td></tr>
+          <tr><td>팬텀</td><td>같은 조건으로 두 번 조회했는데 행이 늘거나 줄었다. 사이에 누가 넣거나 지웠다</td><td>"길드원 수"를 두 번 셌는데 결과가 다르다</td></tr>
+          <tr><td>갱신 손실</td><td>둘이 같은 값을 읽고 각자 계산해 쓴다. 나중에 쓴 쪽이 먼저 쓴 쪽을 덮는다</td><td>두 요청이 골드 1000을 읽고 각각 100, 200을 빼서 900과 800을 쓴다. 결과는 700이어야 한다</td></tr>
+          <tr><td>쓰기 치우침(write skew)</td><td>둘이 같은 조건을 읽고 서로 <strong>다른 행</strong>을 쓴다. 각자는 규칙을 지켰는데 합친 결과가 규칙을 어긴다</td><td>정원 50인 길드에 49명일 때 두 명이 동시에 가입해 51명이 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <figure class="fig">
+      <svg viewBox="0 0 760 230" role="img" aria-label="두 트랜잭션이 각자 길드원 수 49를 읽고 각자 다른 행을 넣어 정원 50을 넘는 쓰기 치우침">
+        <defs><marker id="iso-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="56">트랜잭션 A</text>
+        <text class="f-strong" x="20" y="146">트랜잭션 B</text>
+        <line class="f-line" x1="120" y1="52" x2="740" y2="52" marker-end="url(#iso-a)"/>
+        <line class="f-line" x1="120" y1="142" x2="740" y2="142" marker-end="url(#iso-a)"/>
+        <rect class="f-cell2" x="140" y="32" width="150" height="40" rx="6"/>
+        <text class="f-text" x="215" y="57" text-anchor="middle">COUNT → 49</text>
+        <rect class="f-cell2" x="180" y="122" width="150" height="40" rx="6"/>
+        <text class="f-text" x="255" y="147" text-anchor="middle">COUNT → 49</text>
+        <rect class="f-hit" x="370" y="32" width="160" height="40" rx="6"/>
+        <text class="f-text" x="450" y="57" text-anchor="middle">INSERT 철수</text>
+        <rect class="f-hit" x="400" y="122" width="160" height="40" rx="6"/>
+        <text class="f-text" x="480" y="147" text-anchor="middle">INSERT 영희</text>
+        <rect class="f-box" x="580" y="32" width="90" height="40" rx="6"/>
+        <text class="f-text" x="625" y="57" text-anchor="middle">COMMIT</text>
+        <rect class="f-box" x="610" y="122" width="90" height="40" rx="6"/>
+        <text class="f-text" x="655" y="147" text-anchor="middle">COMMIT</text>
+        <text class="f-sub" x="140" y="96">둘 다 "아직 한 자리 남았다"를 본다</text>
+        <text class="f-sub" x="370" y="190">넣는 행이 서로 달라 쓰기끼리 부딪히지 않는다</text>
+        <text class="f-sub" x="370" y="210">결과: 길드원 51명. 정원 50을 넘는다</text>
+      </svg>
+      <figcaption>각자는 "49명이니 가입해도 된다"는 규칙을 지켰다. 같은 행을 고친 것이 아니라서 스냅샷 기반 격리 수준은 이것을 충돌로 보지 않는다. 진짜 직렬화만 이 조합을 막는다.</figcaption>
+    </figure>
+
+    <h3>표준 네 수준과 그 한계</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>수준</th><th>더티 리드</th><th>반복 불가능 읽기</th><th>팬텀</th></tr></thead>
+        <tbody>
+          <tr><td>READ UNCOMMITTED</td><td>허용</td><td>허용</td><td>허용</td></tr>
+          <tr><td>READ COMMITTED</td><td>막는다</td><td>허용</td><td>허용</td></tr>
+          <tr><td>REPEATABLE READ</td><td>막는다</td><td>막는다</td><td>허용</td></tr>
+          <tr><td>SERIALIZABLE</td><td>막는다</td><td>막는다</td><td>막는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      SQL 표준은 수준을 이 세 현상만으로 정의한다. 그래서 표에는 갱신 손실과 쓰기 치우침이 없다. 실제 엔진은 MVCC로 격리를 구현하면서 표에 없는 동작을 더 막기도 하고 덜 막기도 한다. 표를 외우는 것보다 쓰는 엔진이 각 수준에서 실제로 무엇을 하는지 아는 쪽이 중요하다.
+    </p>
+
+    <h3>MVCC는 버전을 사슬로 남긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="행의 최신 버전에서 옛 버전으로 사슬이 이어지고, 읽기는 자기 스냅샷에 보이는 버전까지 사슬을 거슬러 간다">
+        <defs><marker id="iso-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-miss" x="20" y="40" width="200" height="56" rx="6"/>
+        <text class="f-on" x="120" y="64" text-anchor="middle">gold = 50</text>
+        <text class="f-on" style="font-weight:400;font-size:11px" x="120" y="84" text-anchor="middle">트랜잭션 30 · 진행 중</text>
+        <rect class="f-hit" x="280" y="40" width="200" height="56" rx="6"/>
+        <text class="f-text" x="380" y="64" text-anchor="middle">gold = 80</text>
+        <text class="f-sub" x="380" y="84" text-anchor="middle">트랜잭션 20 · 커밋</text>
+        <rect class="f-box" x="540" y="40" width="200" height="56" rx="6"/>
+        <text class="f-text" x="640" y="64" text-anchor="middle">gold = 100</text>
+        <text class="f-sub" x="640" y="84" text-anchor="middle">트랜잭션 10 · 커밋</text>
+        <line class="f-line" x1="220" y1="68" x2="276" y2="68" marker-end="url(#iso-b)"/>
+        <line class="f-line" x1="480" y1="68" x2="536" y2="68" marker-end="url(#iso-b)"/>
+        <text class="f-sub" x="248" y="30" text-anchor="middle">이전 버전</text>
+        <text class="f-sub" x="508" y="30" text-anchor="middle">이전 버전</text>
+        <text class="f-sub" x="20" y="116">행에 있는 최신 버전</text>
+
+        <rect class="f-cell2" x="160" y="156" width="210" height="40" rx="6"/>
+        <text class="f-text" x="265" y="181" text-anchor="middle">읽기 X: 20까지 커밋된 것만</text>
+        <line class="f-line f-dash" x1="340" y1="156" x2="370" y2="100" marker-end="url(#iso-b)"/>
+        <rect class="f-cell2" x="430" y="156" width="210" height="40" rx="6"/>
+        <text class="f-text" x="535" y="181" text-anchor="middle">읽기 Y: 10까지 커밋된 것만</text>
+        <line class="f-line f-dash" x1="610" y1="156" x2="630" y2="100" marker-end="url(#iso-b)"/>
+        <text class="f-sub" x="20" y="226">Y가 끝나기 전에는 gold = 100 버전을 지울 수 없다</text>
+      </svg>
+      <figcaption>쓰기는 덮어쓰지 않고 새 버전을 앞에 붙인다. 읽기는 자기 스냅샷에서 보이는 버전이 나올 때까지 사슬을 거슬러 간다. 진행 중인 트랜잭션 30의 값은 누구에게도 보이지 않는다.</figcaption>
+    </figure>
+    <p>
+      각 버전에는 만든 트랜잭션 번호가 붙는다. 읽기가 시작될 때 "어느 트랜잭션까지 커밋된 것이 보이나"를 담은 <strong>스냅샷</strong>을 잡고, 그 기준으로 버전을 고른다. 그래서 쓰는 쪽이 작업 중이어도 읽는 쪽은 기다리지 않고, 읽는 쪽 때문에 쓰는 쪽이 막히지도 않는다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>옛 버전을 두는 곳</th><th>치우는 작업</th></tr></thead>
+        <tbody>
+          <tr><td>MySQL InnoDB</td><td>행에는 최신 값만 두고 옛 값은 언두 로그에 남긴다</td><td>퍼지(purge) 스레드가 더 이상 아무도 안 보는 언두를 지운다. 밀린 양은 history list length로 본다</td></tr>
+          <tr><td>PostgreSQL</td><td>새 버전을 테이블 안에 새 행으로 쓰고 옛 행을 그대로 둔다</td><td><code>VACUUM</code>(보통 autovacuum)이 죽은 행을 치운다. 못 치우면 테이블이 부푼다(bloat)</td></tr>
+          <tr><td>SQL Server</td><td>스냅샷 기능을 켰을 때만 버전을 남긴다. tempdb의 버전 저장소, 2019부터 가속 복구(ADR)를 켜면 DB 안의 버전 저장소</td><td>백그라운드 정리 작업</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      스냅샷을 언제 잡느냐가 수준을 가른다. READ COMMITTED는 <strong>문장마다</strong> 새 스냅샷을 잡는다. 그래서 같은 트랜잭션 안에서도 두 번째 조회는 그사이 커밋된 값을 본다. REPEATABLE READ(PostgreSQL에서는 스냅샷 격리와 같다)는 트랜잭션의 <strong>첫 조회 때</strong> 잡은 스냅샷을 끝까지 쓴다.
+    </p>
+
+    <h3>엔진마다 기본값과 실제 동작이 다르다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>엔진</th><th>기본 수준</th><th>알아 둘 차이</th></tr></thead>
+        <tbody>
+          <tr><td>MySQL InnoDB</td><td>REPEATABLE READ</td><td>보통 조회는 스냅샷을 읽어 팬텀이 보이지 않는다. 잠그는 읽기(<code>FOR UPDATE</code>)와 <code>UPDATE</code>는 스냅샷이 아니라 <strong>최신 커밋 값</strong>을 읽고 넥스트 키 락을 건다. 스냅샷으로 읽고 애플리케이션에서 계산해 쓰면 갱신 손실을 막지 못한다</td></tr>
+          <tr><td>PostgreSQL</td><td>READ COMMITTED</td><td>READ UNCOMMITTED를 지정해도 READ COMMITTED로 돈다. REPEATABLE READ에서는 팬텀이 없고, 같은 행을 다른 트랜잭션이 먼저 고쳤으면 직렬화 실패 오류로 끊어 갱신 손실을 막는다. SERIALIZABLE은 SSI로 쓰기 치우침까지 막는다</td></tr>
+          <tr><td>SQL Server</td><td>READ COMMITTED</td><td>기본은 공유 락으로 막는 방식이라 읽기가 쓰기를 기다린다. <code>READ_COMMITTED_SNAPSHOT</code>(RCSI)을 켜면 같은 이름이 버전을 읽는 방식으로 바뀐다. Azure SQL Database는 이것이 기본으로 켜져 있다. <code>SNAPSHOT</code> 수준은 따로 있다</td></tr>
+          <tr><td>Oracle</td><td>READ COMMITTED</td><td>READ UNCOMMITTED와 REPEATABLE READ가 없다. SERIALIZABLE은 있지만 실제로는 스냅샷 격리라 쓰기 치우침을 막지 못한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      SERIALIZABLE도 엔진마다 구현이 다르다. PostgreSQL은 <strong>SSI(직렬화 가능 스냅샷 격리)</strong>로, 잠그지 않고 진행하다가 직렬 실행으로 설명할 수 없는 의존 관계가 생기면 한쪽을 직렬화 실패로 끊는다. MySQL은 오토커밋이 꺼진 상태에서 보통 조회를 공유 락을 거는 읽기(<code>FOR SHARE</code>)로 바꾼다. SQL Server는 범위에 키 범위 락을 건다. 어느 쪽이든 직렬화 실패나 <a data-ref="operating-system/deadlock">데드락</a>으로 끊긴 트랜잭션을 <strong>처음부터 다시 하는 코드</strong>가 함께 있어야 한다.
+    </p>
+
+    <h3>인덱스가 락 범위를 정한다</h3>
+    <p>
+      InnoDB는 락을 행이 아니라 <strong>인덱스 레코드</strong>에 건다. 조건에 맞는 레코드를 인덱스로 바로 찾으면 그것만 잠그지만, 쓸 만한 인덱스가 없어 전체를 훑으면 훑은 레코드를 모두 잠근다. 결과로는 한 행만 고쳤는데 테이블 전체가 잠긴 것과 비슷해진다.
+    </p>
+    <p>
+      REPEATABLE READ에서 범위 조건으로 잠그면 찾은 레코드만이 아니라 그 사이 빈 구간까지 막는다. 레코드 사이 틈을 잠그는 것이 <strong>갭 락</strong>이고, 레코드 락과 그 앞 틈을 합친 것이 <span class="blank">넥스트 키 락</span>이다. 사이에 새 행이 들어오지 못하게 막아 잠그는 읽기에서도 팬텀을 막는다. 대신 아무도 같은 행을 건드리지 않는데도 틈이 겹쳐 서로 기다리고, 데드락이 생긴다. READ COMMITTED로 내리면 갭 락이 대부분 꺼진다(<a data-ref="database/sql-basics">외래 키</a>와 중복 키 검사는 남는다).
+    </p>
+    <p>
+      그래서 "인덱스를 안 걸었더니 데드락이 늘었다"는 일이 생긴다. 성능 문제로 보이지만 실제로는 락 범위 문제다. 무엇이 잠기는지 알려면 실행 계획에서 어느 인덱스를 탔는지 본다(<a href="query-plan.html">실행 계획과 조인</a>). MySQL 8.0은 <code>performance_schema.data_locks</code>로 지금 걸린 락을 볼 수 있다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>맞는 쪽</th></tr></thead>
+        <tbody>
+          <tr><td>일반적인 조회와 짧은 갱신</td><td>엔진 기본값. 위험한 곳만 따로 막는다</td></tr>
+          <tr><td>값 하나를 읽고 계산해 고친다(재화, 수량)</td><td>수준을 올리기보다 원자적 <code>UPDATE</code>나 잠그는 읽기(<a data-ref="database/concurrency-control">동시성 제어와 데드락</a>)</td></tr>
+          <tr><td>조건을 읽고 다른 행을 넣는다(정원, 중복 예약)</td><td>쓰기 치우침이다. 기준 행 하나를 잠그거나, 유니크 제약이나 카운터 컬럼처럼 충돌이 한 행에 모이게 바꾼다. 아니면 SERIALIZABLE과 재시도</td></tr>
+          <tr><td>긴 보고서와 집계</td><td>스냅샷 읽기로 일관된 시점을 보되, 운영 DB가 아니라 복제본에서 돌린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      DB 전체 수준을 올리는 것은 마지막이다. 모든 트랜잭션이 비용을 내고, 재시도 코드가 모든 곳에 필요해진다. 수준은 트랜잭션마다 지정할 수 있으므로 필요한 트랜잭션만 올린다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>MySQL 기본값에서 생기는 골드 갱신 손실.</strong> 서버가 <code>SELECT gold</code>로 읽고 C#에서 빼서 <code>UPDATE ... SET gold = @newGold</code>로 쓰면, REPEATABLE READ라도 동시에 온 두 요청 중 하나의 차감이 사라진다. <code>SET gold = gold - @cost WHERE gold &gt;= @cost</code>처럼 DB가 최신 값으로 계산하게 한다.</li>
+      <li><strong>정원과 한정 수량은 쓰기 치우침이다.</strong> 길드 정원, 레이드 자리, 선착순 보상처럼 "개수를 세고 넣는" 로직은 스냅샷 격리에서 넘친다. 길드 행을 <code>FOR UPDATE</code>로 잠그고 세거나, 길드 행의 <code>member_count</code>를 조건부로 올려 충돌을 한 행에 모은다.</li>
+      <li><strong>긴 집계 트랜잭션이 DB 전체를 무겁게 한다.</strong> 랭킹 정산이나 통계 쿼리가 운영 DB에서 몇십 분 돌면, 그 스냅샷이 필요로 하는 옛 버전을 아무도 지우지 못한다. InnoDB의 history list length가 치솟고 모든 조회가 긴 사슬을 거슬러 가느라 느려진다. 집계는 복제본에서 돌리거나 짧게 나눈다(<a data-ref="database/scaling-db">DB 확장: 복제와 샤딩</a>).</li>
+      <li><strong>SQL Server라면 RCSI를 검토한다.</strong> 기본 READ COMMITTED에서는 조회가 갱신의 락을 기다린다. 접속 피크에 캐릭터 조회가 저장 쿼리 뒤에 줄을 서는 일이 RCSI로 크게 준다. 대신 tempdb 버전 저장소 사용량을 지켜본다.</li>
+      <li><strong>재시도 대상 오류를 정해 둔다.</strong> 직렬화 실패(PostgreSQL SQLSTATE <code>40001</code>), 데드락(MySQL 1213, PostgreSQL <code>40P01</code>, SQL Server 1205), 스냅샷 갱신 충돌(SQL Server 3960)은 다시 하면 되는 정상 결과다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><strong>같은 이름이 같은 보장이 아니다.</strong> MySQL의 REPEATABLE READ와 PostgreSQL의 REPEATABLE READ는 갱신 손실을 다르게 다룬다. 엔진을 옮기거나 둘을 함께 쓰면 격리 가정을 다시 확인한다.</li>
+      <li><strong>MVCC에도 락은 남는다.</strong> 풀리는 것은 읽기와 쓰기 사이다. 같은 행을 고치려는 쓰기끼리는 여전히 기다린다.</li>
+      <li><strong>스냅샷 읽기와 잠그는 읽기를 섞으면 헷갈린다.</strong> InnoDB에서 같은 트랜잭션 안의 <code>SELECT</code>와 <code>SELECT ... FOR UPDATE</code>는 서로 다른 값을 볼 수 있다. 하나는 스냅샷을, 하나는 최신 값을 본다.</li>
+      <li><strong>격리 수준 설정의 범위를 확인한다.</strong> 세션 단위로 바꾼 설정은 커넥션 풀에서 다시 빌린 연결에 남을 수 있다. 트랜잭션을 시작할 때 그 트랜잭션에만 지정하는 쪽이 안전하다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
