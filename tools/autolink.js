@@ -80,3 +80,8 @@ for (const c of window.CATALOG) {
   }
 }
 console.log((apply ? "적용 " : "후보 ") + total + "건");
+if (apply) {
+  // 링크가 바뀌었으니 역링크 색인도 다시 만든다
+  const links = require("./build-links.js");
+  fs.writeFileSync(links.outFile, links.build());
+}

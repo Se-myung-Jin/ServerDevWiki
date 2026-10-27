@@ -239,15 +239,18 @@
       }
     }
     menuBtn.addEventListener("click", function () { setMenu(!body.classList.contains("side-open")); });
-    document.querySelector(".topbar__search").addEventListener("click", function () { setMenu(true, true); });
+    var palette = buildPalette();
+    document.querySelector(".topbar__search").addEventListener("click", function () { palette.open(); });
     document.querySelector(".side__close").addEventListener("click", function () { setMenu(false); });
     backdrop.addEventListener("click", function () { setMenu(false); });
     document.addEventListener("keydown", function (e) {
       var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+      if (palette.isOpen()) return;
       if (e.key === "Escape" && body.classList.contains("side-open")) setMenu(false);
       else if ((e.key === "/" && !typing) || (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey))) {
         e.preventDefault();
-        setMenu(true, true);
+        setMenu(false);
+        palette.open();
       }
     });
 
@@ -274,6 +277,256 @@
     document.addEventListener("click", function (e) {
       var b = e.target.closest && e.target.closest(".blank");
       if (b && root.classList.contains("study")) b.classList.toggle("is-open");
+    });
+  }
+
+  // ---------- search palette ----------
+
+  // 최근에 연 문서. 이 브라우저에만 남는다.
+  function recentIds() {
+    try { return JSON.parse(store("recent") || "[]").filter(function (id) { return findTopic(id); }); }
+    catch (e) { return []; }
+  }
+  function rememberVisit(id) {
+    var list = recentIds().filter(function (x) { return x !== id; });
+    list.unshift(id);
+    store("recent", JSON.stringify(list.slice(0, 8)));
+  }
+
+  // 검색 대상: 모든 문서(제목·요약·태그·분야)와 분야 첫 화면, 점검 문항.
+  function searchEntries() {
+    var list = [];
+    CATALOG.forEach(function (cat) {
+      list.push({ kind: "cat", title: cat.title, sub: cat.desc || "", href: catHref(cat), tags: [], cat: cat });
+      cat.topics.forEach(function (t) {
+        list.push({
+          kind: "topic", id: topicId(cat, t), title: t.title, sub: t.summary || "", tags: t.tags || [],
+          href: topicHref(cat, t), cat: cat, importance: t.importance,
+        });
+      });
+    });
+    list.push({ kind: "page", title: "점검 문항 풀기", sub: "분야와 중요도를 골라 무작위로 푼다", href: ROOT + "quiz.html", tags: [] });
+    list.forEach(function (e, i) {
+      e.order = i;
+      e.t = e.title.toLowerCase();
+      e.g = e.tags.join(" ").toLowerCase();
+      e.c = e.cat ? e.cat.title.toLowerCase() : "";
+      e.s = e.sub.toLowerCase();
+    });
+    return list;
+  }
+
+  // 낱말마다 어디에 걸렸는지로 점수를 매긴다. 모든 낱말이 어딘가에 걸려야 결과에 남는다.
+  function scoreEntry(e, words) {
+    var total = 0;
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i], best = 0;
+      var tight = e.t.replace(/\s+/g, "");
+      if (e.t.indexOf(w) === 0 || tight.indexOf(w) === 0) best = 100;
+      else if (e.t.indexOf(w) !== -1 || tight.indexOf(w) !== -1) best = 70;
+      else if (e.g.indexOf(w) !== -1) best = 45;
+      else if (e.c.indexOf(w) !== -1) best = 30;
+      else if (e.s.indexOf(w) !== -1) best = 15;
+      if (!best) return 0;
+      total += best;
+    }
+    if (e.kind === "cat") total += 10;
+    if (e.importance === "핵심") total += 4;
+    return total;
+  }
+
+  function markTitle(title, words) {
+    var lower = title.toLowerCase(), hits = [];
+    words.forEach(function (w) {
+      var at = lower.indexOf(w);
+      if (at !== -1) hits.push([at, at + w.length]);
+    });
+    hits.sort(function (a, b) { return a[0] - b[0]; });
+    var out = "", pos = 0;
+    hits.forEach(function (h) {
+      if (h[0] < pos) return;
+      out += esc(title.slice(pos, h[0])) + "<mark>" + esc(title.slice(h[0], h[1])) + "</mark>";
+      pos = h[1];
+    });
+    return out + esc(title.slice(pos));
+  }
+
+  function buildPalette() {
+    var entries = searchEntries();
+    var box = el(
+      '<div class="palette" hidden>' +
+        '<div class="palette__panel" role="dialog" aria-modal="true" aria-label="문서 검색">' +
+          '<div class="palette__bar">' +
+            '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg>' +
+            '<input type="search" class="palette__input" placeholder="문서, 태그, 분야 검색" aria-label="검색어" ' +
+              'role="combobox" aria-expanded="true" aria-controls="palette-list" autocomplete="off" spellcheck="false">' +
+            '<kbd>Esc</kbd>' +
+          "</div>" +
+          '<ul class="palette__list" id="palette-list" role="listbox"></ul>' +
+          '<div class="palette__foot"><span><kbd>↑</kbd><kbd>↓</kbd> 이동</span><span><kbd>Enter</kbd> 열기</span>' +
+            "<span><kbd>/</kbd> 또는 <kbd>Ctrl</kbd><kbd>K</kbd> 로 언제든 연다</span></div>" +
+        "</div>" +
+      "</div>"
+    );
+    document.body.appendChild(box);
+    var input = box.querySelector(".palette__input");
+    var list = box.querySelector(".palette__list");
+    var shown = [], active = 0, lastFocus = null;
+
+    function row(e, i, words) {
+      var where = e.kind === "topic" ? esc(e.cat.title) : e.kind === "cat" ? "분야" : "페이지";
+      var star = e.importance === "핵심" ? '<span class="palette__core">★</span>' : "";
+      return (
+        '<li role="option" id="pal-' + i + '" data-i="' + i + '" class="palette__item' + (i === active ? " is-active" : "") + '"' +
+          (i === active ? ' aria-selected="true"' : "") + ">" +
+          '<a href="' + e.href + '" tabindex="-1">' +
+            '<span class="palette__title">' + star + markTitle(e.title, words) + "</span>" +
+            '<span class="palette__where">' + where + "</span>" +
+            (e.sub ? '<span class="palette__sub">' + esc(e.sub) + "</span>" : "") +
+          "</a></li>"
+      );
+    }
+
+    function render() {
+      var q = input.value.trim().toLowerCase();
+      var words = q ? q.split(/\s+/) : [];
+      var head = "";
+      if (!words.length) {
+        var recent = recentIds().map(function (id) {
+          for (var i = 0; i < entries.length; i++) if (entries[i].id === id) return entries[i];
+          return null;
+        }).filter(Boolean);
+        shown = recent.length ? recent : entries.filter(function (e) { return e.kind === "cat"; });
+        head = '<li class="palette__head" role="presentation">' + (recent.length ? "최근 본 문서" : "분야") + "</li>";
+      } else {
+        shown = entries
+          .map(function (e) { return { e: e, s: scoreEntry(e, words) }; })
+          .filter(function (x) { return x.s > 0; })
+          .sort(function (a, b) { return b.s - a.s || a.e.order - b.e.order; })
+          .slice(0, 40)
+          .map(function (x) { return x.e; });
+      }
+      if (active >= shown.length) active = 0;
+      list.innerHTML = shown.length
+        ? head + shown.map(function (e, i) { return row(e, i, words); }).join("")
+        : '<li class="palette__none" role="presentation">"' + esc(input.value.trim()) + '"에 맞는 문서가 없습니다</li>';
+      input.setAttribute("aria-activedescendant", shown.length ? "pal-" + active : "");
+    }
+
+    function move(d) {
+      if (!shown.length) return;
+      active = (active + d + shown.length) % shown.length;
+      Array.prototype.forEach.call(list.querySelectorAll(".palette__item"), function (li) {
+        var on = +li.getAttribute("data-i") === active;
+        li.classList.toggle("is-active", on);
+        if (on) { li.setAttribute("aria-selected", "true"); li.scrollIntoView({ block: "nearest" }); }
+        else li.removeAttribute("aria-selected");
+      });
+      input.setAttribute("aria-activedescendant", "pal-" + active);
+    }
+
+    function open() {
+      if (!box.hidden) { input.focus(); return; }
+      lastFocus = document.activeElement;
+      box.hidden = false;
+      document.body.classList.add("palette-open");
+      active = 0;
+      input.value = "";
+      render();
+      input.focus();
+    }
+    function close() {
+      box.hidden = true;
+      document.body.classList.remove("palette-open");
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+
+    input.addEventListener("input", function () { active = 0; render(); });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        if (shown[active]) location.href = shown[active].href;
+      } else if (e.key === "Escape") { e.preventDefault(); close(); }
+    });
+    box.addEventListener("mousedown", function (e) { if (e.target === box) close(); });
+    list.addEventListener("mousemove", function (e) {
+      var li = e.target.closest && e.target.closest(".palette__item");
+      if (li && +li.getAttribute("data-i") !== active) move(+li.getAttribute("data-i") - active);
+    });
+    return { open: open, close: close, isOpen: function () { return !box.hidden; } };
+  }
+
+  // ---------- backlinks ----------
+
+  // links.js(역링크 색인)는 문서 페이지에서만 필요해서 그때 불러온다.
+  function loadBacklinks(done) {
+    if (window.BACKLINKS) return done(window.BACKLINKS);
+    var s = document.createElement("script");
+    s.src = ROOT + "assets/links.js";
+    s.onload = function () { done(window.BACKLINKS || {}); };
+    s.onerror = function () { done({}); };
+    document.head.appendChild(s);
+  }
+
+  function relatedCard(f) {
+    return (
+      '<a class="rel-card" href="' + topicHref(f.cat, f.topic) + '">' +
+        '<span class="rel-card__cat">' + esc(f.cat.title) + "</span>" +
+        '<span class="rel-card__title">' + esc(f.topic.title) + " " + badge(f.topic.importance) + "</span>" +
+        (f.topic.summary ? '<span class="rel-card__sum">' + esc(f.topic.summary) + "</span>" : "") +
+      "</a>"
+    );
+  }
+
+  // 문서 끝에 "이 문서를 가리키는 문서"와 "같은 태그 문서"를 붙인다.
+  function renderRelated(main, found, id) {
+    loadBacklinks(function (map) {
+      var back = (map[id] || []).map(findTopic).filter(Boolean);
+      var seen = {};
+      seen[id] = true;
+      back.forEach(function (f) { seen[topicId(f.cat, f.topic)] = true; });
+      var tags = found.topic.tags || [];
+      var same = found.cat.topics.filter(function (t) {
+        if (seen[topicId(found.cat, t)]) return false;
+        return (t.tags || []).some(function (g) { return tags.indexOf(g) !== -1; });
+      }).map(function (t) { return { cat: found.cat, topic: t }; });
+      if (!back.length && !same.length) return;
+
+      var MAX = 6;
+      function group(title, note, items, key) {
+        if (!items.length) return "";
+        var more = items.length > MAX
+          ? '<button type="button" class="rel-more" data-more="' + key + '">' + (items.length - MAX) + "개 더 보기</button>"
+          : "";
+        return (
+          '<div class="rel-group">' +
+            '<h3 class="rel-group__title">' + title + ' <small>' + items.length + "</small></h3>" +
+            '<p class="rel-group__note">' + note + "</p>" +
+            '<div class="rel-grid" data-group="' + key + '">' +
+              items.map(function (f, i) {
+                return i < MAX ? relatedCard(f) : relatedCard(f).replace('class="rel-card"', 'class="rel-card" hidden');
+              }).join("") +
+            "</div>" + more +
+          "</div>"
+        );
+      }
+      var html =
+        '<section class="related" aria-label="연결된 문서">' +
+          '<h2 id="related">연결된 문서</h2>' +
+          group("이 문서를 가리키는 문서", "본문에서 이 문서로 링크를 건 문서다. 이 개념이 어디에 쓰이는지 따라가 볼 수 있다.", back, "back") +
+          group("같은 태그 문서", "# " + tags.map(esc).join(" · # ") + " 태그를 함께 쓰는 문서다.", same, "tag") +
+        "</section>";
+      var pager = main.querySelector(".pager");
+      if (pager) pager.insertAdjacentHTML("beforebegin", html);
+      else main.insertAdjacentHTML("beforeend", html);
+      main.querySelectorAll(".rel-more").forEach(function (b) {
+        b.addEventListener("click", function () {
+          main.querySelectorAll('[data-group="' + b.getAttribute("data-more") + '"] .rel-card[hidden]').forEach(function (c) { c.hidden = false; });
+          b.remove();
+        });
+      });
     });
   }
 
@@ -563,6 +816,64 @@
     if (tags.indexOf(initial) !== -1) apply(initial);
   }
 
+  // 넓은 화면에서는 본문 오른쪽에 목차를 붙여 두고, 지금 읽는 절을 강조한다.
+  // 오른쪽에 자리가 없으면 숨기고 본문 위의 목차만 쓴다.
+  var RAIL_W = 232, RAIL_GAP = 40;
+  function buildTocRail(main, tocHtml) {
+    var rail = el(tocHtml.replace('<nav class="toc">', '<nav class="toc-rail" aria-label="목차">'));
+    rail.insertAdjacentHTML("beforeend", '<a class="toc-rail__top" href="#">↑ 맨 위로</a>');
+    document.body.appendChild(rail);
+    var inline = main.querySelector(".toc");
+    var links = Array.prototype.slice.call(rail.querySelectorAll("ol a"));
+    var targets = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); });
+
+    function place() {
+      var w = main.getBoundingClientRect().width;
+      var room = (window.innerWidth - w) / 2 - RAIL_GAP;
+      var fits = room >= RAIL_W + 16;
+      document.documentElement.classList.toggle("has-rail", fits);
+      if (inline) inline.hidden = fits;
+      if (fits) rail.style.left = (window.innerWidth + w) / 2 + RAIL_GAP + "px";
+    }
+
+    var current = -1, ticking = false;
+    function spy() {
+      ticking = false;
+      var line = 96, at = -1;
+      for (var i = 0; i < targets.length; i++) {
+        if (targets[i] && targets[i].getBoundingClientRect().top <= line) at = i;
+        else break;
+      }
+      // 맨 아래에 닿으면 마지막 절을 강조한다
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) at = targets.length - 1;
+      if (at === current) return;
+      current = at;
+      links.forEach(function (a, i) {
+        a.classList.toggle("is-active", i === at);
+        a.parentNode.classList.remove("is-within");
+      });
+      if (at < 0) return;
+      var li = links[at].parentNode.parentNode.closest("li");
+      if (li) li.classList.add("is-within");
+      var r = links[at].getBoundingClientRect(), rr = rail.getBoundingClientRect();
+      if (r.top < rr.top + 40 || r.bottom > rr.bottom - 40) rail.scrollTop += r.top - rr.top - rr.height / 2;
+    }
+    function onScroll() {
+      if (!ticking) { ticking = true; requestAnimationFrame(spy); }
+    }
+
+    rail.querySelector(".toc-rail__top").addEventListener("click", function (e) {
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", function () { place(); onScroll(); });
+    var range = document.getElementById("width-range");
+    if (range) range.addEventListener("input", place);
+    place();
+    spy();
+  }
+
   function renderTopic(main, found, id) {
     var body = main.querySelector(".doc-body");
     if (!found) {
@@ -630,6 +941,9 @@
         (next ? '<a class="next" href="' + topicHref(cat, next) + '"><small>다음 →</small>' + esc(next.title) + "</a>" : "<span></span>") +
       "</nav>"
     );
+    if (toc) buildTocRail(main, toc);
+    renderRelated(main, found, id);
+    rememberVisit(id);
   }
 
   // ---------- 문서 참조: <a data-ref="분야/slug">…</a> ----------
