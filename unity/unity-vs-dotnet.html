@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unity의 C#은 무엇이 다른가 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="unity/unity-vs-dotnet">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../csharp/gc-basics.html">GC 동작과 세대</a>, <a href="../csharp/equality.html">동등성과 해시</a>, <a href="../csharp/jit-aot.html">JIT와 AOT</a>, <a href="coroutines.html">Unity 코루틴</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      같은 C#이라도 Unity에서 도는 코드는 서버의 .NET과 다른 런타임 위에 있다. 세 가지가 특히 다르다. 첫째, <strong>실행 방식</strong>이다. 모바일과 콘솔 빌드는 대부분 <span class="blank">IL2CPP</span>로 C# 코드를 C++로 바꿔 미리 컴파일한다. 그래서 실행 중에 코드를 만드는 기능이 막히고, 쓰지 않는 것처럼 보이는 코드는 빌드에서 잘려 나간다.
+    </p>
+    <p>
+      둘째, <strong>GC</strong>다. Unity의 수거기(Boehm-Demers-Weiser)는 세대를 나누지 않고 압축도 하지 않는다. .NET에서 "금방 죽는 객체는 싸다"던 전제가 성립하지 않아, 프레임마다 생기는 작은 할당이 그대로 멈춤과 <a data-ref="operating-system/fragmentation">단편화</a>가 된다. 셋째, <strong>null 검사</strong>다. <code>UnityEngine.Object</code>는 <code>==</code>를 오버로드해 파괴된 오브젝트를 null처럼 보이게 하는데, <code>?.</code>와 <code>??</code>와 <code>is null</code>은 이 오버로드를 타지 않는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>스크립팅 백엔드: Mono와 IL2CPP</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 196" role="img" aria-label="C# 코드는 IL로 컴파일된다. Mono 백엔드는 실행 중에 IL을 JIT로 기계어로 바꾼다. IL2CPP 백엔드는 빌드 때 IL을 C++로 바꾸고 플랫폼 C++ 컴파일러가 기계어로 만들어, 실행 중에는 새 코드를 만들 수 없다">
+        <defs><marker id="ud-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-cell" x="20" y="74" width="100" height="44" rx="6"/>
+        <text class="f-text" x="70" y="101" text-anchor="middle">C# 코드</text>
+        <line class="f-line" x1="120" y1="96" x2="156" y2="96" marker-end="url(#ud-a)"/>
+        <rect class="f-cell" x="158" y="74" width="100" height="44" rx="6"/>
+        <text class="f-text" x="208" y="94" text-anchor="middle">IL</text>
+        <text class="f-sub" x="208" y="110" text-anchor="middle">어셈블리(.dll)</text>
+
+        <line class="f-line" x1="258" y1="86" x2="300" y2="44" marker-end="url(#ud-a)"/>
+        <rect class="f-hit" x="302" y="20" width="240" height="44" rx="6"/>
+        <text class="f-strong" x="316" y="47">Mono</text>
+        <text class="f-text" x="362" y="47">실행 중 JIT → 기계어</text>
+        <text class="f-sub" x="556" y="47">에디터, 데스크톱 개발 빌드</text>
+
+        <line class="f-line" x1="258" y1="106" x2="300" y2="148" marker-end="url(#ud-a)"/>
+        <rect class="f-hit" x="302" y="126" width="190" height="44" rx="6"/>
+        <text class="f-strong" x="316" y="153">IL2CPP</text>
+        <text class="f-text" x="376" y="153">빌드 때 C++로</text>
+        <line class="f-line" x1="492" y1="148" x2="514" y2="148" marker-end="url(#ud-a)"/>
+        <rect class="f-miss" x="516" y="126" width="196" height="44" rx="6"/>
+        <text class="f-on" x="614" y="153" text-anchor="middle">C++ 컴파일러 → 기계어</text>
+        <text class="f-sub" x="302" y="188">iOS, 콘솔, 대부분의 모바일 빌드. 실행 중에는 새 코드를 만들 수 없다</text>
+      </svg>
+      <figcaption>Mono는 서버 .NET처럼 실행 중에 IL을 컴파일한다. IL2CPP는 빌드할 때 전부 C++로 바꿔 미리 컴파일한다. iOS와 콘솔은 실행 중 코드 생성을 허용하지 않아 IL2CPP만 쓸 수 있다.</figcaption>
+    </figure>
+    <p>
+      IL2CPP는 서버 .NET의 Native AOT와 같은 종류의 제약을 갖는다(<a href="../csharp/jit-aot.html">JIT와 AOT</a>).
+    </p>
+    <ul>
+      <li><strong>실행 중 코드 생성이 안 된다.</strong> <code>System.Reflection.Emit</code>, 식 트리를 컴파일해 빠른 접근자를 만드는 라이브러리가 동작하지 않거나 느린 해석 경로로 떨어진다.</li>
+      <li><strong>코드 스트리핑이 리플렉션을 깨뜨린다.</strong> 빌드 크기를 줄이려고 정적으로 참조되지 않는 타입과 멤버를 지운다. 이름으로 찾아 부르거나 리플렉션으로 채우는 직렬화기는 필요한 생성자나 속성이 사라져 실행 중에 실패한다. <code>link.xml</code>이나 <code>[Preserve]</code> 특성으로 지키지 말라고 알려 줘야 한다.</li>
+      <li><strong>제네릭은 미리 만들어 둔 조합만 빠르다.</strong> 예전에는 <a data-ref="csharp/value-reference-types">값 형식</a>을 인자로 쓰는 제네릭 가상 메서드처럼 빌드 때 보이지 않던 조합이 실행 중 "AOT 코드가 없다" 오류를 냈다. 최근 판은 공유 구현으로 대부분 돌아가게 만들었지만, 그 경로는 전용 코드보다 느리다.</li>
+    </ul>
+    <p>
+      그래서 직렬화처럼 리플렉션에 기대는 일은 빌드 때 코드를 만들어 두는 방식이 맞다. 서버 쪽의 소스 생성기와 같은 생각이다(<a href="../csharp/reflection-sourcegen.html">리플렉션과 소스 생성기</a>).
+    </p>
+
+    <h3>API와 언어 버전</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>항목</th><th>Unity(2022 LTS, Unity 6)</th><th>서버 .NET(8 이후)</th></tr></thead>
+      <tbody>
+        <tr><td>API 호환 수준</td><td>.NET Standard 2.1 또는 .NET Framework 호환 중 고른다</td><td>최신 .NET 전체 API</td></tr>
+        <tr><td>C# 언어</td><td>C# 9 수준. 그 뒤 기능은 대부분 못 쓴다</td><td>C# 12 이후</td></tr>
+        <tr><td>JIT·AOT</td><td>Mono JIT 또는 IL2CPP</td><td>RyuJIT, 계층 컴파일, Native AOT 선택</td></tr>
+        <tr><td>GC</td><td>Boehm, 비세대·비압축, 증분 모드</td><td>세대별·압축, 서버 GC·<a data-ref="csharp/gc-modes">백그라운드 GC</a></td></tr>
+        <tr><td>스레드</td><td>엔진 API는 대부분 메인 스레드 전용</td><td>제약 없음</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      C# 9 수준이라는 것은 레코드, init 접근자, 패턴 매칭 개선까지는 쓰고, 그 뒤에 나온 file-scoped namespace나 required 멤버, 컬렉션 식 같은 것은 쓰지 못한다는 뜻이다. <code>Span&lt;T&gt;</code>는 있지만, 서버 .NET이 그 위에 쌓은 많은 최적화 API(예: 최근 판의 <code>FrozenDictionary</code>, 새 LINQ 메서드)는 없다. Unity는 런타임을 .NET CoreCLR로 옮기는 계획을 공개해 두었다. 옮겨지면 이 표의 차이가 크게 줄어들지만, 쓰는 판에서 실제로 무엇이 바뀌었는지는 그 판의 문서로 확인한다.
+    </p>
+
+    <h3>GC: 세대도 압축도 없다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 190" role="img" aria-label="수거 뒤 살아남은 객체 사이에 빈 칸이 흩어져 있다. 압축하는 GC는 살아남은 것을 한쪽으로 모아 빈 공간을 이어 붙인다. Unity의 GC는 압축하지 않아 빈 공간 총량은 충분해도 큰 배열 하나를 놓을 자리가 없을 수 있다">
+        <text class="f-strong" x="20" y="34">압축하지 않는 GC(Unity)</text>
+        <rect class="f-hit" x="20" y="46" width="60" height="34"/>
+        <rect class="f-cell2" x="80" y="46" width="50" height="34"/>
+        <rect class="f-hit" x="130" y="46" width="40" height="34"/>
+        <rect class="f-cell2" x="170" y="46" width="70" height="34"/>
+        <rect class="f-hit" x="240" y="46" width="60" height="34"/>
+        <rect class="f-cell2" x="300" y="46" width="50" height="34"/>
+        <rect class="f-hit" x="350" y="46" width="40" height="34"/>
+        <rect class="f-cell2" x="390" y="46" width="60" height="34"/>
+        <rect class="f-hit" x="450" y="46" width="50" height="34"/>
+        <text class="f-sub" x="520" y="62">빈 칸 합계는 230인데</text>
+        <text class="f-sub" x="520" y="78">한 덩어리는 최대 70</text>
+
+        <text class="f-strong" x="20" y="120">압축하는 GC(서버 .NET)</text>
+        <rect class="f-hit" x="20" y="132" width="60" height="34"/>
+        <rect class="f-hit" x="80" y="132" width="40" height="34"/>
+        <rect class="f-hit" x="120" y="132" width="60" height="34"/>
+        <rect class="f-hit" x="180" y="132" width="40" height="34"/>
+        <rect class="f-hit" x="220" y="132" width="50" height="34"/>
+        <rect class="f-cell2" x="270" y="132" width="230" height="34"/>
+        <text class="f-sub" x="385" y="153" text-anchor="middle">이어진 빈 공간 230</text>
+        <text class="f-sub" x="520" y="148">살아남은 것을 옮기고</text>
+        <text class="f-sub" x="520" y="164">참조를 고쳐 준다</text>
+      </svg>
+      <figcaption>칠한 칸이 살아남은 객체, 흰 칸이 빈 공간이다. 압축이 없으면 힙이 조각나서, 남은 메모리가 넉넉해도 큰 배열을 잡을 때 힙을 더 늘려야 한다.</figcaption>
+    </figure>
+    <p>
+      .NET의 세대별 수거는 갓 만든 객체가 모인 0세대만 훑고 끝낼 수 있어서, 짧게 사는 객체가 많아도 비용이 작다(<a href="../csharp/gc-basics.html">GC 동작과 세대</a>). Unity의 수거기는 세대가 없어 수거할 때마다 살아 있는 관리 힙 전체를 훑는다. 힙이 커질수록 한 번의 수거가 비싸지고, 짧게 사는 객체든 오래 사는 객체든 비용이 같다.
+    </p>
+    <p>
+      또 <strong>보수적</strong> 수거기다. 스택이나 레지스터의 어떤 값이 힙 객체 주소처럼 보이면, 진짜 참조인지 확신하지 못해도 그 객체를 살려 둔다. 산 객체를 실수로 지우는 일은 없지만, 죽은 객체를 오래 남기는 일은 생긴다. 그리고 압축이 없어 힙이 조각나고, 한 번 늘어난 힙은 잘 줄어들지 않는다.
+    </p>
+    <p>
+      <strong>증분 GC</strong>(2019 판부터, 새 프로젝트는 기본으로 켜짐)는 한 번의 수거를 여러 프레임에 조금씩 나눠 한 프레임의 멈춤을 줄인다. 전체 작업량은 줄지 않는다. 표시하는 도중에 참조가 많이 바뀌면 다시 훑을 것이 쌓여 결국 한 번에 몰아서 하게 되고, 참조를 쓸 때마다 GC에 알리는 코드(쓰기 장벽)가 끼어들어 일반 코드도 조금 느려진다. 그래서 Unity에서 목표는 수거를 빠르게 만드는 것이 아니라 <strong>프레임마다 생기는 할당을 0에 가깝게 만드는 것</strong>이다.
+    </p>
+
+    <h3>프레임마다 할당이 생기는 자리</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>자리</th><th>왜 할당하나</th><th>대신</th></tr></thead>
+      <tbody>
+        <tr><td>문자열 조립(UI 숫자 갱신, 로그)</td><td>매번 새 문자열(<a href="../csharp/strings.html">문자열</a>)</td><td>바뀔 때만 갱신, 캐시, <code>StringBuilder</code> 재사용</td></tr>
+        <tr><td>박싱(값 형식을 <code>object</code>나 인터페이스로)</td><td>힙에 상자를 만든다(<a href="../csharp/boxing.html">박싱</a>)</td><td>제네릭 API, 구조체 비교자</td></tr>
+        <tr><td>바깥 변수를 캡처하는 람다</td><td>클로저 객체와 대리자(<a href="../csharp/delegates-events.html">대리자와 이벤트</a>)</td><td>캡처 없는 정적 람다, 미리 만든 대리자</td></tr>
+        <tr><td>LINQ</td><td>열거자와 대리자, 중간 컬렉션(<a href="../csharp/linq-deferred.html">LINQ와 지연 실행</a>)</td><td>매 프레임 경로에서는 반복문</td></tr>
+        <tr><td>배열을 돌려주는 엔진 API</td><td>부를 때마다 새 배열</td><td>결과를 담을 리스트나 버퍼를 넘기는 오버로드(<code>NonAlloc</code> 계열)</td></tr>
+        <tr><td><code>params</code> 인자, 코루틴 대기 객체</td><td>배열, 대기 객체</td><td>고정 인자 오버로드, 대기 객체 캐시</td></tr>
+        <tr><td>매 프레임 <code>GetComponent</code></td><td>할당보다는 탐색 비용</td><td><code>Awake</code>에서 한 번 찾아 필드에 둔다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      예전에는 <code>List&lt;T&gt;</code>를 <code>foreach</code>로 돌기만 해도 열거자가 박싱되어 할당이 생겼다. 오래된 Mono 컴파일러의 문제였고 지금 판에서는 생기지 않는다. 다만 인터페이스(<code>IEnumerable&lt;T&gt;</code>)로 받은 컬렉션을 <code>foreach</code>로 돌면 지금도 열거자가 박싱된다. 매 프레임 60번 부르는 코드의 할당 하나는 초당 60개가 되므로, 측정은 프로파일러의 GC Alloc 열로 한다. 에디터는 빌드에 없는 진단용 할당을 더 하므로, 실제 기기의 개발 빌드에서 잰다.
+    </p>
+
+    <h3>null 검사가 두 가지다</h3>
+    <p>
+      <code>GameObject</code>나 컴포넌트 같은 <code>UnityEngine.Object</code>는 관리 쪽 C# 객체와 엔진 안의 네이티브 객체가 짝을 이룬다. <code>Destroy</code>를 부르면 네이티브 쪽이 사라지고, C# 객체는 누가 참조하는 한 남는다. Unity는 이 상태를 알려 주려고 <code>==</code>를 오버로드해, 파괴된 오브젝트와 <code>null</code>을 비교하면 <code>true</code>를 돌려주게 했다. 이런 객체를 흔히 "가짜 null"이라고 부른다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>표현</th><th>파괴된 오브젝트에 대해</th><th>이유</th></tr></thead>
+      <tbody>
+        <tr><td><code>obj == null</code>, <code>!obj</code></td><td><code>true</code>. 파괴를 잡는다</td><td>Unity의 연산자 오버로드를 탄다</td></tr>
+        <tr><td><code>obj?.DoSomething()</code></td><td>호출된다. 네이티브 쪽을 건드리는 순간 <code>MissingReferenceException</code></td><td>언어 규칙상 참조 자체만 본다</td></tr>
+        <tr><td><code>obj ?? fallback</code></td><td><code>obj</code>를 고른다</td><td>위와 같다</td></tr>
+        <tr><td><code>obj is null</code>, <code>ReferenceEquals(obj, null)</code></td><td><code>false</code></td><td>오버로드를 건너뛰는 진짜 참조 비교다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      서버 C#에서 권장하던 습관(<code>?.</code>, <code>??</code>, <code>is null</code>)이 Unity 오브젝트 앞에서는 파괴 검사를 건너뛴다(<a href="../csharp/immutability-null.html">불변과 null 다루기</a>, <a href="../csharp/equality.html">동등성과 해시</a>). Unity 오브젝트에는 <code>==</code>나 <code>if (obj)</code>를 쓰고, 일반 C# 객체에는 지금처럼 쓴다. 분석기를 켜 두면 이 자리를 짚어 준다. 오버로드된 <code>==</code>는 네이티브 쪽이 살아 있는지 확인하므로 일반 참조 비교보다 비싸다는 점도 함께 기억해 둔다.
+    </p>
+
+    <h3>메인 스레드와 잡 시스템</h3>
+    <p>
+      Unity의 엔진 API(오브젝트 생성, 컴포넌트 접근, 트랜스폼 변경)는 대부분 메인 스레드에서만 부를 수 있다. 다른 스레드에서 부르면 예외가 나거나 경고가 찍힌다. <code>Task.Run</code>으로 계산을 넘겼다면 결과를 반영하는 부분은 메인 스레드로 돌아와서 한다(<a href="coroutines.html">Unity 코루틴</a>의 async 비교 참고). 대량 계산을 여러 코어에 나누는 공식 경로는 잡 시스템이다. 값 형식 데이터만 담은 작업을 예약하면 엔진의 작업자 스레드들이 나눠 돌리고, Burst 컴파일러가 그 코드를 <a data-ref="computer-architecture/simd">SIMD</a> 명령까지 써서 기계어로 만든다. 관리 객체를 쓸 수 없는 대신 경합 검사를 엔진이 해 준다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>클라이언트와 공유하는 코드는 낮은 쪽에 맞춘다.</strong> 패킷 정의, 입력 검증, 데미지 공식, 기획 데이터 로더를 클라이언트와 서버가 함께 쓰는 경우가 많다. 이런 공유 어셈블리는 <strong>.NET Standard 2.1</strong>을 타깃으로 하고 C# 언어 버전을 9로 묶는다. 서버에서만 빌드해 보면 통과하던 코드가 Unity에 들어가는 순간 문법 오류나 없는 API로 막힌다. CI에서 공유 프로젝트를 두 조건 모두로 빌드해 두면 이 사고를 미리 잡는다(<a href="../operations/deploy-pipeline.html">배포 파이프라인</a>).
+      </li>
+      <li>
+        <strong>서버에서 멀쩡하던 코드가 클라이언트에서 할당 폭탄이 된다.</strong> 서버 GC는 패킷마다 LINQ로 걸러 만든 작은 리스트쯤은 0세대에서 싸게 치운다. 같은 코드가 클라이언트에서 매 프레임 돌면 Boehm GC의 전체 수거를 앞당기고 끊김이 된다. 공유 코드의 매 프레임 경로는 할당 없이 짠다는 규칙을 양쪽 팀이 함께 지킨다.
+      </li>
+      <li>
+        <strong>직렬화는 리플렉션 없이 돌아가는 방식을 고른다.</strong> 서버에서는 잘 되던 리플렉션 기반 직렬화가 IL2CPP 빌드에서 스트리핑으로 깨질 수 있다. 프로토콜은 빌드 때 코드를 만들어 두는 형식(Protobuf, 코드 생성을 쓰는 MessagePack 등)이 양쪽에서 안전하다(<a href="../server/protocol-choice.html">게임에서 프로토콜 고르기</a>). 버전이 섞일 때의 규칙은 <a href="../operations/protocol-compat.html">클라이언트와 서버의 판 호환</a>에서 다룬다.
+      </li>
+      <li>
+        <strong>공유 코드에 <code>==</code>와 <code>?.</code> 규칙을 섞지 않는다.</strong> 공유 어셈블리는 <code>UnityEngine</code>을 참조하지 않게 둔다. 그래야 서버 C# 습관이 그대로 맞고, Unity 오브젝트를 다루는 코드는 클라이언트 쪽에만 남는다.
+      </li>
+      <li>
+        <strong>클라이언트의 끊김 제보를 볼 때 GC를 의심할 줄 안다.</strong> 일정한 간격으로 수십 ms씩 끊긴다면 네트워크가 아니라 클라이언트 GC일 수 있다. 그 순간 서버에는 그 클라이언트의 입력이 잠깐 끊겼다 몰려 들어오는 모양으로 보인다(<a href="execution-loop.html">실행 루프와 FixedUpdate</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>"짧게 사는 객체는 싸다"는 .NET의 원칙을 Unity에 그대로 옮기지 않는다. 클라이언트에서는 임시 객체가 곧 수거 비용이다.</li>
+      <li>Unity 오브젝트에 <code>?.</code>, <code>??</code>, <code>is null</code>을 쓰면 파괴 검사를 건너뛴다. 일반 C# 객체에는 문제없다.</li>
+      <li>에디터(Mono)에서 되는 코드가 IL2CPP 빌드에서 깨질 수 있다. 리플렉션, 동적 코드 생성, 스트리핑에 걸리는 코드는 실제 빌드로 확인한다.</li>
+      <li>버전마다 지원 범위가 바뀐다. C# 언어 버전, API 호환 수준, GC 기본값은 쓰는 Unity 판의 문서로 확인한다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

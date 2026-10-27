@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unity 코루틴 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="unity/coroutines">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="execution-loop.html">실행 루프와 FixedUpdate</a>, <a href="../csharp/compiler-transforms.html">컴파일러가 바꿔 주는 것</a>, <a href="../csharp/async-basics.html">async와 await의 실체</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      Unity 코루틴은 스레드가 아니다. <code>yield return</code>이 들어 있는 메서드는 C# 컴파일러가 <code>IEnumerator</code>를 구현한 <span class="blank">상태 기계</span>로 바꾸고, 엔진이 그 반복자의 <code>MoveNext</code>를 <strong>메인 스레드에서</strong> 적당한 때마다 한 번씩 부른다. 한 번 부르면 다음 <code>yield</code>까지 실행하고 멈춘다. 무엇을 <code>yield</code> 하느냐가 다음에 언제 부를지를 정한다.
+    </p>
+    <p>
+      그래서 코루틴은 "시간에 걸쳐 조금씩 진행하는 일"에는 잘 맞고, "오래 걸리는 계산"에는 맞지 않는다. 안에서 무거운 계산이나 블로킹 호출을 하면 그동안 프레임 전체가 멈춘다. 그리고 코루틴은 그것을 시작한 오브젝트에 묶여 있어서, 오브젝트가 꺼지거나 파괴되면 예외도 로그도 없이 그 자리에서 멈춘다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>엔진이 반복자를 한 칸씩 진행시킨다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 196" role="img" aria-label="메인 스레드 한 줄 위에서 프레임마다 Update와 렌더링이 돌고, 그 사이 정해진 자리에서 엔진이 코루틴의 MoveNext를 불러 다음 yield까지 조금씩 실행한다. 기다리는 프레임에는 코루틴 코드가 실행되지 않는다">
+        <defs><marker id="co-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-sub" x="20" y="34">메인 스레드</text>
+        <line class="f-line" x1="110" y1="60" x2="740" y2="60" marker-end="url(#co-a)"/>
+        <text class="f-sub" x="740" y="84" text-anchor="end">시간</text>
+
+        <rect class="f-cell" x="110" y="44" width="70" height="32" rx="4"/>
+        <text class="f-sub" x="145" y="64" text-anchor="middle">Update</text>
+        <rect class="f-miss" x="180" y="44" width="50" height="32" rx="4"/>
+        <text class="f-on" x="205" y="64" text-anchor="middle">①</text>
+        <rect class="f-cell" x="230" y="44" width="64" height="32" rx="4"/>
+        <text class="f-sub" x="262" y="64" text-anchor="middle">렌더링</text>
+
+        <rect class="f-cell" x="300" y="44" width="70" height="32" rx="4"/>
+        <text class="f-sub" x="335" y="64" text-anchor="middle">Update</text>
+        <rect class="f-miss" x="370" y="44" width="50" height="32" rx="4"/>
+        <text class="f-on" x="395" y="64" text-anchor="middle">②</text>
+        <rect class="f-cell" x="420" y="44" width="64" height="32" rx="4"/>
+        <text class="f-sub" x="452" y="64" text-anchor="middle">렌더링</text>
+
+        <rect class="f-cell" x="490" y="44" width="70" height="32" rx="4"/>
+        <text class="f-sub" x="525" y="64" text-anchor="middle">Update</text>
+        <rect class="f-cell" x="560" y="44" width="64" height="32" rx="4"/>
+        <text class="f-sub" x="592" y="64" text-anchor="middle">렌더링</text>
+        <text class="f-sub" x="560" y="100" text-anchor="middle">기다리는 프레임: 실행 없음</text>
+
+        <rect class="f-miss" x="630" y="44" width="50" height="32" rx="4"/>
+        <text class="f-on" x="655" y="64" text-anchor="middle">③</text>
+
+        <text class="f-strong" x="20" y="146">코루틴 코드</text>
+        <rect class="f-hit" x="110" y="130" width="150" height="30" rx="4"/>
+        <text class="f-text" x="185" y="150" text-anchor="middle">① 시작 ~ yield null</text>
+        <rect class="f-hit" x="300" y="130" width="200" height="30" rx="4"/>
+        <text class="f-text" x="400" y="150" text-anchor="middle">② ~ yield WaitForSeconds</text>
+        <rect class="f-hit" x="580" y="130" width="160" height="30" rx="4"/>
+        <text class="f-text" x="660" y="150" text-anchor="middle">③ 이어서 끝까지</text>
+        <path class="f-line f-dash" fill="none" d="M205,76 L185,128"/>
+        <path class="f-line f-dash" fill="none" d="M395,76 L400,128"/>
+        <path class="f-line f-dash" fill="none" d="M655,76 L660,128"/>
+        <text class="f-sub" x="110" y="186">진한 칸이 엔진이 MoveNext를 부른 자리다. 다른 스레드는 한 번도 나오지 않는다.</text>
+      </svg>
+      <figcaption>코루틴의 세 구간은 모두 같은 메인 스레드에서, Update와 렌더링 사이사이에 끼어 실행된다. 기다리는 동안 다른 스레드가 대신 일하는 것이 아니라, 그냥 아무도 그 코드를 부르지 않는 것이다.</figcaption>
+    </figure>
+    <p>
+      컴파일러가 만드는 상태 기계는 <code>async</code> 메서드나 C# 반복자와 같은 원리다(<a href="../csharp/compiler-transforms.html">컴파일러가 바꿔 주는 것</a>). 지역 변수는 그 상태 기계 객체의 필드가 되어 힙에 남고, "어디까지 왔는지"는 정수 하나로 기억된다. 멈춰 있는 동안 CPU는 쓰지 않지만 메모리는 코루틴이 끝날 때까지 잡혀 있다. C++20 코루틴도 멈춘 상태를 프레임 객체에 담는다는 점이 같다. 다만 C++은 다시 부를 시점을 직접 정하고, Unity는 엔진이 정한다(<a href="../cpp/coroutines.html">C++20 코루틴</a>).
+    </p>
+
+    <h3>무엇을 yield 하느냐가 다음 시점을 정한다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>돌려주는 것</th><th>언제 이어지나</th><th>주의</th></tr></thead>
+      <tbody>
+        <tr><td><code>null</code></td><td>다음 프레임, 모든 <code>Update</code>가 끝난 뒤</td><td>가장 흔하다. 프레임마다 한 칸</td></tr>
+        <tr><td><code>new WaitForSeconds(t)</code></td><td>게임 시간으로 t초가 지난 뒤 첫 프레임</td><td><code>Time.timeScale = 0</code>이면 끝나지 않는다. 언제나 조금 늦다</td></tr>
+        <tr><td><code>new WaitForSecondsRealtime(t)</code></td><td>실제 시간으로 t초 뒤</td><td>일시 정지 화면에서 쓴다</td></tr>
+        <tr><td><code>new WaitForFixedUpdate()</code></td><td>그 프레임의 물리 단계가 끝난 뒤</td><td>물리가 0번 도는 프레임에는 다음 프레임까지 간다</td></tr>
+        <tr><td><code>new WaitForEndOfFrame()</code></td><td>그 프레임의 렌더링이 끝난 뒤</td><td>화면 캡처 같은 데 쓴다</td></tr>
+        <tr><td><code>new WaitUntil(() =&gt; cond)</code></td><td>조건이 참이 되는 첫 프레임</td><td>조건을 매 프레임 평가한다</td></tr>
+        <tr><td>다른 코루틴, 웹 요청 같은 <code>AsyncOperation</code></td><td>그것이 끝난 뒤</td><td>안쪽 코루틴이 멈추면 바깥도 영원히 기다린다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>오브젝트가 꺼지면 조용히 멈춘다</h3>
+    <p>
+      코루틴은 <code>StartCoroutine</code>을 부른 <code>MonoBehaviour</code>에 묶인다. 그 오브젝트의 수명을 따라가는데, 헷갈리는 경우가 있다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>상황</th><th>코루틴은</th></tr></thead>
+      <tbody>
+        <tr><td>게임 오브젝트를 파괴했다</td><td>멈춘다</td></tr>
+        <tr><td>게임 오브젝트를 비활성화했다(<code>SetActive(false)</code>)</td><td>멈춘다. 다시 활성화해도 이어지지 않는다</td></tr>
+        <tr><td>컴포넌트만 껐다(<code>enabled = false</code>)</td><td><strong>계속 돈다</strong></td></tr>
+        <tr><td>씬을 바꿨다</td><td>씬의 오브젝트가 파괴되면서 멈춘다</td></tr>
+        <tr><td><code>StopCoroutine</code>, <code>StopAllCoroutines</code></td><td>그 자리에서 멈춘다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      멈출 때 아무 일도 일어나지 않는다는 것이 문제다. <code>finally</code> 블록도, 코루틴 끝의 정리 코드도 실행되지 않는다. "서버 응답을 기다리는 동안 로딩 표시를 켜 두고 끝나면 끈다"를 코루틴 하나에 넣으면, 기다리는 중에 창이 닫혔을 때 로딩 표시가 남거나 결과 처리가 사라진다. 정리는 <code>OnDisable</code>이나 <code>OnDestroy</code>에 둔다.
+    </p>
+
+    <h3>값과 예외를 돌려받기 어렵다</h3>
+    <p>
+      <code>IEnumerator</code>에는 반환값이 없다. 결과를 넘기려면 콜백 인자를 받거나 필드에 써 둬야 한다. 예외도 마찬가지다. 코루틴 안에서 던진 예외는 로그에 찍히고 그 코루틴만 멈춘다. 바깥에서 <code>try</code>로 감쌀 방법이 없고, <code>yield return</code>은 <code>catch</code>가 있는 <code>try</code> 블록 안에 쓸 수 없다는 언어 제약도 있다.
+    </p>
+    <pre><code class="language-csharp">// 결과는 콜백으로, 실패도 콜백으로 넘긴다
+IEnumerator RequestProfile(long id, Action&lt;Profile&gt; done, Action&lt;string&gt; fail)
+{
+    using var req = UnityWebRequest.Get($"{baseUrl}/profile/{id}");
+    req.timeout = 5;                       // 초 단위. 안 주면 무한히 기다릴 수 있다
+    yield return req.SendWebRequest();     // 끝날 때까지 프레임마다 확인한다
+
+    if (req.result != UnityWebRequest.Result.Success) { fail(req.error); yield break; }
+    done(JsonUtility.FromJson&lt;Profile&gt;(req.downloadHandler.text));
+}</code></pre>
+
+    <h3>async/await와 비교</h3>
+    <p>
+      Unity도 <code>async</code>/<code>await</code>를 쓸 수 있다. 메인 스레드에 <code>UnitySynchronizationContext</code>가 깔려 있어서, 메인 스레드에서 시작한 <code>await</code>는 끝난 뒤 메인 스레드로 돌아와 이어진다(<a href="../csharp/sync-context.html">동기화 컨텍스트</a>). 반환값과 예외를 그대로 받을 수 있고, 여러 작업을 <code>Task.WhenAll</code>로 묶기도 쉽다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>구분</th><th>코루틴</th><th>async/await</th></tr></thead>
+      <tbody>
+        <tr><td>반환값·예외</td><td>콜백이나 필드로</td><td>그대로 받는다</td></tr>
+        <tr><td>오브젝트 수명</td><td>묶여 있다. 꺼지면 멈춘다</td><td>묶여 있지 않다. 오브젝트가 사라져도 계속 돈다</td></tr>
+        <tr><td>프레임 단위 대기</td><td><code>yield return null</code></td><td><code>Awaitable.NextFrameAsync()</code>(Unity 2023.1 이후, Unity 6 포함)</td></tr>
+        <tr><td>할당</td><td>코루틴마다 상태 기계, 대기 객체</td><td><code>Task</code>는 할당. Unity의 <code>Awaitable</code>은 풀링한다</td></tr>
+        <tr><td>멈추기</td><td><code>StopCoroutine</code></td><td><code>CancellationToken</code>. <code>destroyCancellationToken</code>(2022.2 이후)으로 오브젝트 파괴에 묶는다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      수명이 묶여 있지 않다는 점은 양쪽으로 작용한다. 창이 닫혀도 결과 처리가 이어지는 것은 좋지만, 이미 파괴된 오브젝트를 건드리다 예외가 날 수 있다. 에디터에서는 플레이 모드를 끝내도 <code>Task</code>가 계속 도는 일도 있다. 그래서 오브젝트의 <code>destroyCancellationToken</code>을 넘겨 함께 끝내는 습관이 필요하다(<a href="../csharp/cancellation.html">취소와 시한</a>). Unity 2023.1 이전 판에서는 서드파티 UniTask가 같은 자리를 채워 왔다. <code>Awaitable</code>은 풀링되므로 같은 인스턴스를 두 번 <code>await</code>하면 안 된다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>하려는 일</th><th>맞는 도구</th></tr></thead>
+      <tbody>
+        <tr><td>몇 프레임에 걸친 연출, 페이드, 순차 애니메이션</td><td>코루틴. 오브젝트와 함께 끝나는 것이 오히려 맞다</td></tr>
+        <tr><td>서버 요청과 응답 처리</td><td>async/await(수명은 토큰으로 묶는다). 오래된 코드는 코루틴</td></tr>
+        <tr><td>무거운 계산(경로 탐색, 큰 데이터 파싱)</td><td>잡 시스템이나 <a data-ref="operating-system/thread-pool">스레드 풀</a>. 코루틴은 프레임을 멈춘다</td></tr>
+        <tr><td>오브젝트가 사라져도 끝나야 하는 일(결제 확인, 저장)</td><td>오브젝트에 묶이지 않는 쪽(전역 서비스의 async)</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>클라이언트의 재시도 코루틴이 서버 부하가 된다.</strong> "실패하면 1초 뒤 다시"를 코루틴으로 짜 두면, 서버가 잠깐 멈춘 사이 모든 클라이언트가 같은 박자로 다시 몰려온다. 점검 직후나 서버 장애 복구 순간의 접속 폭주가 이렇게 생긴다. 클라이언트 재시도에도 지수 백오프와 지터, 상한이 있어야 한다는 것을 서버 쪽에서 요구해야 한다(<a href="../architecture/service-calls.html">서비스 호출: 타임아웃·재시도·데드라인</a>).
+      </li>
+      <li>
+        <strong>타임아웃이 없는 대기는 "응답 없음" 제보가 된다.</strong> <code>yield return req.SendWebRequest()</code>에 <code>timeout</code>을 주지 않으면, 응답이 오지 않을 때 클라이언트가 영원히 로딩 화면에 머문다. 서버가 요청을 버렸는지, 응답을 보냈는데 클라이언트가 놓쳤는지 서버 로그와 대조할 수 있게 요청 ID를 함께 보내 달라고 한다.
+      </li>
+      <li>
+        <strong>창이 닫히면 응답 처리가 사라질 수 있다.</strong> 보상 수령 요청을 UI 코루틴에서 보내고 창을 닫으면, 서버는 지급했는데 클라이언트는 결과를 반영하지 못한다. 다시 요청하면 서버는 중복 요청을 받는다. 서버 API를 멱등하게 만들어야 하는 이유 중 하나다(<a href="../architecture/idempotent-consumer.html">멱등 소비자</a>).
+      </li>
+      <li>
+        <strong>서버 코드에는 코루틴 방식을 들이지 않는다.</strong> 서버에는 프레임도, 오브젝트 수명도 없다. 시간에 걸친 일은 틱 안의 타이머나 상태 기계로, 바깥 대기는 <code>async</code>로 짠다(<a href="../server/tick-loop.html">서버 틱 루프</a>). 클라이언트 코드를 서버로 옮길 때 코루틴이 섞여 있으면 구조부터 바꿔야 한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>코루틴은 병렬 실행을 만들지 않는다. 여러 개가 동시에 도는 것처럼 보여도 한 스레드가 번갈아 부르는 것이다.</li>
+      <li><code>new WaitForSeconds(0.1f)</code>를 반복문 안에서 매번 만들면 그때마다 할당한다. 같은 값이면 필드에 하나 만들어 두고 재사용한다.</li>
+      <li>컴포넌트를 꺼도 코루틴은 멈추지 않는다. 멈추려면 오브젝트를 끄거나 <code>StopCoroutine</code>을 부른다.</li>
+      <li>코루틴이 멈췄는지는 아무도 알려 주지 않는다. 끝났는지 알아야 하면 완료 표시를 따로 둔다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

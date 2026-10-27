@@ -577,5 +577,16 @@
   ["섀도 트래픽","operations/load-testing"],
   ["트래픽 재생","operations/load-testing"],
   ["내구 시험","operations/load-testing"],
-  ["용량 계획","operations/load-testing"]
+  ["용량 계획","operations/load-testing"],
+  ["FixedUpdate","unity/execution-loop"],
+  ["LateUpdate","unity/execution-loop"],
+  ["Maximum Allowed Timestep","unity/execution-loop"],
+  ["WaitForSeconds","unity/coroutines"],
+  ["Awaitable","unity/coroutines"],
+  ["UnitySynchronizationContext","unity/coroutines"],
+  ["가짜 null","unity/unity-vs-dotnet"],
+  ["Boehm","unity/unity-vs-dotnet"],
+  ["증분 GC","unity/unity-vs-dotnet"],
+  ["코드 스트리핑","unity/unity-vs-dotnet"],
+  ["보수적 수거기","unity/unity-vs-dotnet"]
 ]

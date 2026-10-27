@@ -1406,8 +1406,29 @@ window.CATALOG = [
   {
     dir: "unity",
     title: "Unity",
-    desc: "클라이언트와 서버가 만나는 지점: 프레임 루프, 직렬화, 네트워크 동기화",
-    topics: [],
+    desc: "클라이언트와 서버가 만나는 지점: 프레임 루프, 코루틴, 일반 .NET과 다른 C# 런타임",
+    tags: ["엔진 루프", "C# 차이"],
+    topics: [
+      {
+        slug: "execution-loop",
+        title: "실행 루프와 FixedUpdate",
+        summary: "FixedUpdate를 고정 간격에 묶어 프레임 시간이 달라져도 물리가 같은 결과를 낸다. 대신 한 프레임에 몇 번 돌지는 정해지지 않는다.",
+        tags: ["엔진 루프"],
+      },
+      {
+        slug: "coroutines",
+        title: "Unity 코루틴",
+        summary: "메인 스레드에서 반복자를 한 칸씩 진행시킬 뿐이다. 기다리는 동안 다른 스레드가 대신 돌지 않는다.",
+        tags: ["엔진 루프"],
+      },
+      {
+        slug: "unity-vs-dotnet",
+        title: "Unity의 C#은 무엇이 다른가",
+        importance: "핵심",
+        summary: "수거기에 세대도 압축도 없고, ==를 오버로드해 둔 탓에 ?. 연산자가 파괴 검사를 건너뛴다.",
+        tags: ["C# 차이"],
+      },
+    ],
   },
   {
     dir: "graphics",

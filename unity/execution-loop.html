@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>실행 루프와 FixedUpdate · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="unity/execution-loop">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../server/tick-loop.html">서버 틱 루프</a>, <a href="../game-patterns/state-sync.html">스냅샷과 상태 동기화</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      Unity 클라이언트는 프레임 하나를 정해진 순서로 돈다. 물리 단계인 <code>FixedUpdate</code>가 먼저, 게임 로직인 <code>Update</code>가 그다음, 카메라 같은 뒤처리인 <code>LateUpdate</code>가 그 뒤, 렌더링이 맨 끝이다. <code>Update</code>와 <code>LateUpdate</code>는 프레임마다 정확히 한 번 돈다. 그래서 호출 간격은 프레임률을 따라 들쭉날쭉하다.
+    </p>
+    <p>
+      <code>FixedUpdate</code>만 다르다. 실제로 흐른 시간을 누적기에 쌓아 두고 <span class="blank">고정 간격</span>(기본 0.02초)만큼 쌓일 때마다 한 번씩 돈다. 그래서 물리는 프레임률과 상관없이 같은 간격으로 진행되지만, 한 프레임 안에서 몇 번 도는지는 정해져 있지 않다. 프레임이 길면 여러 번 몰아서 돌고, 짧으면 한 번도 돌지 않는다. 서버의 고정 틱과 같은 생각이고, 다른 점은 렌더링이라는 가변 길이 작업이 한 루프 안에 함께 들어 있다는 것이다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>한 프레임은 정해진 순서로 돈다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="한 프레임은 FixedUpdate와 물리를 0번 이상 반복한 뒤, Update, yield null 코루틴, LateUpdate, 렌더링 순서로 한 번씩 돈다">
+        <defs><marker id="el-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-pad" x="14" y="44" width="244" height="104" rx="10"/>
+        <text class="f-strong" x="24" y="34">0번 이상 반복</text>
+        <rect class="f-hit" x="28" y="70" width="104" height="52" rx="6"/>
+        <text class="f-text" x="80" y="92" text-anchor="middle">FixedUpdate</text>
+        <text class="f-sub" x="80" y="110" text-anchor="middle">고정 간격</text>
+        <rect class="f-hit" x="146" y="70" width="100" height="52" rx="6"/>
+        <text class="f-text" x="196" y="92" text-anchor="middle">물리 계산</text>
+        <text class="f-sub" x="196" y="110" text-anchor="middle">충돌 콜백</text>
+        <line class="f-line" x1="132" y1="96" x2="144" y2="96" marker-end="url(#el-a)"/>
+        <path class="f-line f-dash" fill="none" d="M196,122 C196,140 80,140 80,124" marker-end="url(#el-a)"/>
+
+        <line class="f-line" x1="258" y1="96" x2="276" y2="96" marker-end="url(#el-a)"/>
+        <rect class="f-cell" x="278" y="70" width="96" height="52" rx="6"/>
+        <text class="f-text" x="326" y="92" text-anchor="middle">Update</text>
+        <text class="f-sub" x="326" y="110" text-anchor="middle">입력, 로직</text>
+        <line class="f-line" x1="374" y1="96" x2="390" y2="96" marker-end="url(#el-a)"/>
+        <rect class="f-cell" x="392" y="70" width="96" height="52" rx="6"/>
+        <text class="f-text" x="440" y="92" text-anchor="middle">코루틴</text>
+        <text class="f-sub" x="440" y="110" text-anchor="middle">yield null 이후</text>
+        <line class="f-line" x1="488" y1="96" x2="504" y2="96" marker-end="url(#el-a)"/>
+        <rect class="f-cell" x="506" y="70" width="104" height="52" rx="6"/>
+        <text class="f-text" x="558" y="92" text-anchor="middle">LateUpdate</text>
+        <text class="f-sub" x="558" y="110" text-anchor="middle">카메라 따라가기</text>
+        <line class="f-line" x1="610" y1="96" x2="626" y2="96" marker-end="url(#el-a)"/>
+        <rect class="f-miss" x="628" y="70" width="118" height="52" rx="6"/>
+        <text class="f-on" x="687" y="92" text-anchor="middle">렌더링</text>
+        <text class="f-on" x="687" y="110" text-anchor="middle" style="font-weight:400;font-size:12px">길이가 매번 다르다</text>
+
+        <text class="f-sub" x="512" y="180" text-anchor="middle">이 넷은 프레임마다 정확히 한 번</text>
+        <line class="f-grid" x1="278" y1="160" x2="746" y2="160"/>
+      </svg>
+      <figcaption>점선 상자 안의 물리 단계만 횟수가 정해져 있지 않다. 나머지는 프레임마다 한 번씩 돈다. 코루틴 중 <code>yield return null</code>로 멈춘 것은 모든 <code>Update</code>가 끝난 자리에서 이어진다.</figcaption>
+    </figure>
+    <p>
+      순서가 정해져 있어서 생기는 규칙이 몇 가지 있다. 캐릭터는 <code>Update</code>에서 움직이고 카메라는 <code>LateUpdate</code>에서 옮기면, 카메라가 언제나 그 프레임의 움직임이 끝난 위치를 따라간다. 충돌 콜백(<code>OnCollisionEnter</code> 등)은 물리 계산 단계에서 불리므로, 같은 프레임의 <code>Update</code>는 이미 충돌 결과를 본다.
+    </p>
+
+    <h3>FixedUpdate는 누적기로 돈다</h3>
+    <p>
+      엔진은 프레임마다 지난 프레임에 걸린 실제 시간을 누적기에 더한다. 누적기에 고정 간격 이상이 쌓여 있으면 <code>FixedUpdate</code>와 물리를 한 번 돌리고 고정 간격만큼 뺀다. 남은 양이 고정 간격보다 작아질 때까지 이것을 되풀이한 뒤 <code>Update</code>로 넘어간다. <a href="../server/tick-loop.html">서버 틱 루프</a>의 따라잡기와 같은 구조다.
+    </p>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="프레임 길이가 10, 40, 10, 30밀리초로 달라질 때 Update는 프레임마다 한 번, FixedUpdate는 누적 시간이 20밀리초 쌓일 때마다 돌아서 프레임에 따라 0번, 2번, 1번, 1번 돈다">
+        <text class="f-sub" x="20" y="44">프레임</text>
+        <text class="f-sub" x="20" y="104">Update</text>
+        <text class="f-sub" x="20" y="164">FixedUpdate</text>
+        <rect class="f-cell" x="110" y="28" width="50" height="26" rx="3"/>
+        <text class="f-sub" x="135" y="46" text-anchor="middle">10ms</text>
+        <rect class="f-cell" x="160" y="28" width="200" height="26" rx="3"/>
+        <text class="f-sub" x="260" y="46" text-anchor="middle">40ms (느린 프레임)</text>
+        <rect class="f-cell" x="360" y="28" width="50" height="26" rx="3"/>
+        <text class="f-sub" x="385" y="46" text-anchor="middle">10ms</text>
+        <rect class="f-cell" x="410" y="28" width="150" height="26" rx="3"/>
+        <text class="f-sub" x="485" y="46" text-anchor="middle">30ms</text>
+
+        <circle class="f-hit" cx="160" cy="100" r="7"/>
+        <circle class="f-hit" cx="360" cy="100" r="7"/>
+        <circle class="f-hit" cx="410" cy="100" r="7"/>
+        <circle class="f-hit" cx="560" cy="100" r="7"/>
+        <text class="f-sub" x="590" y="104">프레임마다 1번</text>
+
+        <text class="f-sub" x="160" y="164" text-anchor="middle">0번</text>
+        <text class="f-sub" x="160" y="190" text-anchor="middle">누적 10</text>
+        <circle class="f-miss" cx="352" cy="160" r="7"/>
+        <circle class="f-miss" cx="368" cy="160" r="7"/>
+        <text class="f-sub" x="360" y="190" text-anchor="middle">누적 50 → 2번</text>
+        <circle class="f-miss" cx="410" cy="160" r="7"/>
+        <text class="f-sub" x="440" y="190" text-anchor="middle">20 → 1번</text>
+        <circle class="f-miss" cx="560" cy="160" r="7"/>
+        <text class="f-sub" x="560" y="190" text-anchor="middle">30 → 1번</text>
+        <text class="f-sub" x="590" y="164">고정 간격 20ms</text>
+        <line class="f-grid" x1="160" y1="20" x2="160" y2="150"/>
+        <line class="f-grid" x1="360" y1="20" x2="360" y2="150"/>
+        <line class="f-grid" x1="410" y1="20" x2="410" y2="150"/>
+        <line class="f-grid" x1="560" y1="20" x2="560" y2="150"/>
+      </svg>
+      <figcaption>점선이 프레임 경계다. 첫 프레임 10ms로는 누적기가 20ms에 못 미쳐 물리가 돌지 않는다. 40ms 프레임 뒤에는 누적 50ms라 두 번 돌고 10ms가 남는다. 그다음 10ms가 더해져 20ms가 되어 한 번, 30ms 프레임 뒤에는 30ms라 한 번 돌고 10ms가 남는다.</figcaption>
+    </figure>
+    <div class="table-scroll"><table>
+      <thead><tr><th>구분</th><th>Update · LateUpdate</th><th>FixedUpdate</th></tr></thead>
+      <tbody>
+        <tr><td>한 프레임에</td><td>정확히 1번</td><td>0번일 수도, 여러 번일 수도 있다</td></tr>
+        <tr><td>호출 간격</td><td>프레임률을 따라 변한다</td><td>고정 간격(<code>Time.fixedDeltaTime</code>, 기본 0.02초)</td></tr>
+        <tr><td><code>Time.deltaTime</code></td><td>지난 프레임에 걸린 시간</td><td>고정 간격 값을 돌려준다</td></tr>
+        <tr><td>넣는 일</td><td>입력 읽기, 화면, 연출, 비물리 이동</td><td>힘 주기, 강체 속도 조작</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      여기서 두 가지 규칙이 나온다. 첫째, <strong>입력은 <code>Update</code>에서 읽는다.</strong> "이번 프레임에 눌렸다"는 값은 프레임 단위라서, 0번 도는 프레임에서는 놓치고 두 번 도는 프레임에서는 두 번 처리한다. <code>Update</code>에서 읽어 플래그나 큐에 담고 <code>FixedUpdate</code>가 꺼내 쓴다. 둘째, <strong>힘은 <code>FixedUpdate</code>에서 준다.</strong> <code>Update</code>에서 <code>AddForce</code>를 부르면 프레임이 잦을수록 힘이 더 자주 들어가서 프레임률에 따라 움직임이 달라진다.
+    </p>
+
+    <h3>따라잡기에는 상한이 있다</h3>
+    <p>
+      물리 한 번이 비싸서 프레임이 느려지면 다음 프레임에 몰아서 돌 횟수가 늘고, 그래서 프레임이 더 느려진다. 서버 틱에서 말하는 죽음의 나선이다. Unity는 한 프레임에 물리를 따라잡는 데 쓸 수 있는 시간을 <strong>Maximum Allowed Timestep</strong>(기본 약 0.333초)으로 묶어 둔다. 이 상한에 닿으면 남은 누적분을 버린다. 그 대가로 물리 시간이 실제 시간보다 느리게 흐른다. 화면에서는 물체가 슬로모션처럼 보인다.
+    </p>
+    <p>
+      고정 간격을 줄이면 물리가 정밀해지지만 같은 1초에 도는 횟수가 늘어 비용이 그만큼 는다. 0.02초에서 0.01초로 줄이면 물리 비용이 두 배가 된다. 빠른 투사체가 벽을 뚫고 지나가는 문제를 간격으로 풀기보다, 연속 충돌 감지나 레이캐스트로 푸는 이유다.
+    </p>
+
+    <h3>화면이 부드러운 것은 보간 덕분이다</h3>
+    <p>
+      물리는 20ms마다 움직이는데 화면은 그보다 자주(예: 144Hz면 약 7ms마다) 그려진다. 그대로 그리면 같은 위치가 여러 프레임 반복되다 한 번에 뛰어 떨림이 보인다. 그래서 <code>Rigidbody</code>의 보간(interpolate)을 켜 두면, 렌더링은 마지막 두 물리 상태 사이를 섞어 그린다. 화면은 실제 물리보다 최대 한 간격 늦은 모습이다. <a href="../game-patterns/state-sync.html">스냅샷과 상태 동기화</a>에서 다른 플레이어를 두 스냅샷 사이로 보간하는 것과 같은 맞바꿈이다.
+    </p>
+    <p>
+      프레임률 자체는 <code>QualitySettings.vSyncCount</code>와 <code>Application.targetFrameRate</code>로 정한다. 수직 동기화를 켜면 모니터 주사율에 맞춰 기다리므로 <code>targetFrameRate</code>는 무시된다. 모바일은 배터리와 발열 때문에 30이나 60으로 묶는 경우가 많다. 프레임을 고르게 내보내는 문제는 <a data-ref="graphics/frame-pacing">프레임 페이싱</a>에서 다룬다.
+    </p>
+
+    <h2>서버 틱과 무엇이 다른가</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>구분</th><th>Unity 클라이언트 루프</th><th>게임 서버 틱</th></tr></thead>
+      <tbody>
+        <tr><td>고정 간격으로 도는 것</td><td>물리(<code>FixedUpdate</code>)만</td><td>시뮬레이션 전체</td></tr>
+        <tr><td>가변 길이 작업</td><td>렌더링, 프레임마다 다르다</td><td>없다. 남는 시간은 쉰다</td></tr>
+        <tr><td>밀리면</td><td>상한까지 몰아서 돌고 남은 것은 버린다</td><td>몰아서 따라잡거나 틱을 건너뛴다</td></tr>
+        <tr><td>시간의 기준</td><td>각 기기의 시계, 기기마다 다르다</td><td>서버 하나의 시계</td></tr>
+        <tr><td>결과의 권위</td><td>화면에 보이는 예측과 보간</td><td>판정의 원본</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>클라이언트 FixedUpdate와 서버 틱을 같은 숫자로 맞출 필요는 없다.</strong> 서버가 30Hz로 돌고 클라이언트 물리가 50Hz여도 된다. 맞춰야 하는 것은 간격이 아니라 <strong>입력에 붙는 틱 번호</strong>다. 클라이언트가 "서버 틱 1203에 해당하는 입력"이라고 표시해 보내야 서버가 그 입력을 제자리에 넣고, 클라이언트는 응답을 받아 예측을 고칠 수 있다. 클라이언트가 자기 쪽 예측 시뮬레이션을 서버와 같은 고정 간격으로 따로 돌리는 구성이 흔한 이유다.
+      </li>
+      <li>
+        <strong>입력 전송 주기는 클라이언트 프레임에 흔들린다.</strong> 입력을 <code>Update</code>에서 모아 보내면, 프레임이 15fps로 떨어진 기기는 초당 15번밖에 못 보낸다. 서버 쪽에서는 그 플레이어의 입력이 띄엄띄엄 오고 한 패킷에 여러 틱 분량이 몰려 온다. 서버 지표에서 특정 기기나 지역의 입력 간격이 튀면 네트워크보다 클라이언트 프레임 저하를 먼저 의심해 볼 만하다. 서버는 틱마다 입력이 없을 때 직전 입력을 이어 쓸지, 멈춘 것으로 볼지 정책을 정해 둔다.
+      </li>
+      <li>
+        <strong>Unity 물리 결과를 서버 판정에 그대로 쓰지 않는다.</strong> Unity의 3D 물리(PhysX)는 같은 기기, 같은 입력, 같은 순서에서는 결과가 같도록 하는 옵션이 있지만, 기기와 플랫폼을 넘어서는 같은 결과를 보장하지 않는다. 부동소수 연산 순서와 CPU 명령이 달라지면 결과가 갈린다(<a href="../computer-architecture/number-representation.html">수의 표현</a>). 그래서 입력만 주고받는 락스텝이나 클라이언트 판정 신뢰는 성립하지 않는다(<a href="../game-patterns/command-pattern.html">커맨드 패턴과 리플레이</a>). 서버가 자체 판정 로직을 갖고, 클라이언트 물리는 화면을 그리는 데만 쓴다.
+      </li>
+      <li>
+        <strong>슬로모션 버그 제보는 서버 문제가 아닐 수 있다.</strong> 저사양 기기에서 따라잡기 상한에 걸리면 클라이언트의 물리 시간이 느려진다. 그 기기는 서버보다 뒤처진 세계를 보고, 서버 응답을 받을 때마다 위치가 크게 보정되어 "순간이동한다"는 제보로 온다.
+      </li>
+      <li>
+        <strong>클라이언트 팀과는 "몇 Hz인가"를 같은 말로 맞춘다.</strong> 서버의 틱레이트, 서버의 스냅샷 전송률, 클라이언트 물리 간격, 클라이언트 입력 전송률, 렌더 프레임률은 각각 다른 숫자다. 지연이나 끊김을 이야기할 때 어느 숫자를 말하는지부터 확인한다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li><code>FixedUpdate</code>가 언제나 <code>Update</code>보다 자주 도는 것은 아니다. 144fps에 고정 간격 0.02초면 <code>Update</code>가 훨씬 잦고, 30fps면 <code>FixedUpdate</code>가 잦다.</li>
+      <li><code>FixedUpdate</code> 안에서 <code>Time.deltaTime</code>을 읽으면 고정 간격이 나온다. 이동량 계산에 프레임 시간을 따로 곱하려 들면 두 번 곱하게 된다.</li>
+      <li>고정 간격을 줄여 문제를 덮으면 저사양 기기에서 따라잡기 상한에 더 자주 걸린다. 개발 PC의 프레임률로만 확인하지 않는다.</li>
+      <li><code>Time.timeScale</code>을 0으로 두면 <code>FixedUpdate</code>도 멈춘다. 일시 정지 화면에서 돌아야 하는 것은 <code>Time.unscaledDeltaTime</code>을 쓴다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -3846,4 +3846,60 @@ window.QUIZ = [
     q: "운영 요청을 복제해 새 판에 흘리는 섀도 트래픽에서 반드시 막아야 할 것은?",
     a: "새 판의 쓰기와 외부 호출이다. 막지 않으면 같은 아이템이 두 번 지급되거나 결제·우편이 두 번 나간다. 섀도 쪽은 저장소를 따로 두거나 쓰기를 막고, 외부 호출은 가짜로 바꾼 뒤 응답만 운영과 비교한다.",
   },
+
+  // ---------- 15 Unity / 실행 루프와 FixedUpdate ----------
+  {
+    topic: "unity/execution-loop",
+    q: "Unity에서 Update와 FixedUpdate의 차이는?",
+    a: "Update는 프레임마다 한 번 돌아 간격이 프레임률을 따라 변한다. FixedUpdate는 실제 흐른 시간을 누적기에 쌓아 고정 간격(기본 0.02초)만큼 쌓일 때마다 돌기 때문에, 한 프레임에 0번일 수도 여러 번일 수도 있다. 물리는 간격이 일정해야 결과가 프레임률에 흔들리지 않아서 FixedUpdate에 둔다.",
+  },
+  {
+    topic: "unity/execution-loop",
+    q: "입력은 Update에서 읽고 힘은 FixedUpdate에서 주는 이유는?",
+    a: "입력의 '이번 프레임에 눌림'은 프레임 단위 값이라 FixedUpdate가 0번 도는 프레임에서는 놓치고 2번 도는 프레임에서는 두 번 처리한다. 반대로 힘을 Update에서 주면 프레임이 잦을수록 힘이 더 자주 들어가 프레임률에 따라 움직임이 달라진다. 그래서 Update에서 읽어 플래그로 넘기고 FixedUpdate에서 적용한다.",
+  },
+  {
+    topic: "unity/execution-loop",
+    q: "Maximum Allowed Timestep은 무엇을 막고, 그 대가는?",
+    a: "느린 프레임 뒤에 밀린 물리를 몰아서 돌다가 그 때문에 다시 느려지는 악순환(죽음의 나선)을 막으려고, 한 프레임에 물리를 따라잡는 데 쓸 시간을 묶어 둔다(기본 약 0.333초). 상한에 닿으면 남은 누적분을 버리므로 물리 시간이 실제 시간보다 느리게 흘러 슬로모션처럼 보인다.",
+  },
+
+  // ---------- 15 Unity / Unity 코루틴 ----------
+  {
+    topic: "unity/coroutines",
+    q: "Unity 코루틴은 스레드인가?",
+    a: "아니다. yield return이 있는 메서드를 컴파일러가 IEnumerator 상태 기계로 바꾸고, 엔진이 메인 스레드에서 정해진 때마다 MoveNext를 불러 다음 yield까지 실행한다. 기다리는 동안 다른 스레드가 대신 일하는 것이 아니라 아무도 그 코드를 부르지 않는 것이라, 안에서 무거운 계산을 하면 프레임 전체가 멈춘다.",
+  },
+  {
+    topic: "unity/coroutines",
+    q: "코루틴이 조용히 멈추는 경우와 멈추지 않는 경우는?",
+    a: "시작한 게임 오브젝트를 파괴하거나 SetActive(false)로 비활성화하면 예외도 로그도 없이 멈추고, 다시 활성화해도 이어지지 않는다. 컴포넌트만 enabled = false로 끄면 코루틴은 계속 돈다. 멈출 때 finally나 끝의 정리 코드가 실행되지 않으므로 정리는 OnDisable이나 OnDestroy에 둔다.",
+  },
+  {
+    topic: "unity/coroutines",
+    q: "Unity에서 async/await가 코루틴과 다른 점은?",
+    a: "메인 스레드의 UnitySynchronizationContext 덕분에 await 뒤 메인 스레드로 돌아오고, 반환값과 예외를 그대로 받을 수 있다. 대신 오브젝트 수명에 묶이지 않아 오브젝트가 사라져도 계속 돌므로, destroyCancellationToken 같은 취소 토큰으로 수명을 묶어야 한다. Unity 2023.1 이후에는 풀링되는 Awaitable로 프레임 단위 대기도 할 수 있다.",
+  },
+
+  // ---------- 15 Unity / Unity의 C#은 무엇이 다른가 ----------
+  {
+    topic: "unity/unity-vs-dotnet",
+    q: "Unity의 GC가 서버 .NET GC와 다른 점은?",
+    a: "Unity는 Boehm-Demers-Weiser 수거기를 쓴다. 세대를 나누지 않아 수거할 때마다 살아 있는 힙 전체를 훑고, 압축하지 않아 힙이 조각나며 한 번 늘어난 힙이 잘 줄지 않는다. 보수적이라 포인터처럼 보이는 값이 가리키는 객체도 살려 둔다. 그래서 '짧게 사는 객체는 싸다'가 성립하지 않고, 목표는 프레임당 할당을 0에 가깝게 만드는 것이다.",
+  },
+  {
+    topic: "unity/unity-vs-dotnet",
+    q: "파괴된 Unity 오브젝트에 ?. 나 ?? 를 쓰면 생기는 문제는?",
+    a: "UnityEngine.Object는 == 를 오버로드해 파괴된 오브젝트를 null과 같다고 답하지만, ?. 와 ?? 와 is null은 언어 규칙상 참조 자체만 보고 오버로드를 타지 않는다. 그래서 파괴된 오브젝트를 null이 아니라고 보고 호출을 진행해, 네이티브 쪽을 건드리는 순간 MissingReferenceException이 난다. Unity 오브젝트에는 == 나 if (obj)로 검사한다.",
+  },
+  {
+    topic: "unity/unity-vs-dotnet",
+    q: "IL2CPP 빌드에서 서버에서 되던 코드가 깨지는 이유는?",
+    a: "IL2CPP는 빌드 때 C#을 C++로 바꿔 미리 컴파일하므로 Reflection.Emit 같은 실행 중 코드 생성이 안 된다. 또 빌드 크기를 줄이려고 정적으로 참조되지 않는 타입과 멤버를 지워(스트리핑) 리플렉션으로 찾는 생성자나 속성이 사라질 수 있다. link.xml이나 [Preserve]로 지키거나, 빌드 때 코드를 만드는 직렬화 방식을 쓴다.",
+  },
+  {
+    topic: "unity/unity-vs-dotnet",
+    q: "클라이언트와 서버가 함께 쓰는 C# 코드를 만들 때 지킬 것은?",
+    a: ".NET Standard 2.1을 타깃으로 하고 C# 언어 버전을 Unity가 지원하는 수준(C# 9)으로 묶어 양쪽에서 빌드되게 한다. UnityEngine을 참조하지 않게 두어 null 검사 규칙이 섞이지 않게 하고, 매 프레임 경로는 할당 없이 짠다. 직렬화는 리플렉션 없이 돌아가는 코드 생성 방식을 고르고, CI에서 두 조건으로 함께 빌드해 둔다.",
+  },
 ];
