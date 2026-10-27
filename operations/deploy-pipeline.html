@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>배포 파이프라인 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operations/deploy-pipeline">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../game-patterns/data-driven.html">기획 데이터와 데이터 주도 설계</a>, <a href="../architecture/server-topology.html">게임 서버 토폴로지</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      배포 파이프라인은 커밋 하나가 운영 서버에 올라가기까지 거치는 정해진 길이다. 앞부분인 <span class="blank">지속적 통합</span>(CI)은 바뀐 코드를 자주 합치고 그때마다 빌드와 시험을 자동으로 돌린다. 뒷부분인 지속적 전달(CD)은 그렇게 나온 산출물을 언제든 올릴 수 있는 상태로 두고, 환경을 차례로 거쳐 운영까지 보낸다. 운영 반영까지 사람 승인 없이 자동으로 가면 지속적 배포라고 따로 부른다.
+    </p>
+    <p>
+      원칙은 하나다. <strong>한 번 빌드한 산출물을 그대로 여러 환경에 올린다.</strong> 환경마다 다시 빌드하면 QA에서 시험한 것과 운영에 올린 것이 같다는 보장이 사라진다. 환경마다 다른 것(접속 주소, 키, 서버 수)은 산출물 밖의 설정으로 넣는다.
+    </p>
+    <p>
+      게임은 나가는 물건이 셋으로 나뉜다. 서버 실행 파일, 클라이언트, 기획 데이터다. 같은 저장소에서 나와도 산출물은 따로 만들어 따로 내보낸다. 그래야 실행 파일을 건드리지 않는 수정은 데이터만 바꿔서 빨리 내보낼 수 있다. 이것이 흔히 말하는 <strong>핫픽스</strong>와 정식 패치의 경계다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>산출물 하나가 환경을 차례로 오른다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 236" role="img" aria-label="커밋이 빌드와 시험을 거쳐 버전이 붙은 산출물이 되고, 같은 산출물이 개발, QA, 스테이징, 운영 환경으로 차례로 올라간다. 환경마다 설정만 밖에서 넣는다">
+        <defs><marker id="dp-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="22">CI: 합칠 때마다 자동으로</text>
+        <rect class="f-box" x="20" y="36" width="104" height="44" rx="6"/>
+        <text class="f-text" x="72" y="63" text-anchor="middle">커밋</text>
+        <line class="f-line" x1="124" y1="58" x2="162" y2="58" marker-end="url(#dp-a)"/>
+        <rect class="f-box" x="164" y="36" width="104" height="44" rx="6"/>
+        <text class="f-text" x="216" y="63" text-anchor="middle">빌드</text>
+        <line class="f-line" x1="268" y1="58" x2="306" y2="58" marker-end="url(#dp-a)"/>
+        <rect class="f-box" x="308" y="36" width="104" height="44" rx="6"/>
+        <text class="f-text" x="360" y="56" text-anchor="middle">시험</text>
+        <text class="f-sub" x="360" y="72" text-anchor="middle">단위 · 통합</text>
+        <line class="f-line" x1="412" y1="58" x2="450" y2="58" marker-end="url(#dp-a)"/>
+        <rect class="f-miss" x="452" y="30" width="288" height="56" rx="6"/>
+        <text class="f-on" x="596" y="54" text-anchor="middle">산출물 저장소</text>
+        <text class="f-on" x="596" y="74" text-anchor="middle">server 1.42.0+a3f9c1 · client · data</text>
+
+        <text class="f-strong" x="20" y="132">CD: 같은 산출물을 위로 올린다</text>
+        <rect class="f-box" x="20" y="146" width="150" height="44" rx="6"/>
+        <text class="f-text" x="95" y="173" text-anchor="middle">개발</text>
+        <line class="f-line" x1="170" y1="168" x2="208" y2="168" marker-end="url(#dp-a)"/>
+        <rect class="f-box" x="210" y="146" width="150" height="44" rx="6"/>
+        <text class="f-text" x="285" y="173" text-anchor="middle">QA</text>
+        <line class="f-line" x1="360" y1="168" x2="398" y2="168" marker-end="url(#dp-a)"/>
+        <rect class="f-box" x="400" y="146" width="150" height="44" rx="6"/>
+        <text class="f-text" x="475" y="173" text-anchor="middle">스테이징</text>
+        <line class="f-line" x1="550" y1="168" x2="588" y2="168" marker-end="url(#dp-a)"/>
+        <rect class="f-hit" x="590" y="146" width="150" height="44" rx="6"/>
+        <text class="f-text" x="665" y="166" text-anchor="middle">운영</text>
+        <text class="f-sub" x="665" y="182" text-anchor="middle">승인 뒤</text>
+        <line class="f-line f-dash" x1="596" y1="86" x2="596" y2="140"/>
+        <text class="f-sub" x="20" y="218">환경마다 바뀌는 것은 산출물이 아니라 밖에서 넣는 설정(주소, 키, 서버 수)이다</text>
+      </svg>
+      <figcaption>위 줄은 커밋마다 돈다. 아래 줄은 저장소에 쌓인 산출물 하나를 골라 환경을 하나씩 올린다. 운영에 올라간 것은 QA에서 시험한 바로 그 파일이다.</figcaption>
+    </figure>
+    <p>
+      산출물에는 버전과 출처를 함께 새긴다. <code>1.42.0+a3f9c1</code>처럼 사람이 읽는 판 번호에 커밋 해시나 빌드 번호를 붙여 두면, 운영에서 문제가 난 서버가 정확히 어느 코드에서 나왔는지 바로 찾는다. 서버가 시작할 때 이 값을 로그와 상태 확인 응답에 찍어 두는 것이 가장 싸다.
+    </p>
+    <p>
+      환경을 올라갈 때 다시 빌드하지 않는다. 빌드 도구나 의존 패키지가 그 사이에 바뀌면, 같은 커밋이라도 다른 파일이 나올 수 있다. 접속 문자열과 키 같은 비밀은 설정 쪽에서도 따로 다룬다(<a href="../security/secret-management.html">시크릿과 키 관리</a>).
+    </p>
+
+    <h3>핫픽스와 정식 패치를 가르는 것은 실행 파일이다</h3>
+    <p>
+      급한지 아닌지가 아니라 <strong>고칠 값이 어디에 들어 있느냐</strong>가 경로를 정한다. 수치와 확률이 기획 데이터 파일에 있으면 그 파일만 바꿔 내보내면 된다. 같은 값이 코드에 상수로 박혀 있으면 실행 파일을 다시 빌드해야 하고, 그 순간 정식 패치가 된다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>바꾸는 것</th><th>경로</th><th>따라오는 일</th></tr></thead>
+      <tbody>
+        <tr><td>기획 데이터(드롭 확률, 스킬 계수)</td><td>데이터만 배포</td><td>서버가 다시 읽는다(<a href="../game-patterns/data-driven.html">핫 리로드</a>). 점검이 필요 없을 수 있다</td></tr>
+        <tr><td>서버 설정(기능 켜고 끄기, 한도 값)</td><td>설정만 배포</td><td>재시작 없이 반영되는지는 설정을 읽는 방식에 달렸다</td></tr>
+        <tr><td>서버 로직</td><td>서버 실행 파일 배포</td><td>서버를 교체한다. 접속을 끊지 않으려면 <a href="zero-downtime-patch.html">무중단 패치</a>가 필요하다</td></tr>
+        <tr><td>클라이언트 로직</td><td>클라이언트 배포</td><td>콘솔·모바일은 플랫폼 심사를 거친다. 사용자가 갱신해야 바뀐다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      그래서 데이터로 빼 둔 범위가 넓을수록 빨리 고칠 수 있는 범위도 넓다. 반대로 데이터 파일 하나가 서버와 클라이언트 양쪽에서 읽힌다면, 한쪽만 바꿔 내보내면 둘이 다른 값을 본다. 어느 데이터를 누가 읽는지를 산출물 단위로 알고 있어야 한다.
+    </p>
+
+    <h3>산출물은 나눠 만들고 매니페스트로 묶는다</h3>
+    <p>
+      서버, 클라이언트, 기획 데이터를 한 덩어리로 빌드하면 데이터 하나를 고쳐도 전부 다시 내보내야 한다. 나눠 만들면 각자 따로 나갈 수 있는 대신, 어떤 조합이 함께 맞는지를 누군가 기록해야 한다. 그 기록이 <span class="blank">매니페스트</span>다.
+    </p>
+    <pre><code class="language-json">{
+  "release": "2026.10.4",
+  "server":  "1.42.0+a3f9c1",
+  "client":  { "min": "1.42.0", "latest": "1.42.3" },
+  "data":    "d-0518",
+  "schema":  37
+}</code></pre>
+    <p>
+      서버는 시작할 때 매니페스트를 읽고, 자기와 맞지 않는 데이터 판이나 DB 스키마 판이면 뜨지 않는다. 클라이언트 쪽 최소 판을 어떻게 정하고 맞지 않는 클라이언트를 어떻게 대하는지는 <a href="protocol-compat.html">클라이언트와 서버의 판 호환</a>이, 스키마 판을 코드와 따로 올리는 방법은 <a href="schema-migration.html">스키마 변경과 배포 분리</a>가 다룬다.
+    </p>
+
+    <h3>클라이언트 패치는 전송량이 문제가 된다</h3>
+    <p>
+      서버 배포는 서버 몇십 대에 파일을 나르는 일이지만, 클라이언트 패치는 수백만 명이 같은 시각에 받는 일이다. 그래서 두 가지를 한다.
+    </p>
+    <ul>
+      <li><strong>CDN에 올린다.</strong> 파일을 사용자 가까운 지점에 미리 깔아 두고, 원본 서버는 한 번만 내보낸다.</li>
+      <li><strong>바뀐 부분만 받게 한다.</strong> 파일을 내용 기준으로 조각내고 조각마다 해시를 붙이면, 클라이언트는 가진 조각과 매니페스트를 비교해 없는 조각만 받는다. 두 판 사이의 이진 차이를 미리 만들어 두는 방식은 지원할 이전 판 수에 한계가 있어서, 오래 접속하지 않은 사용자는 결국 전체를 다시 받게 된다. 조각 방식은 어느 판에서 출발하든 같은 규칙으로 맞춰진다.</li>
+    </ul>
+    <p>
+      받은 뒤에는 조각 해시로 깔린 파일을 검사해 깨진 것만 다시 받는다. 내려받은 파일이 우리가 만든 것이 맞는지는 매니페스트에 서명해 두고 클라이언트가 검증해서 확인한다(<a href="../security/signature-tls.html">서명과 TLS</a>).
+    </p>
+
+    <h3>올린 뒤에 확인하고, 안 되면 앞 판으로 되돌린다</h3>
+    <p>
+      배포는 파일을 옮긴 순간이 아니라 확인이 끝난 순간 끝난다. 새 서버가 뜨면 <strong>상태 확인</strong>(프로세스가 살아 있고 DB와 캐시에 붙는다)을 통과해야 트래픽을 받는다. 그다음 <span class="blank">스모크 테스트</span>로 로그인, 캐릭터 선택, 아이템 사용 같은 핵심 경로를 실제로 한 번씩 밟아 본다. 그 뒤 몇십 분은 오류율과 지연을 배포 전과 비교한다(<a href="diagnosis.html">느린 서버 진단</a>).
+    </p>
+    <p>
+      되돌리기는 <strong>앞 판 산출물을 다시 올리는 것</strong>이다. 산출물을 지우지 않고 저장소에 남겨 두는 이유가 여기 있다. 다만 실행 파일은 되돌려도 이미 바뀐 DB와 이미 지급한 보상은 되돌아가지 않는다. 새 판이 DB에 새 모양으로 쓰기 시작했다면 앞 판이 그 데이터를 읽지 못할 수도 있다. 그래서 스키마 변경은 코드 배포와 다른 날, 앞 판도 읽을 수 있는 순서로 올린다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>정할 것</th><th>한쪽</th><th>다른 쪽</th><th>게임 서버에서 흔한 답</th></tr></thead>
+      <tbody>
+        <tr><td>운영 반영</td><td>자동(지속적 배포)</td><td>사람 승인(지속적 전달)</td><td>운영 직전에 승인을 둔다. 점검 시각과 공지가 함께 움직이기 때문이다</td></tr>
+        <tr><td>산출물 단위</td><td>한 덩어리</td><td>서버·클라이언트·데이터 따로</td><td>따로. 데이터만 나가는 경로가 있어야 빨리 고친다</td></tr>
+        <tr><td>되돌리기</td><td>앞 판 재배포</td><td>고친 판을 앞으로 내보내기</td><td>코드는 재배포, DB가 바뀌었으면 앞으로 고치기</td></tr>
+        <tr><td>배포 동결</td><td>언제든 배포</td><td>대형 이벤트·연휴 전후 동결</td><td>사람이 가장 많을 때와 담당자가 없을 때는 막는다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>점검 배포는 절차표로 돈다.</strong> 공지 → 접속 차단과 남은 세션 정리(<a href="draining.html">세션 빼기</a>) → DB 백업 확인 → 스키마 변경 → 서버 교체 → 내부 계정 스모크 테스트 → 접속 개방 → 지표 감시 순서를 표로 고정하고, 단계마다 누가 확인했는지 남긴다. 순서를 사람 기억에 맡기면 새벽 점검에서 한 단계가 빠진다.
+      </li>
+      <li>
+        <strong>서버 빌드는 재현되어야 한다.</strong> SDK 판을 고정하고(<code>global.json</code>), 패키지 판은 잠금 파일로 묶는다. 한 달 전 운영 판의 크래시를 조사하려면 그 판을 똑같이 다시 만들 수 있어야 하고, 그래야 디버그 기호도 맞는다.
+      </li>
+      <li>
+        <strong>.NET 서버는 컨테이너 이미지로 내보내는 경우가 많다.</strong> SDK 이미지에서 빌드하고 가벼운 런타임 이미지에 결과만 옮기는 다단계 빌드가 기본 모양이다.
+<pre><code class="language-dockerfile"># 빌드 단계: SDK가 있는 이미지
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish GameServer/GameServer.csproj -c Release -o /out
+
+# 실행 단계: 런타임만 있는 작은 이미지
+FROM mcr.microsoft.com/dotnet/runtime:8.0
+WORKDIR /app
+COPY --from=build /out .
+ENTRYPOINT ["dotnet", "GameServer.dll"]</code></pre>
+        .NET 8 SDK는 Dockerfile 없이 <code>dotnet publish /t:PublishContainer</code>로 이미지를 바로 만들 수도 있다. 이미지를 어디서 어떻게 띄우는지는 <a href="orchestration.html">컨테이너와 오케스트레이션</a>에서 다룬다.
+      </li>
+      <li>
+        <strong>데이터 배포에도 시험이 붙는다.</strong> 기획 데이터는 코드가 아니라서 시험 없이 나가기 쉽다. 파이프라인에서 서버와 같은 로더로 읽어 참조와 범위 검사를 돌리고(<a href="../game-patterns/data-driven.html">기획 데이터와 데이터 주도 설계</a>), 통과한 판만 저장소에 올린다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>운영에서만 다시 빌드하지 않는다.</strong> "운영용 설정으로 빌드"하는 순간 QA에서 본 파일과 다른 파일이 올라간다. 설정은 빌드 결과가 아니라 실행 시점에 들어가야 한다.
+      </li>
+      <li>
+        <strong>핫픽스 경로도 같은 파이프라인을 탄다.</strong> 데이터만 바꾼다고 시험과 승인을 건너뛰면 사고가 가장 자주 나는 경로가 가장 덜 검사받는 경로가 된다. 빈도만 다르고 길은 같아야 한다.
+      </li>
+      <li>
+        <strong>되돌릴 수 있다고 믿기 전에 되돌려 본다.</strong> 앞 판 재배포를 스테이징에서 한 번도 해 보지 않았다면, 운영에서 처음 하는 셈이다. 특히 새 판이 쓴 데이터를 앞 판이 읽을 수 있는지 확인한다.
+      </li>
+      <li>
+        <strong>산출물 보관 기간을 정한다.</strong> 모든 빌드를 영원히 두면 저장소가 차고, 너무 빨리 지우면 되돌릴 판이 없다. 운영에 올라갔던 판은 길게, 그렇지 않은 판은 짧게 둔다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>관측성: 로그·지표·추적 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operations/observability">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../csharp/diagnostics.html">.NET 진단 도구</a>, <a href="../architecture/server-topology.html">게임 서버 토폴로지</a>, <a href="../architecture/service-calls.html">서비스 호출: 타임아웃·재시도·데드라인</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">관측성</span>은 서버를 멈추거나 디버거를 붙이지 않고, 밖으로 내보낸 신호만으로 안에서 무슨 일이 있었는지 알아내는 능력이다. 신호는 세 가지다. <strong>지표</strong>는 숫자를 모아 무엇이 이상한지 알려 주고, <strong>로그</strong>는 사건을 적어 그때 왜 그랬는지 알려 주고, <strong>추적</strong>은 요청 하나가 거친 경로를 이어 어디서 느렸는지 알려 준다. 셋은 서로를 대신하지 못하고, 같은 추적 ID로 묶여 있어야 서로 건너다닐 수 있다.
+    </p>
+    <p>
+      경보는 사용자가 실제로 느끼는 것에 건다. "로그인이 2초 넘게 걸리는 비율"이 오르면 사람을 깨우고, CPU나 큐 길이 같은 원인 쪽 숫자는 대시보드에 두고 원인을 찾을 때 본다. 원인마다 경보를 걸면 경보가 너무 많아져 정작 중요한 경보를 아무도 보지 않게 된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>세 신호는 다른 질문에 답한다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 240" role="img" aria-label="같은 로그인 요청을 지표는 초당 요청 수와 오류율, p99 같은 숫자로, 로그는 시각과 필드가 붙은 사건 몇 줄로, 추적은 요청이 거친 구간을 막대로 이어 보여 준다">
+        <rect class="f-box" x="10" y="20" width="236" height="180" rx="8"/>
+        <rect class="f-box" x="262" y="20" width="236" height="180" rx="8"/>
+        <rect class="f-box" x="514" y="20" width="236" height="180" rx="8"/>
+
+        <text class="f-strong" x="26" y="46">지표</text>
+        <text class="f-sub" x="26" y="64">숫자로 모은다</text>
+        <text class="f-text" x="26" y="92">로그인 요청 208/초</text>
+        <text class="f-text" x="26" y="114">오류율 2.1%</text>
+        <text class="f-text" x="26" y="136">p99 840ms</text>
+        <polyline class="f-tick" fill="none" points="26,184 60,181 94,183 128,179 162,172 196,158 230,152"/>
+
+        <text class="f-strong" x="278" y="46">로그</text>
+        <text class="f-sub" x="278" y="64">사건을 적는다</text>
+        <text class="f-sub" x="278" y="92">INFO 로그인 시작</text>
+        <text class="f-sub" x="290" y="108">account=a91… trace=4bf9…</text>
+        <rect class="f-hit" x="272" y="118" width="216" height="40" rx="4"/>
+        <text class="f-text" x="278" y="134">WARN 플랫폼 인증 680ms</text>
+        <text class="f-sub" x="290" y="150">provider=steam trace=4bf9…</text>
+        <text class="f-sub" x="278" y="180">INFO 로그인 완료</text>
+
+        <text class="f-strong" x="530" y="46">추적</text>
+        <text class="f-sub" x="530" y="64">요청 경로를 잇는다</text>
+        <rect class="f-cell" x="530" y="82" width="200" height="14" rx="2"/>
+        <rect class="f-bar" x="540" y="104" width="182" height="14" rx="2"/>
+        <rect class="f-bar" x="546" y="126" width="16" height="14" rx="2"/>
+        <rect class="f-miss" x="568" y="148" width="136" height="14" rx="2"/>
+        <rect class="f-bar" x="708" y="170" width="12" height="14" rx="2"/>
+        <text class="f-sub" x="530" y="196">trace 4bf9… 요청 하나</text>
+
+        <text class="f-sub" x="128" y="224" text-anchor="middle">무엇이 이상한가 · 싸다</text>
+        <text class="f-sub" x="380" y="224" text-anchor="middle">그때 무슨 일이 · 비싸다</text>
+        <text class="f-sub" x="632" y="224" text-anchor="middle">어디서 느린가 · 표본만</text>
+      </svg>
+      <figcaption>지표는 "p99가 840ms로 올랐다"까지만 말한다. 로그는 그 시각에 플랫폼 인증이 늦었다는 사건을 담고, 추적은 그 요청에서 시간을 가장 많이 쓴 구간(진한 막대)을 보여 준다. 세 신호가 같은 trace ID를 들고 있어야 숫자에서 사건으로, 사건에서 경로로 건너간다.</figcaption>
+    </figure>
+    <div class="table-scroll"><table>
+      <thead><tr><th>신호</th><th>담는 것</th><th>답하는 질문</th><th>비용</th><th>약점</th></tr></thead>
+      <tbody>
+        <tr><td>지표</td><td>시간별로 모은 숫자(횟수, 현재값, 분포)</td><td>무엇이, 언제부터, 얼마나 이상한가</td><td>싸다. 요청이 늘어도 저장량이 거의 그대로다</td><td>개별 요청을 모른다. 왜 그런지는 말하지 않는다</td></tr>
+        <tr><td>로그</td><td>시각과 필드가 붙은 사건 하나하나</td><td>그때 무슨 일이 있었나, 어떤 값이었나</td><td>비싸다. 요청 수에 비례해 늘어난다</td><td>양이 많으면 찾지 못한다. 경로를 잇지 않는다</td></tr>
+        <tr><td>추적</td><td>요청 하나가 거친 구간(span)의 나무</td><td>어느 서비스, 어느 구간에서 시간을 썼나</td><td>중간. 보통 일부 요청만 남긴다</td><td>표본에 안 잡힌 요청은 볼 수 없다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      순서는 대개 지표 → 추적 → 로그다. 지표가 이상을 알리고, 그 시각의 느린 추적 하나를 골라 어느 구간인지 본 뒤, 그 구간의 로그에서 원인을 읽는다. 좁혀 가는 절차 자체는 <a href="diagnosis.html">느린 서버 진단</a>이 다룬다. 이 문서는 그 절차가 가능하도록 평소에 무엇을 어떻게 남겨 두는지를 다룬다. 한 프로세스 안을 들여다보는 도구(카운터, 덤프, 프로파일)는 <a href="../csharp/diagnostics.html">.NET 진단 도구</a>에 있다.
+    </p>
+
+    <h3>로그는 문장이 아니라 필드로 남긴다</h3>
+    <p>
+      <code>"계정 a91의 로그인이 680ms 걸림"</code>처럼 값을 문장에 끼워 넣으면 사람은 읽기 쉽지만 기계는 찾기 어렵다. "680ms 넘게 걸린 로그인만 보여 줘"를 하려면 문장을 다시 쪼개야 한다. <span class="blank">구조화 로그</span>는 메시지 틀과 값을 따로 남긴다. 저장소는 <code>{"msg":"로그인 완료","account":"a91","elapsedMs":680,"trace":"4bf9…"}</code>처럼 필드를 받아 필드로 찾는다.
+    </p>
+    <p>
+      .NET의 <code>ILogger</code>는 메시지 틀의 <code>{이름}</code> 자리를 필드로 남긴다. 문자열 보간(<code>$"..."</code>)으로 미리 합치면 필드가 사라지고, 그 수준의 로그가 꺼져 있어도 문자열을 만드는 비용을 낸다. 자주 찍는 로그는 <code>LoggerMessage</code> <a data-ref="csharp/reflection-sourcegen">소스 생성기</a>로 미리 만들어 두면 할당 없이 빠르게 찍힌다.
+    </p>
+    <pre><code class="language-csharp">public static partial class LoginLog
+{
+    [LoggerMessage(EventId = 2001, Level = LogLevel.Warning,
+        Message = "플랫폼 인증 지연 {Provider} {ElapsedMs}ms")]
+    public static partial void SlowPlatformAuth(ILogger logger, string provider, long elapsedMs);
+}
+
+// 틀린 예: 필드가 사라지고, Warning이 꺼져 있어도 문자열을 만든다
+logger.LogWarning($"플랫폼 인증 지연 {provider} {elapsed}ms");
+
+// 맞는 예: Provider, ElapsedMs가 필드로 남는다
+LoginLog.SlowPlatformAuth(logger, provider, elapsed);</code></pre>
+    <p>
+      로그 수준은 팀이 기준을 정해 둬야 의미가 있다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>수준</th><th>남기는 것</th><th>운영에서</th></tr></thead>
+      <tbody>
+        <tr><td>Error</td><td>요청이나 작업이 실패했고 누군가 봐야 하는 일</td><td>늘 켠다. 한 번의 실패에 한 줄</td></tr>
+        <tr><td>Warning</td><td>실패는 아니지만 예상 밖인 일. 재시도 성공, 시한 근접, 대체값 사용</td><td>늘 켠다</td></tr>
+        <tr><td>Information</td><td>상태가 바뀌는 주요 사건. 서버 시작·종료, 배포, 설정 변경</td><td>켠다. 요청마다 찍지는 않는다</td></tr>
+        <tr><td>Debug, Trace</td><td>코드 흐름과 중간값</td><td>끈다. 문제를 볼 때 일부 서버나 계정만 잠깐 켠다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      로그마다 <strong>상관 ID</strong>를 붙인다. 요청 하나에서 나온 로그를 서버 여러 대에 걸쳐 모으려면 같은 ID가 있어야 한다. 추적을 쓰면 trace ID가 그 역할을 한다. 게이트웨이에서 처음 만든 ID를 모든 서버 호출과 메시지에 실어 보내고(<a href="../architecture/server-topology.html">게임 서버 토폴로지</a>), 각 서버는 받은 ID를 로그 범위(scope)에 넣어 그 요청의 모든 줄에 자동으로 붙게 한다.
+    </p>
+
+    <h3>로그가 장애를 키울 수 있다</h3>
+    <p>
+      장애가 나면 오류 로그가 한꺼번에 쏟아진다. 초당 수만 줄의 예외와 스택이 디스크와 네트워크를 채우고, 로그를 쓰는 스레드가 막혀 요청 처리까지 느려진다. 그래서 로그에도 상한을 둔다.
+    </p>
+    <ul>
+      <li><strong>같은 오류는 묶는다.</strong> 같은 이벤트 ID가 1초에 100번 나면 처음 몇 줄과 "같은 오류 9,812회 생략"만 남긴다.</li>
+      <li><strong>정상 요청은 표본만 남긴다.</strong> 성공한 요청은 1%만 자세히 남기고, 실패와 느린 요청은 모두 남긴다.</li>
+      <li><strong>쓰기는 비동기로, 큐는 유한하게.</strong> 로그 큐가 차면 기다리지 않고 버린다. 버린 개수는 지표로 센다. 로그 때문에 게임 로직이 멈추는 것보다 로그를 잃는 편이 낫다.</li>
+    </ul>
+
+    <h3>지표는 종류가 셋이고, 분포는 히스토그램으로 남긴다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>종류</th><th>뜻</th><th>예</th></tr></thead>
+      <tbody>
+        <tr><td>카운터</td><td>늘기만 하는 누적 횟수. 보는 쪽이 초당 증가량으로 바꾼다</td><td>처리한 패킷 수, 로그인 실패 수</td></tr>
+        <tr><td>게이지</td><td>지금 이 순간의 값. 오르내린다</td><td>동접 수, 큐 길이, 열린 연결 수</td></tr>
+        <tr><td>히스토그램</td><td>값이 어느 구간에 몇 번 떨어졌는지 센다</td><td>응답 시간, 틱 처리 시간, 패킷 크기</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      시간 같은 값은 평균을 남기지 말고 히스토그램으로 남긴다. 평균은 꼬리를 숨기고, 서버별 p99는 합칠 수 없다. 히스토그램은 구간별 횟수라서 서버 여러 대의 것을 더한 뒤 전체 p99를 계산할 수 있다(<a href="diagnosis.html">느린 서버 진단</a>). 무엇을 잴지는 요청을 받는 쪽은 RED, 자원 쪽은 USE 틀로 정한다. 그 틀도 같은 문서에 있다.
+    </p>
+    <pre><code class="language-csharp">using System.Diagnostics.Metrics;
+
+public sealed class LoginMetrics
+{
+    static readonly Meter Meter = new("Game.Login");
+    static readonly Counter&lt;long&gt; Failures = Meter.CreateCounter&lt;long&gt;("login.failures");
+    static readonly Histogram&lt;double&gt; Duration =
+        Meter.CreateHistogram&lt;double&gt;("login.duration", unit: "ms");
+
+    public static void Record(double ms, string? failReason, string provider)
+    {
+        // 태그는 값의 종류가 몇 개로 정해진 것만 붙인다
+        Duration.Record(ms, new KeyValuePair&lt;string, object?&gt;("provider", provider));
+        if (failReason is not null)
+            Failures.Add(1, new KeyValuePair&lt;string, object?&gt;("reason", failReason));
+    }
+}</code></pre>
+
+    <h3>태그에 캐릭터 ID를 넣으면 지표 저장소가 무너진다</h3>
+    <p>
+      지표 저장소는 이름과 태그 값의 조합마다 시계열을 하나씩 만든다. <code>provider</code> 태그 값이 3가지면 시계열 3개다. 여기에 <code>account</code> 태그를 붙이면 계정 수만큼 시계열이 생긴다. 계정이 백만이면 백만 개다. 태그 값 종류의 수를 <strong>카디널리티</strong>라고 하고, 이것이 폭발하면 저장소 비용이 치솟고 조회가 멈춘다.
+    </p>
+    <p>
+      태그에는 값의 종류가 정해져 있고 적은 것만 넣는다. 서버 종류, 지역, 패킷 종류, 실패 이유 같은 것이다. 캐릭터 ID, 계정 ID, 판 ID, 원본 오류 메시지는 넣지 않는다. "누가"는 지표가 아니라 로그와 추적이 답할 질문이다. 존 번호나 채널 번호도 수천 개로 늘 수 있다면 조심한다.
+    </p>
+
+    <h3>추적은 요청 하나가 거친 구간을 나무로 잇는다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 245" role="img" aria-label="로그인 요청 하나의 추적. 게이트웨이 900ms 안에 로그인 서비스 840ms가 있고, 그 안에서 계정 DB 조회 60ms, 플랫폼 인증 680ms, 세션 저장 40ms가 이어진다. 플랫폼 인증이 대부분의 시간을 쓴다">
+        <defs><marker id="ob-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-text" x="20" y="54">게이트웨이</text>
+        <rect class="f-cell" x="170" y="41" width="560" height="18" rx="3"/>
+        <text class="f-sub" x="450" y="54" text-anchor="middle">900ms</text>
+
+        <text class="f-text" x="32" y="84">로그인 서비스</text>
+        <rect class="f-bar" x="195" y="71" width="523" height="18" rx="3"/>
+        <text class="f-sub" x="456" y="84" text-anchor="middle">840ms</text>
+
+        <text class="f-text" x="44" y="114">계정 DB 조회</text>
+        <rect class="f-bar" x="207" y="101" width="37" height="18" rx="3"/>
+        <text class="f-sub" x="252" y="114">60ms</text>
+
+        <text class="f-text" x="44" y="144">플랫폼 인증</text>
+        <rect class="f-miss" x="257" y="131" width="423" height="18" rx="3"/>
+        <text class="f-on" x="468" y="144" text-anchor="middle">680ms</text>
+
+        <text class="f-text" x="44" y="174">세션 저장</text>
+        <rect class="f-bar" x="686" y="161" width="25" height="18" rx="3"/>
+        <text class="f-sub" x="680" y="174" text-anchor="end">40ms</text>
+
+        <line class="f-line" x1="170" y1="198" x2="742" y2="198" marker-end="url(#ob-a)"/>
+        <line class="f-grid" x1="170" y1="36" x2="170" y2="198"/>
+        <line class="f-grid" x1="357" y1="36" x2="357" y2="198"/>
+        <line class="f-grid" x1="543" y1="36" x2="543" y2="198"/>
+        <line class="f-grid" x1="730" y1="36" x2="730" y2="198"/>
+        <text class="f-sub" x="170" y="214" text-anchor="middle">0</text>
+        <text class="f-sub" x="357" y="214" text-anchor="middle">300</text>
+        <text class="f-sub" x="543" y="214" text-anchor="middle">600</text>
+        <text class="f-sub" x="730" y="214" text-anchor="middle">900ms</text>
+        <text class="f-sub" x="20" y="236">모든 span이 같은 trace ID를 들고, 부모 span의 ID로 위아래가 이어진다</text>
+      </svg>
+      <figcaption>막대 하나가 span이다. 들여쓴 줄은 바로 위 span 안에서 일어난 일이다. 로그인 서비스 840ms 가운데 680ms를 플랫폼 인증이 쓰고 있어서, DB나 세션 저장을 아무리 빠르게 해도 이 요청은 빨라지지 않는다.</figcaption>
+    </figure>
+    <p>
+      추적(trace) 하나는 요청 하나이고, 그 안의 구간 하나하나가 <span class="blank">span</span>이다. span은 시작·끝 시각, 이름, 태그와 함께 자기 ID와 부모 span의 ID를 든다. 서버를 넘어갈 때는 trace ID와 지금 span ID를 요청 헤더에 실어 보낸다. 이것이 <strong>컨텍스트 전파</strong>이고, 표준 형식이 W3C Trace Context의 <code>traceparent</code> 헤더다. 받는 서버는 그 값을 부모로 삼아 자기 span을 연다. 메시지 큐를 지날 때도 메시지 헤더에 같은 값을 실어야 추적이 끊기지 않는다.
+    </p>
+    <p>
+      .NET에서 span은 <code>System.Diagnostics.Activity</code>다. <code>ActivitySource.StartActivity</code>로 열고 <code>using</code>으로 닫는다. ASP.NET Core와 <code>HttpClient</code>, gRPC는 들어오고 나가는 요청에서 Activity를 자동으로 만들고 <code>traceparent</code>를 주고받는다. 직접 짠 TCP·UDP 프로토콜은 자동으로 되지 않으므로, 패킷 헤더에 trace ID를 넣는 자리를 직접 만든다.
+    </p>
+    <pre><code class="language-csharp">using System.Diagnostics;
+
+static readonly ActivitySource Source = new("Game.Login");
+
+async Task&lt;bool&gt; VerifyPlatformAsync(string provider, string ticket, CancellationToken ct)
+{
+    using var span = Source.StartActivity("platform.verify");
+    span?.SetTag("provider", provider);   // 수집기가 없으면 span은 null이다
+    var ok = await _platform.VerifyAsync(ticket, ct);
+    if (!ok) span?.SetStatus(ActivityStatusCode.Error);
+    return ok;
+}</code></pre>
+
+    <h3>추적은 표본을 남기고, 표본 고르는 시점이 둘이다</h3>
+    <p>
+      모든 요청의 추적을 남기면 로그보다 비싸진다. 그래서 일부만 남긴다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>방식</th><th>언제 고르나</th><th>장점</th><th>단점</th></tr></thead>
+      <tbody>
+        <tr><td>머리 표본</td><td>요청이 들어오는 순간 정해진 비율로 고르고, 그 결정을 뒤로 전파한다</td><td>싸고 단순하다. 고르지 않은 요청은 기록 비용도 안 든다</td><td>느리거나 실패할 요청인지 아직 모른다. 드문 오류를 놓친다</td></tr>
+        <tr><td>꼬리 표본</td><td>요청이 끝난 뒤 수집기가 span을 모아 본 다음 고른다</td><td>느린 요청, 오류 난 요청을 골라 남길 수 있다</td><td>모든 span을 일단 수집기로 보내고 잠시 들고 있어야 한다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>수집기가 신호를 받아 저장소로 나눈다</h3>
+    <p>
+      OpenTelemetry는 세 신호를 내보내는 API와 형식을 언어마다 같게 맞춘 표준이다. 서버는 OpenTelemetry SDK로 지표·추적·로그를 같은 형식(OTLP)으로 내보내고, 그 사이에 <strong>수집기</strong>(Collector)를 둔다. 수집기가 받아서 표본을 고르고, 민감한 필드를 지우고, 지표는 지표 저장소로, 추적은 추적 저장소로, 로그는 로그 저장소로 나눠 보낸다. 저장소를 바꿔도 서버 코드는 그대로이고, 꼬리 표본도 수집기에서 한다. .NET은 <code>Meter</code>와 <code>ActivitySource</code>, <code>ILogger</code>를 그대로 쓰고, OpenTelemetry SDK가 그것들을 구독해 내보낸다.
+    </p>
+
+    <h3>경보는 SLO에 건다</h3>
+    <p>
+      사용자가 느끼는 품질을 숫자로 정한 것이 <span class="blank">SLI</span>(서비스 수준 지표)다. "로그인 요청 가운데 2초 안에 성공한 비율"이 SLI이고, 그 목표치 "30일 동안 99.9%"가 <strong>SLO</strong>다. 100%에서 SLO를 뺀 나머지가 <strong>오류 예산</strong>이다. 99.9%면 한 달(30일 = 43,200분)에 약 43분어치 실패를 써도 된다는 뜻이다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>SLO</th><th>한 달 오류 예산</th></tr></thead>
+      <tbody>
+        <tr><td>99%</td><td>약 7시간 12분</td></tr>
+        <tr><td>99.9%</td><td>약 43분</td></tr>
+        <tr><td>99.99%</td><td>약 4분 19초</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      경보는 예산을 빨리 태울 때 건다. "지난 1시간 동안 예산을 평소의 14배 속도로 쓰고 있다"면 며칠 안에 예산이 바닥나니 사람을 깨운다. 느리게 태우고 있으면 근무 시간에 볼 일감으로 남긴다. 예산이 남아 있으면 배포를 계속하고, 바닥나면 새 기능 배포를 멈추고 안정화에 쓴다. 이렇게 하면 "얼마나 안정적이어야 하나"를 감이 아니라 숫자로 다툰다.
+    </p>
+    <p>
+      경보는 <strong>증상</strong>에 걸고, <strong>원인</strong>은 대시보드에 둔다. CPU 90%는 증상이 아니다. CPU가 90%여도 사용자가 느끼는 지연이 그대로면 깨울 이유가 없고, CPU가 30%인데 락 때문에 로그인이 멈출 수도 있다. 원인마다 경보를 걸면 하룻밤에 수십 개가 울리고, 사람은 곧 경보를 무시하기 시작한다(경보 피로). 울린 경보는 모두 사람이 무언가를 해야 하는 것이어야 하고, 할 일이 적힌 문서를 경보에 붙여 둔다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>알고 싶은 것</th><th>쓰는 신호</th><th>주의</th></tr></thead>
+      <tbody>
+        <tr><td>지금 이상한가, 언제부터인가</td><td>지표</td><td>평소 값이 있어야 비교된다. 장애 전부터 쌓아 둔다</td></tr>
+        <tr><td>어느 서비스, 어느 구간이 느린가</td><td>추적</td><td>꼬리 표본이나 오류 우선 표본이 있어야 느린 요청이 남는다</td></tr>
+        <tr><td>그 요청에서 무슨 값이 오갔나</td><td>로그</td><td>trace ID가 붙어 있어야 그 요청의 줄만 모은다</td></tr>
+        <tr><td>특정 계정이 겪은 일</td><td>로그, 추적</td><td>지표 태그로 풀지 않는다. 카디널리티가 폭발한다</td></tr>
+        <tr><td>사람을 깨울지</td><td>SLO 기반 지표</td><td>증상에만 건다. 원인 지표는 대시보드로</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      대시보드는 위에서 아래로 좁혀 가게 짠다. 맨 위에는 SLO와 오류 예산, 그 아래에 서비스별 RED, 그 아래에 자원별 USE를 둔다. 장애 때 대시보드를 위에서부터 훑으면 "사용자가 느끼나 → 어느 서비스인가 → 어떤 자원인가" 순서로 내려간다. 배포와 설정 변경 시각을 같은 그래프에 세로선으로 표시하면 "그때 무엇이 바뀌었나"가 한눈에 보인다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>틱 시간을 히스토그램으로 남긴다.</strong> 존 서버의 핵심 지표는 틱 하나를 처리하는 데 걸린 시간이다(<a href="../server/tick-loop.html">서버 틱 루프</a>). 틱 예산이 50ms인데 p99가 45ms면 아직 괜찮아 보여도 곧 넘친다. 틱 예산을 넘긴 횟수를 카운터로 따로 세면 경보 기준이 된다.
+      </li>
+      <li>
+        <strong>동접은 존·채널 단위 게이지로 본다.</strong> 전체 동접만 보면 한 채널에 몰린 것을 모른다. 다만 존·채널 수가 수천이라면 태그 대신 상위 몇 곳만 따로 내보내거나 분포로 본다.
+      </li>
+      <li>
+        <strong>패킷 종류별 처리량과 처리 시간을 센다.</strong> 패킷 종류는 수백 개 안쪽이라 태그로 넣어도 된다. 특정 패킷만 갑자기 늘면 클라이언트 버그나 매크로를 의심한다(<a href="../architecture/rate-limiting.html">레이트 리밋과 입장 대기열</a>).
+      </li>
+      <li>
+        <strong>매칭 대기 시간은 SLI로 삼기 좋다.</strong> "매칭 요청 가운데 60초 안에 판이 잡힌 비율"은 플레이어가 직접 느끼는 숫자다(<a href="../architecture/matchmaking.html">매치메이킹</a>).
+      </li>
+      <li>
+        <strong>운영 로그와 게임 행동 로그를 섞지 않는다.</strong> 운영 로그는 엔지니어가 장애를 보려고 남기고, 며칠에서 몇 주 보관하고, 형식을 자유롭게 바꾼다. 아이템 획득·거래·재화 변동 같은 행동 로그는 감사와 CS, 복구에 쓰이고, 몇 년씩 보관하며, 스키마를 함부로 바꾸면 안 된다(<a href="../database/backup-recovery.html">백업과 복구</a>, <a href="../architecture/cqrs-event-sourcing.html">CQRS와 이벤트 소싱</a>). 둘은 저장소도 파이프라인도 따로 둔다. 행동 로그는 유실되면 안 되므로 운영 로그처럼 넘칠 때 버리지 않는다.
+      </li>
+      <li>
+        <strong>개인정보와 비밀은 로그에 남기지 않는다.</strong> 이메일, 전화번호, IP, 결제 정보는 남기지 않거나 가려서 남기고, 토큰과 비밀번호는 어떤 수준에서도 찍지 않는다(<a href="../security/secret-management.html">시크릿과 키 관리</a>). 수집기에서 한 번 더 걸러 낸다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>관측 코드도 비용이다.</strong> 패킷 하나마다 span을 열고 로그를 찍으면 처리 시간보다 기록 시간이 길어진다. 틱 안의 뜨거운 경로에서는 카운터와 히스토그램 정도만 쓰고, span은 요청 단위로만 연다.
+      </li>
+      <li>
+        <strong>시계가 서버마다 다르다.</strong> 추적의 span 시각은 각 서버의 벽시계로 찍힌다. 서버끼리 시계가 수 밀리초 어긋나면 자식 span이 부모보다 먼저 시작한 것처럼 보이기도 한다(<a href="../operating-system/clocks-timers.html">시계와 타이머</a>). 시간 계산은 한 서버 안의 구간 길이로 한다.
+      </li>
+      <li>
+        <strong>지표 이름과 태그는 처음에 정해 둔다.</strong> 서비스마다 <code>login_time</code>, <code>loginDuration</code>, <code>auth.latency</code>처럼 제각각이면 모아 볼 수 없다. 이름 규칙과 단위(ms인지 s인지)를 문서로 정하고, OpenTelemetry의 의미 규약(semantic conventions)이 있는 것은 그것을 따른다.
+      </li>
+      <li>
+        <strong>장애 때 관측 시스템도 같이 무너질 수 있다.</strong> 로그 폭주로 수집기가 밀리면 정작 필요한 순간에 아무것도 안 보인다. 관측 경로는 게임 서버와 다른 자원에 두고, 수집기가 밀린 정도(버린 개수)도 지표로 본다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

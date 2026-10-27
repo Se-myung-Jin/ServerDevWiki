@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>컨슈머 랙 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operations/consumer-lag">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="../architecture/message-models.html">메시지 모델 세 갈래</a>, <a href="../server/backpressure.html">큐와 백프레셔</a>, <a href="dead-letter-circuit.html">데드레터 큐와 서킷 브레이커</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">컨슈머 랙</span>은 이벤트 로그에서 소비자가 얼마나 뒤처졌는지를 재는 값이다. 파티션마다 맨 끝 오프셋에서 소비자가 커밋한 오프셋을 뺀다. 로그는 읽어도 지워지지 않고 소비자 그룹마다 읽은 위치를 따로 기억하므로, 같은 토픽에서도 그룹마다 랙이 다르다.
+    </p>
+    <p>
+      랙은 두 가지로 잰다. <strong>개수 랙</strong>은 밀린 레코드 수이고, <strong>시간 랙</strong>은 아직 처리하지 않은 가장 오래된 레코드의 나이다. 처리에 걸리는 시간이 레코드마다 다르면 두 값은 다른 말을 한다. 사람이 체감하는 것은 시간 랙이다.
+    </p>
+    <p>
+      랙이 는다는 것은 생산 속도가 소비 속도보다 빠른 상태가 이어졌다는 뜻이다. 값만으로는 생산이 늘었는지 소비가 느려졌는지 알 수 없다. 두 속도를 따로 봐야 원인이 갈린다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>랙은 두 오프셋 사이의 거리다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="파티션 로그에 오프셋 0부터 11까지 레코드가 있다. 소비자 그룹 A는 8까지, 그룹 B는 3까지 커밋했다. 맨 끝은 12다. 그룹 A의 랙은 4, 그룹 B의 랙은 9다">
+        <defs><marker id="cl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="24">파티션 0의 로그</text>
+        <rect class="f-box" x="20" y="70" width="48" height="36" rx="3"/><text class="f-sub" x="44" y="93" text-anchor="middle">0</text>
+        <rect class="f-box" x="70" y="70" width="48" height="36" rx="3"/><text class="f-sub" x="94" y="93" text-anchor="middle">1</text>
+        <rect class="f-box" x="120" y="70" width="48" height="36" rx="3"/><text class="f-sub" x="144" y="93" text-anchor="middle">2</text>
+        <rect class="f-hit" x="170" y="70" width="48" height="36" rx="3"/><text class="f-text" x="194" y="93" text-anchor="middle">3</text>
+        <rect class="f-hit" x="220" y="70" width="48" height="36" rx="3"/><text class="f-text" x="244" y="93" text-anchor="middle">4</text>
+        <rect class="f-hit" x="270" y="70" width="48" height="36" rx="3"/><text class="f-text" x="294" y="93" text-anchor="middle">5</text>
+        <rect class="f-hit" x="320" y="70" width="48" height="36" rx="3"/><text class="f-text" x="344" y="93" text-anchor="middle">6</text>
+        <rect class="f-hit" x="370" y="70" width="48" height="36" rx="3"/><text class="f-text" x="394" y="93" text-anchor="middle">7</text>
+        <rect class="f-miss" x="420" y="70" width="48" height="36" rx="3"/><text class="f-on" x="444" y="93" text-anchor="middle">8</text>
+        <rect class="f-miss" x="470" y="70" width="48" height="36" rx="3"/><text class="f-on" x="494" y="93" text-anchor="middle">9</text>
+        <rect class="f-miss" x="520" y="70" width="48" height="36" rx="3"/><text class="f-on" x="544" y="93" text-anchor="middle">10</text>
+        <rect class="f-miss" x="570" y="70" width="48" height="36" rx="3"/><text class="f-on" x="594" y="93" text-anchor="middle">11</text>
+        <rect class="f-pad" x="620" y="70" width="48" height="36" rx="3"/>
+        <text class="f-sub" x="690" y="93">맨 끝 = 12</text>
+
+        <line class="f-tick" x1="420" y1="40" x2="420" y2="68"/>
+        <text class="f-strong" x="420" y="34" text-anchor="middle">그룹 A 커밋 = 8</text>
+        <line class="f-line" x1="422" y1="58" x2="616" y2="58" marker-end="url(#cl-a)"/>
+        <text class="f-sub" x="520" y="52" text-anchor="middle">랙 4</text>
+
+        <line class="f-tick" x1="170" y1="108" x2="170" y2="138"/>
+        <text class="f-strong" x="170" y="156" text-anchor="middle">그룹 B 커밋 = 3</text>
+        <line class="f-line" x1="172" y1="124" x2="616" y2="124" marker-end="url(#cl-a)"/>
+        <text class="f-sub" x="394" y="140" text-anchor="middle">랙 9</text>
+
+        <text class="f-sub" x="20" y="194">커밋 오프셋은 "다음에 읽을 위치"다. 랙 = 맨 끝 − 커밋. 토픽 전체 랙은 파티션별 랙의 합이다.</text>
+      </svg>
+      <figcaption>읽어도 레코드는 지워지지 않는다. 그룹 A는 4개, 그룹 B는 9개 뒤처져 있다. "랙이 얼마"는 어느 그룹, 어느 파티션 이야기인지 밝혀야 뜻이 통한다.</figcaption>
+    </figure>
+    <p>
+      랙은 <strong>커밋된</strong> 위치로 잰다. 소비자가 처리는 하고 있는데 커밋을 멈추면 실제로 밀린 것과 같은 값이 나온다. 반대로 처리하기 전에 커밋하는 소비자는 랙이 작아 보여도 일이 남아 있다. 랙을 믿으려면 커밋 시점이 처리 완료와 맞아야 한다(<a href="../architecture/delivery-guarantees.html">전달 보장과 exactly-once</a>).
+    </p>
+    <p>
+      Kafka에서는 다음 명령으로 그룹의 파티션별 커밋 위치, 맨 끝, 랙을 본다.
+    </p>
+    <pre><code class="language-bash">kafka-consumer-groups.sh --bootstrap-server broker:9092 --describe --group reward-workers
+# TOPIC     PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG   CONSUMER-ID
+# rewards   0          1204            1210            6     worker-1-...
+# rewards   1          880             5321            4441  worker-2-...</code></pre>
+    <p>
+      위 예에서는 파티션 1만 랙이 크다. 소비자 전체가 느린 것이 아니라 한 파티션에 일이 쏠렸거나 그 파티션을 맡은 소비자 하나가 막힌 것이다. 합계만 보면 이 차이가 보이지 않는다.
+    </p>
+
+    <h3>개수 랙과 시간 랙은 다른 말을 한다</h3>
+    <p>
+      개수 랙 1,000은 레코드 하나에 1ms 걸리는 소비자에게는 1초 거리이고, 100ms 걸리는 소비자에게는 100초 거리다. 생산 속도가 낮은 토픽은 개수 랙이 작아도 마지막 레코드가 몇 분째 처리되지 않았을 수 있다. 그래서 둘을 함께 본다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>값</th><th>재는 것</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>개수 랙</td><td>맨 끝과 커밋 위치 사이 레코드 수</td><td>파티션 쏠림 찾기, 따라잡는 데 걸릴 시간 계산(랙 ÷ (소비 속도 − 생산 속도))</td></tr>
+          <tr><td>시간 랙</td><td>처리하지 않은 가장 오래된 레코드의 나이, 또는 지금 처리 중인 레코드의 생산 시각과 현재 시각의 차</td><td>사용자 체감, 경보 기준, 보존 기간과의 거리</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>큐 길이와 랙은 같은 것을 재지 않는다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>견주는 것</th><th>작업 큐의 길이</th><th>이벤트 로그의 랙</th></tr></thead>
+        <tbody>
+          <tr><td>세는 대상</td><td>아직 아무도 꺼내지 않은 메시지</td><td>맨 끝과 그룹 커밋 위치의 차이</td></tr>
+          <tr><td>소비자 그룹이 여럿이면</td><td>큐가 하나면 값도 하나</td><td>그룹마다 따로</td></tr>
+          <tr><td>읽은 뒤</td><td>확인하면 사라진다</td><td>보존 기간 동안 남는다</td></tr>
+          <tr><td>밀린 끝</td><td>큐가 차서 넣기가 거절되거나 메모리가 찬다</td><td>보존 기간이 지나 처리하기 전에 레코드가 지워진다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      작업 큐에서 길이가 쌓이면 생산 쪽이 막히는 것으로 문제가 드러난다(<a href="../server/backpressure.html">큐와 백프레셔</a>). 로그는 생산 쪽을 막지 않는다. 소비자가 아무리 늦어도 생산은 계속되고, 랙이 보존 기간을 넘으면 조용히 데이터를 잃는다. 커밋 위치의 레코드가 이미 지워졌으면 소비자는 <code>auto.offset.reset</code> 설정에 따라 맨 앞이나 맨 끝으로 건너뛴다. 맨 끝으로 가면 그 사이 레코드는 처리되지 않은 채 사라진다.
+    </p>
+
+    <h3>랙은 두 속도의 차이가 쌓인 것이다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 220" role="img" aria-label="생산 속도가 이벤트 시작 시각에 급증해 소비 속도를 넘으면 그 차이만큼 랙이 쌓인다. 생산이 다시 줄어 소비 속도 아래로 내려가면 랙이 줄어든다">
+        <line class="f-line" x1="60" y1="180" x2="720" y2="180"/>
+        <line class="f-line" x1="60" y1="30" x2="60" y2="180"/>
+        <text class="f-sub" x="56" y="36" text-anchor="end">초당</text>
+        <text class="f-sub" x="720" y="198" text-anchor="end">시간</text>
+
+        <path class="f-bar" d="M260,110 L300,50 L420,50 L460,110 Z"/>
+        <text class="f-strong" x="360" y="86" text-anchor="middle">랙이 쌓인다</text>
+        <path class="f-pad" d="M460,110 L470,130 L600,130 L610,110 Z"/>
+        <text class="f-sub" x="535" y="148" text-anchor="middle">따라잡는 중 (랙이 준다)</text>
+
+        <polyline class="f-barrier" fill="none" points="60,140 260,140 300,50 420,50 460,130 720,130"/>
+        <text class="f-strong" x="430" y="42">생산</text>
+        <line class="f-line" x1="60" y1="110" x2="720" y2="110"/>
+        <text class="f-text" x="700" y="102" text-anchor="end">소비 한계</text>
+
+        <line class="f-grid" x1="260" y1="30" x2="260" y2="180"/>
+        <text class="f-sub" x="260" y="198" text-anchor="middle">이벤트 시작</text>
+      </svg>
+      <figcaption>소비 한계선 위로 올라간 생산의 넓이가 쌓인 랙이다. 생산이 한계 아래로 내려와야 그 여유만큼 랙이 준다. 여유가 작으면 따라잡는 데 오래 걸린다.</figcaption>
+    </figure>
+    <p>
+      평소 소비자가 생산보다 넉넉히 빨라야 급증 뒤에 따라잡는다. 소비 한계가 평소 생산보다 겨우 조금 빠르면 랙은 한번 쌓인 뒤 몇 시간씩 줄지 않는다. 그래서 소비 용량은 평균이 아니라 급증 뒤 회복 시간으로 잡는다.
+    </p>
+
+    <h3>늘어날 때는 어느 쪽이 변했는지부터 가른다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>모양</th><th>먼저 의심할 것</th><th>확인하는 값</th></tr></thead>
+        <tbody>
+          <tr><td>모든 파티션의 랙이 같이 는다, 생산량 그대로</td><td>소비자가 느려졌다. 외부 호출 지연, DB 잠금 대기, <a data-ref="csharp/gc-basics">GC</a> 멈춤</td><td>레코드당 처리 시간, 외부 호출 p99, GC 멈춤 시간(<a href="../csharp/gc-modes.html">GC 모드와 멈춤</a>)</td></tr>
+          <tr><td>모든 파티션의 랙이 같이 는다, 생산량 급증</td><td>이벤트 시작, 공격, 생산자 버그로 인한 중복 발행</td><td>초당 생산 레코드 수, 생산자별 비율</td></tr>
+          <tr><td>한두 파티션만 는다</td><td>파티션 키 쏠림(핫 키), 그 파티션을 맡은 소비자 하나의 문제</td><td>파티션별 생산량, 파티션별 담당 소비자</td></tr>
+          <tr><td>계단처럼 멈췄다 이어진다</td><td>리밸런싱 반복. 소비자가 처리 시간 한도를 넘겨 그룹에서 쫓겨났다 다시 들어온다</td><td>리밸런싱 횟수, <code>max.poll.interval.ms</code> 초과 로그</td></tr>
+          <tr><td>한 파티션의 커밋이 아예 안 움직인다</td><td>독 메시지에 막혔다</td><td>그 오프셋의 레코드, 소비자 예외 로그(<a href="dead-letter-circuit.html">데드레터 큐와 서킷 브레이커</a>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      랙이 언제부터 늘었는지가 원인을 가장 빨리 좁힌다. 배포 시각, 이벤트 시작 시각, 외부 서비스 장애 시각과 맞춰 본다. 요청이 지나는 층을 따라 좁히는 방법은 <a href="diagnosis.html">느린 서버 진단</a>과 같다.
+    </p>
+
+    <h3>소비자를 늘리는 데는 상한이 있다</h3>
+    <p>
+      그룹 안에서 파티션 하나는 소비자 하나만 맡는다. 파티션이 12개면 소비자를 13번째부터 늘려도 놀기만 한다(<a href="../architecture/message-models.html">메시지 모델 세 갈래</a>). 파티션 수는 나중에 늘릴 수 있지만 키가 가는 파티션이 바뀌어 키별 순서가 그 순간 깨진다. 그래서 파티션 수는 처음에 넉넉히 잡는다.
+    </p>
+    <p>
+      소비자를 늘리지 못할 때 쓰는 방법은 다음과 같다.
+    </p>
+    <ul>
+      <li><strong>모아서 처리한다.</strong> 레코드마다 DB를 부르지 말고 여러 개를 한 번에 쓴다. 처리량이 몇 배로 는다.</li>
+      <li><strong>소비자 안에서 병렬로 돌린다.</strong> 같은 키끼리만 순서를 지키면 되면, 한 파티션의 레코드를 키별로 나눠 여러 작업자가 처리한다. 커밋은 앞쪽이 모두 끝난 위치까지만 한다.</li>
+      <li><strong>급한 것과 느긋한 것을 나눈다.</strong> 결제 지급과 통계 집계가 같은 토픽에 섞여 있으면, 통계가 밀릴 때 지급도 같이 밀린다. 토픽을 나눈다.</li>
+      <li><strong>쓸모가 지난 것은 버린다.</strong> 몇 분 지난 위치 갱신이나 접속자 수 표시는 늦게 처리할 가치가 없다. 생산 시각을 보고 일정 나이가 지난 레코드는 건너뛴다.</li>
+    </ul>
+
+    <h2>선택 기준</h2>
+    <h3>경보는 값보다 방향과 시간으로 건다</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>기준</th><th>장점</th><th>약점</th></tr></thead>
+        <tbody>
+          <tr><td>개수 랙 &gt; 고정값</td><td>단순하다</td><td>토픽마다 적정값이 다르고, 급증 뒤 금방 따라잡는 정상 상황에도 울린다</td></tr>
+          <tr><td>시간 랙 &gt; 허용 지연</td><td>"우편이 5분 넘게 늦다"처럼 사용자 기준으로 말할 수 있다</td><td>레코드에 생산 시각이 있어야 한다</td></tr>
+          <tr><td>랙이 N분 동안 줄지 않고 는다</td><td>따라잡는 중인 급증과 진짜 정체를 가른다</td><td>판단이 조금 늦다</td></tr>
+          <tr><td>커밋 위치가 N분째 그대로</td><td>독 메시지나 멈춘 소비자를 바로 잡는다</td><td>생산이 없는 토픽에서는 정상도 같은 모양이다. 랙이 0보다 클 때만 본다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Burrow 같은 도구는 고정 기준 대신 커밋 위치가 움직이는지와 랙이 느는 추세를 함께 보고 그룹 상태를 판정한다. 클라우드 관리형 Kafka와 큐 서비스는 그룹별 랙과 가장 오래된 메시지 나이를 기본 지표로 낸다. 어느 쪽이든 그룹별, 파티션별로 나눠 본다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li><strong>보상 지급 큐의 랙은 플레이어가 느낀다.</strong> 이벤트 보상이 우편으로 가는 구조라면 시간 랙이 곧 "보상이 안 와요" 문의 수다. 허용 지연을 정해 경보를 걸고, 넘으면 공지부터 낸다.</li>
+      <li><strong>이벤트 시작 순간에 급증한다.</strong> 정각에 시작하는 이벤트, 점검 직후 접속, 출석 보상은 생산량을 몇 배로 튀게 한다. 시작 시각을 미리 알 수 있으니 소비자를 미리 늘리거나 지급을 몇 분에 걸쳐 나눠 넣는다.</li>
+      <li><strong>로그 파이프라인의 랙은 대시보드를 늦춘다.</strong> 동시 접속자, 매출 같은 실시간 화면이 로그를 따라 그려진다면 랙만큼 과거를 보고 있는 것이다. 운영자가 그 화면을 보고 판단하지 않도록 화면에 데이터 시각을 표시한다.</li>
+      <li><strong>계정 ID를 파티션 키로 쓰면 큰손이 쏠림을 만든다.</strong> 길드 하나나 봇 계정 하나가 레코드를 몰아 만들면 한 파티션만 밀린다. 쏠리는 키를 지표로 찾아 키를 더 잘게 나누거나 따로 처리한다(<a href="../architecture/consistent-hashing.html">일관된 해싱</a>).</li>
+      <li><strong>보존 기간을 넘기기 전에 알아야 한다.</strong> 지급 토픽의 보존이 7일이면 시간 랙이 7일에 닿는 순간 지급 기록을 잃는다. 시간 랙과 보존 기간의 거리를 함께 경보로 건다.</li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>랙은 커밋 위치로 잰다. 처리 전에 커밋하면 랙이 작아 보이고, 커밋을 미루면 커 보인다. 커밋 방식부터 확인한다.</li>
+      <li>토픽 전체 합계만 보면 한 파티션의 정체가 다른 파티션의 여유에 묻힌다.</li>
+      <li>개수 랙이 작아도 처리가 늦을 수 있다. 생산이 드문 토픽은 시간 랙으로 본다.</li>
+      <li>파티션 수를 늘려 소비자를 늘리면 키별 순서가 그 순간 깨진다. 순서에 기대는 소비자는 배포 시점을 맞춘다.</li>
+      <li>소비자를 늘리면 리밸런싱이 일어나 잠깐 모든 소비가 멈춘다. 랙이 늘 때 소비자를 자주 넣었다 뺐다 하면 오히려 더 밀린다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -105,7 +105,7 @@
     <ul>
       <li><strong>"보상 지급" 메시지는 반드시 두 번 온다고 가정한다.</strong> 우편 서버가 지급을 커밋하고 확인 직전에 재시작되는 일은 배포 때마다 생긴다. 보상 ID를 유니크 키로 두면 두 번째는 저장 단계에서 걸러진다.</li>
       <li><strong>클라이언트 요청도 같은 구조다.</strong> 클라이언트가 응답을 못 받으면 다시 보낸다. 서버와 클라이언트 사이에서도 정확히 한 번 전달은 없으므로, 구매 같은 요청에는 요청 ID를 붙이게 한다(<a href="../server/connection-loss.html">끊긴 연결 알아차리기</a>, <a href="../database/transaction.html">트랜잭션과 ACID</a>).</li>
-      <li><strong>배포와 리밸런싱이 중복의 주된 원인이다.</strong> 소비자를 재시작하거나 Kafka 컨슈머 그룹이 파티션을 다시 나누면, 커밋하지 않은 메시지가 다른 소비자에게 다시 간다. 종료할 때 처리 중인 것을 끝내고 커밋한 뒤 내린다(<a data-ref="operations/draining">드레이닝</a>).</li>
+      <li><strong>배포와 <a data-ref="operations/consumer-lag">리밸런싱</a>이 중복의 주된 원인이다.</strong> 소비자를 재시작하거나 Kafka 컨슈머 그룹이 파티션을 다시 나누면, 커밋하지 않은 메시지가 다른 소비자에게 다시 간다. 종료할 때 처리 중인 것을 끝내고 커밋한 뒤 내린다(<a data-ref="operations/draining">드레이닝</a>).</li>
     </ul>
 
     <h2>주의 사항</h2>

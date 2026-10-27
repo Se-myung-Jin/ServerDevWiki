@@ -160,7 +160,7 @@ await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
       </tbody>
     </table></div>
     <p>
-      <strong>인증서 고정(피닝)</strong>은 클라이언트가 특정 인증서나 공개 키만 믿게 하는 것이다. CA가 잘못 발급한 인증서나 중간자 프록시를 막지만, 서버 키를 바꾸는 순간 고정된 클라이언트가 모두 접속하지 못한다. 고정한다면 인증서가 아니라 공개 키(SPKI)를 고정하고, 예비 키를 함께 넣어 두고, 강제 업데이트 경로가 있는 클라이언트에만 쓴다.
+      <strong>인증서 고정(피닝)</strong>은 클라이언트가 특정 인증서나 공개 키만 믿게 하는 것이다. CA가 잘못 발급한 인증서나 중간자 프록시를 막지만, 서버 키를 바꾸는 순간 고정된 클라이언트가 모두 접속하지 못한다. 고정한다면 인증서가 아니라 공개 키(SPKI)를 고정하고, 예비 키를 함께 넣어 두고, <a data-ref="operations/protocol-compat">강제 업데이트</a> 경로가 있는 클라이언트에만 쓴다.
     </p>
 
     <h2>게임 서버에서는</h2>

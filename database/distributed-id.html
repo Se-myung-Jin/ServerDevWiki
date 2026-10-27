@@ -155,7 +155,7 @@ Guid at = Guid.CreateVersion7(DateTimeOffset.UtcNow);     // 시각을 지정할
       Snowflake의 안전은 "노드 번호가 서로 다르다"는 가정 하나에 걸려 있다. 설정 파일을 복사해 서버를 늘리다 같은 번호가 두 대에 들어가면, 두 서버는 정상으로 돌면서 같은 ID를 만든다. 오류가 나지 않아 한참 뒤에야 발견된다.
     </p>
     <ul>
-      <li><strong>사람이 정하지 않게 한다.</strong> 시작할 때 DB 테이블이나 etcd, ZooKeeper 같은 조정 서비스에서 번호를 임대(lease)받고, 살아 있는 동안 갱신한다. 쿠버네티스 StatefulSet의 순번(pod-0, pod-1)을 쓰는 방법도 있다.</li>
+      <li><strong>사람이 정하지 않게 한다.</strong> 시작할 때 DB 테이블이나 etcd, ZooKeeper 같은 조정 서비스에서 번호를 임대(lease)받고, 살아 있는 동안 갱신한다. 쿠버네티스 <a data-ref="operations/orchestration">StatefulSet</a>의 순번(pod-0, pod-1)을 쓰는 방법도 있다.</li>
       <li><strong>임대가 끊기면 만들기를 멈춘다.</strong> 네트워크가 끊긴 서버가 계속 같은 번호로 만들고, 그 사이 번호가 다른 서버에 넘어가면 같은 상황이 된다.</li>
       <li><strong>저장소의 유니크 제약을 마지막 그물로 둔다.</strong> ID 생성기가 틀려도 DB가 중복을 거부하면 적어도 덮어쓰지는 않는다.</li>
     </ul>

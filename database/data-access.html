@@ -30,7 +30,7 @@
           <tr><td>쿼리 작성</td><td>LINQ로 쓰고 SQL은 번역된다</td><td>SQL을 직접 쓴다</td></tr>
           <tr><td>생성되는 SQL 통제</td><td>번역 결과를 로그로 확인해야 안다. 복잡한 LINQ는 예상과 다른 SQL이 된다</td><td>쓴 그대로 나간다</td></tr>
           <tr><td>변경 저장</td><td>추적 중인 객체를 고치고 <code>SaveChanges</code>를 부르면 바뀐 컬럼만 <code>UPDATE</code>한다</td><td><code>UPDATE</code> 문을 직접 쓴다</td></tr>
-          <tr><td>마이그레이션</td><td>모델에서 스키마 변경 스크립트를 만든다</td><td>없다. 별도 도구를 쓴다</td></tr>
+          <tr><td>마이그레이션</td><td>모델에서 스키마 변경 스크립트를 만든다(<a href="../operations/schema-migration.html">스키마 변경과 배포 분리</a>)</td><td>없다. 별도 도구를 쓴다</td></tr>
           <tr><td>오버헤드</td><td>번역, 변경 추적, 객체 구성 비용이 있다. 컴파일된 쿼리와 추적 끄기로 줄인다</td><td>얇다. 거의 ADO.NET 그대로다</td></tr>
           <tr><td>Native AOT</td><td>.NET 9부터 미리 컴파일된 쿼리로 실험적으로 지원한다</td><td>런타임에 코드를 생성하므로 그대로는 맞지 않는다. 소스 생성 방식의 Dapper.AOT를 쓴다(<a href="../csharp/jit-aot.html">JIT와 AOT</a>)</td></tr>
         </tbody>

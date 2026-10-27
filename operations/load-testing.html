@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>부하 시험과 트래픽 재생 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operations/load-testing">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="diagnosis.html">느린 서버 진단</a>, <a href="../server/tick-loop.html">서버 틱 루프</a>, <a href="../server/backpressure.html">큐와 백프레셔</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      부하 시험은 서버가 얼마나 버티는지 재는 일이다. 목적은 숫자 하나를 얻는 것이 아니라 <strong>부하가 오를 때 무엇이 먼저 무너지는지</strong>를 출시 전에 보는 것이다. 그래서 통과 기준(동접 몇 명에서 틱 시간 p99가 몇 ms 이하)을 먼저 정하고, 그 기준으로 판정한다.
+    </p>
+    <p>
+      게임 서버는 웹 서버처럼 요청 하나를 던지고 끝나지 않는다. 연결을 오래 유지하고, 로그인부터 이동·전투·거래까지 상태가 이어지는 흐름을 탄다. 그래서 HTTP 부하 도구 대신 실제 클라이언트처럼 움직이는 <span class="blank">봇 클라이언트</span>로 부하를 만든다. 운영에서 남긴 패킷 로그를 다시 틀거나, 운영 요청을 복제해 새 판에 흘려 보면 사람이 짠 시나리오가 놓친 모양까지 재현된다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>무엇을 보려느냐에 따라 부하 모양이 다르다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="부하 시험은 예상 피크까지 올려 유지하고, 스트레스 시험은 피크를 넘어 무너질 때까지 올리고, 스파이크 시험은 갑자기 몰리게 하고, 내구 시험은 오래 유지하며 메모리가 늘어나는지 본다">
+        <text class="f-strong" x="20" y="28">부하</text>
+        <text class="f-strong" x="205" y="28">스트레스</text>
+        <text class="f-strong" x="390" y="28">스파이크</text>
+        <text class="f-strong" x="575" y="28">내구</text>
+
+        <line class="f-line" x1="20" y1="150" x2="185" y2="150"/><line class="f-line" x1="20" y1="150" x2="20" y2="42"/>
+        <line class="f-line" x1="205" y1="150" x2="370" y2="150"/><line class="f-line" x1="205" y1="150" x2="205" y2="42"/>
+        <line class="f-line" x1="390" y1="150" x2="555" y2="150"/><line class="f-line" x1="390" y1="150" x2="390" y2="42"/>
+        <line class="f-line" x1="575" y1="150" x2="740" y2="150"/><line class="f-line" x1="575" y1="150" x2="575" y2="42"/>
+
+        <line class="f-grid" x1="20" y1="80" x2="185" y2="80"/>
+        <line class="f-grid" x1="205" y1="80" x2="370" y2="80"/>
+        <line class="f-grid" x1="390" y1="80" x2="555" y2="80"/>
+        <line class="f-grid" x1="575" y1="80" x2="740" y2="80"/>
+        <text class="f-sub" x="183" y="74" text-anchor="end">예상 피크</text>
+
+        <polyline class="f-tick" fill="none" style="stroke-width:2" points="20,150 62,80 185,80"/>
+        <polyline class="f-tick" fill="none" style="stroke-width:2" points="205,150 225,150 225,124 252,124 252,102 279,102 279,80 306,80 306,62 333,62 333,48"/>
+        <text class="f-x" x="340" y="56">×</text>
+        <polyline class="f-tick" fill="none" style="stroke-width:2" points="390,136 448,136 452,52 500,52 504,136 555,136"/>
+        <polyline class="f-tick" fill="none" style="stroke-width:2" points="575,150 600,96 740,96"/>
+        <polyline class="f-line f-dash" points="600,142 740,116"/>
+        <text class="f-sub" x="738" y="134" text-anchor="end">메모리</text>
+
+        <text class="f-sub" x="20" y="172">피크에서 기준을</text>
+        <text class="f-sub" x="20" y="188">지키는지 본다</text>
+        <text class="f-sub" x="205" y="172">어디서 무엇이</text>
+        <text class="f-sub" x="205" y="188">먼저 무너지나</text>
+        <text class="f-sub" x="390" y="172">점검 직후처럼</text>
+        <text class="f-sub" x="390" y="188">한꺼번에 몰릴 때</text>
+        <text class="f-sub" x="575" y="172">몇 시간을 돌려</text>
+        <text class="f-sub" x="575" y="188">새는 것을 찾는다</text>
+      </svg>
+      <figcaption>가로축은 시간, 세로축은 부하다. 같은 봇과 같은 서버로도 부하를 올리는 모양만 바꾸면 다른 문제가 드러난다. 내구 시험은 부하보다 시간이 길다는 점이 다르다.</figcaption>
+    </figure>
+    <div class="table-scroll"><table>
+      <thead><tr><th>종류</th><th>부하 모양</th><th>답하는 질문</th></tr></thead>
+      <tbody>
+        <tr><td>부하 시험</td><td>예상 피크까지 올려 유지한다</td><td>피크에서 통과 기준을 지키는가</td></tr>
+        <tr><td>스트레스 시험</td><td>피크를 넘어 계속 올린다</td><td>무엇이 먼저 무너지고, 무너질 때 곱게 거절하는가</td></tr>
+        <tr><td>스파이크 시험</td><td>낮은 부하에서 갑자기 몇 배로 뛴다</td><td>점검 직후, 이벤트 정각 같은 순간을 견디는가</td></tr>
+        <tr><td>내구 시험</td><td>평소 수준을 몇 시간에서 하루 넘게 유지한다</td><td>메모리·핸들·커넥션이 새거나 지연이 서서히 늘지 않는가</td></tr>
+        <tr><td>용량 측정</td><td>서버 한 대에 기준을 지킬 때까지 올린다</td><td>한 대가 받는 동접 한도는 몇 명인가</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>기준을 먼저 정해야 판정이 된다</h3>
+    <p>
+      "잘 버텼다"는 판정이 아니다. 시험 전에 통과 기준을 숫자로 적는다. 예를 들면 "동접 3만 명, 존 서버 틱 시간 p99 40ms 이하, 로그인 응답 p99 1초 이하, 오류율 0.1% 이하를 30분 유지"다. 틱 예산은 틱 간격이 정하고(<a href="../server/tick-loop.html">서버 틱 루프</a>), 응답 기준은 플레이어가 느끼는 한계에서 거꾸로 잡는다.
+    </p>
+    <p>
+      평균이 아니라 백분위로 정한다. 평균이 멀쩡해도 꼬리가 길면 일부 플레이어는 렉을 겪는다(<a href="diagnosis.html">느린 서버 진단</a>). 기준이 있으면 시험 결과가 판의 회귀를 가르는 잣대가 된다.
+    </p>
+
+    <h3>봇은 실제 클라이언트처럼 움직여야 한다</h3>
+    <p>
+      HTTP 부하 도구는 요청마다 새로 묻고 답을 받으면 끝난다. 게임 서버의 부하는 다른 데서 나온다. 수만 개의 연결이 계속 열려 있고, 서버는 틱마다 상태를 밀어 보내며, 플레이어 한 명의 요청은 앞선 요청의 결과(로그인 토큰, 캐릭터 위치, 인벤토리)에 기댄다. 그래서 봇은 다음을 갖춘다.
+    </p>
+    <ul>
+      <li><strong>실제 클라이언트의 네트워크 계층을 그대로 쓴다.</strong> <a data-ref="server/framing">프레이밍</a>, 암호화, 압축, 재접속까지 같아야 서버가 받는 일이 같다. 패킷 모양을 따로 흉내 내면 클라이언트 판과 어긋난다.</li>
+      <li><strong>행동은 시나리오와 비율로 짠다.</strong> 로그인 → 마을 → 사냥 → 거래 → 로그아웃 같은 흐름을 두고, 각 행동의 비율은 운영 접속 기록에서 뽑는다. 모두가 같은 행동을 하면 실제보다 한쪽만 무겁다.</li>
+      <li><strong>생각 시간을 둔다.</strong> 사람은 응답을 받고 바로 다음 요청을 보내지 않는다. 행동 사이 쉬는 시간을 분포로 두지 않으면 봇 한 명이 사람 열 명 몫을 한다.</li>
+      <li><strong>천천히 붙인다(램프업).</strong> 시작하자마자 전부 붙이면 접속 폭주 시험이 되어 버린다. 초당 몇 명씩 늘리고, 램프업 구간의 측정값은 판정에서 뺀다.</li>
+      <li><strong>시드를 고정한다.</strong> 봇마다 난수 시드를 정해 두면 같은 시험을 다시 돌려 판끼리 비교할 수 있다(<a href="../algorithm/random.html">난수 생성</a>).</li>
+    </ul>
+
+    <h3>닫힌 모델은 과부하를 숨긴다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="서버가 멈춘 동안 닫힌 모델의 봇은 응답을 기다리느라 요청을 보내지 않아 느린 표본이 하나만 남는다. 열린 모델은 멈춘 동안에도 정해진 간격으로 요청이 도착해 느린 표본이 여러 개 남는다">
+        <rect class="f-pad" x="262" y="40" width="236" height="160" rx="4"/>
+        <text class="f-strong" x="380" y="32" text-anchor="middle">서버가 멈춘 구간</text>
+
+        <text class="f-strong" x="20" y="84">닫힌 모델</text>
+        <line class="f-line" x1="110" y1="80" x2="740" y2="80"/>
+        <circle class="f-box" cx="120" cy="80" r="6"/><circle class="f-box" cx="160" cy="80" r="6"/><circle class="f-box" cx="200" cy="80" r="6"/><circle class="f-box" cx="240" cy="80" r="6"/>
+        <circle class="f-miss" cx="280" cy="80" r="6"/>
+        <line class="f-barrier" x1="280" y1="80" x2="500" y2="80"/>
+        <circle class="f-box" cx="540" cy="80" r="6"/><circle class="f-box" cx="580" cy="80" r="6"/><circle class="f-box" cx="620" cy="80" r="6"/><circle class="f-box" cx="660" cy="80" r="6"/><circle class="f-box" cx="700" cy="80" r="6"/>
+        <text class="f-sub" x="380" y="108" text-anchor="middle">응답을 기다리며 보내지 않는다</text>
+        <text class="f-sub" x="20" y="104">느린 표본 1개</text>
+
+        <text class="f-strong" x="20" y="164">열린 모델</text>
+        <line class="f-line" x1="110" y1="160" x2="740" y2="160"/>
+        <circle class="f-box" cx="120" cy="160" r="6"/><circle class="f-box" cx="160" cy="160" r="6"/><circle class="f-box" cx="200" cy="160" r="6"/><circle class="f-box" cx="240" cy="160" r="6"/>
+        <circle class="f-miss" cx="280" cy="160" r="6"/><circle class="f-miss" cx="320" cy="160" r="6"/><circle class="f-miss" cx="360" cy="160" r="6"/><circle class="f-miss" cx="400" cy="160" r="6"/><circle class="f-miss" cx="440" cy="160" r="6"/><circle class="f-miss" cx="480" cy="160" r="6"/>
+        <circle class="f-hit" cx="540" cy="160" r="6"/><circle class="f-box" cx="580" cy="160" r="6"/><circle class="f-box" cx="620" cy="160" r="6"/><circle class="f-box" cx="660" cy="160" r="6"/><circle class="f-box" cx="700" cy="160" r="6"/>
+        <text class="f-sub" x="380" y="188" text-anchor="middle">멈춘 동안에도 계속 도착한다</text>
+        <text class="f-sub" x="20" y="184">느린 표본 6개</text>
+        <text class="f-sub" x="516" y="188">밀린 것을 처리하느라 하나 더 늦다</text>
+      </svg>
+      <figcaption>점 하나가 요청 하나다. 진한 점이 멈춘 구간에 걸려 느려진 요청이다. 같은 멈춤인데 닫힌 모델은 느린 표본을 하나만 남긴다. 백분위는 거의 멀쩡해 보이고, 실제로 플레이어들이 겪은 지연은 지워진다.</figcaption>
+    </figure>
+    <p>
+      봇 수를 고정하고 각 봇이 응답을 받아야 다음 요청을 보내는 방식을 <strong>닫힌 모델</strong>이라고 한다. 도착률을 고정하고 응답과 상관없이 정해진 간격으로 요청을 보내는 방식은 <strong>열린 모델</strong>이다. 닫힌 모델에서는 서버가 느려지면 봇도 따라 덜 보낸다. 부하가 저절로 줄어드니 과부하가 드러나지 않고, 멈춘 동안 보냈어야 할 요청이 측정에서 통째로 빠진다. 이것을 <span class="blank">조정된 누락</span>(coordinated omission)이라고 한다.
+    </p>
+    <p>
+      실제 플레이어는 서버가 느리다고 덜 오지 않는다. 다른 플레이어들은 계속 접속하고 계속 움직인다. 그래서 측정은 열린 모델로 하거나, 닫힌 모델이라도 요청을 <strong>보냈어야 할 시각</strong>부터 응답까지를 잰다. 도착률이 처리율을 넘으면 대기열이 늘어나는 것은 큐 이론 그대로다(<a href="../server/backpressure.html">큐와 백프레셔</a>).
+    </p>
+
+    <h3>서버와 봇 양쪽을 함께 잰다</h3>
+    <p>
+      봇이 잰 응답 시간은 플레이어가 느끼는 값이고, 서버 지표는 그 원인이다. 둘을 같은 시간축에 놓아야 "로그인 p99가 튄 순간 DB 커넥션 대기가 늘었다" 같은 연결이 보인다. 서버 쪽은 틱 시간, 큐 길이, <a data-ref="csharp/gc-basics">GC</a> 멈춤, 커넥션 풀 대기, 스레드 수를 남긴다(<a href="observability.html">관측성: 로그·지표·추적</a>).
+    </p>
+    <p>
+      봇 머신 자체를 먼저 의심한다. 봇 한 대에 연결을 너무 많이 몰면 봇의 CPU나 GC가 먼저 포화되고, 서버가 아니라 봇이 느려진 것을 서버 지연으로 잘못 읽는다. 봇 머신의 CPU, 소켓 수, 루프 지연도 함께 기록하고, 여유가 있을 때만 결과를 믿는다. 여러 봇 머신의 측정값을 합칠 때는 시각을 맞춰 둔다.
+    </p>
+    <p>
+      무너지는 지점을 찾았으면 그다음은 진단이다. 요청이 지나는 큐를 앞에서부터 따라가며 어디서 쌓이는지 좁힌다(<a href="diagnosis.html">느린 서버 진단</a>).
+    </p>
+
+    <h3>운영 트래픽을 다시 틀거나 복제해서 흘린다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 210" role="img" aria-label="트래픽 재생은 운영 패킷 로그를 익명화하고 배속을 정해 봇 재생기로 시험 서버에 다시 보낸다. 섀도 트래픽은 운영 요청을 복제해 새 판 서버에 흘리고 응답은 사용자에게 보내지 않고 비교만 한다">
+        <defs><marker id="lt-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <text class="f-strong" x="20" y="28">트래픽 재생</text>
+        <rect class="f-box" x="20" y="40" width="150" height="44" rx="6"/><text class="f-text" x="95" y="67" text-anchor="middle">운영 패킷 로그</text>
+        <rect class="f-box" x="210" y="40" width="150" height="44" rx="6"/><text class="f-text" x="285" y="60" text-anchor="middle">익명화 · 배속</text><text class="f-sub" x="285" y="76" text-anchor="middle">세션 순서 유지</text>
+        <rect class="f-box" x="400" y="40" width="150" height="44" rx="6"/><text class="f-text" x="475" y="67" text-anchor="middle">봇 재생기</text>
+        <rect class="f-hit" x="590" y="40" width="150" height="44" rx="6"/><text class="f-text" x="665" y="67" text-anchor="middle">시험 서버</text>
+        <line class="f-line" x1="170" y1="62" x2="206" y2="62" marker-end="url(#lt-a)"/>
+        <line class="f-line" x1="360" y1="62" x2="396" y2="62" marker-end="url(#lt-a)"/>
+        <line class="f-line" x1="550" y1="62" x2="586" y2="62" marker-end="url(#lt-a)"/>
+
+        <text class="f-strong" x="20" y="124">섀도 트래픽</text>
+        <rect class="f-box" x="20" y="136" width="150" height="44" rx="6"/><text class="f-text" x="95" y="163" text-anchor="middle">운영 요청</text>
+        <rect class="f-box" x="300" y="136" width="170" height="44" rx="6"/><text class="f-text" x="385" y="156" text-anchor="middle">운영 서버</text><text class="f-sub" x="385" y="172" text-anchor="middle">응답은 사용자에게</text>
+        <line class="f-line" x1="170" y1="158" x2="296" y2="158" marker-end="url(#lt-a)"/>
+        <rect class="f-hit" x="560" y="136" width="180" height="44" rx="6"/><text class="f-text" x="650" y="156" text-anchor="middle">새 판 서버</text><text class="f-sub" x="650" y="172" text-anchor="middle">응답은 비교만, 쓰기는 막음</text>
+        <path class="f-line f-dash" d="M150,136 Q150,106 300,106 L520,106 Q556,106 556,132" marker-end="url(#lt-a)"/>
+        <text class="f-sub" x="410" y="100" text-anchor="middle">복제해서 함께 흘린다</text>
+      </svg>
+      <figcaption>재생은 지나간 트래픽을 나중에 시험 환경에서 다시 튼다. 섀도는 지금 들어오는 요청을 복제해 새 판에도 동시에 흘린다. 둘 다 사람이 짠 시나리오가 놓친 행동 비율과 이상한 입력까지 그대로 가져온다.</figcaption>
+    </figure>
+    <p>
+      <strong>트래픽 재생</strong>은 운영에서 남긴 패킷 로그를 시험 서버에 다시 보내는 일이다. 계정과 개인정보는 지우거나 바꾸고, 시간 간격을 그대로 두거나 배속을 올려 더 큰 부하를 만든다. 플레이어 한 명의 패킷은 앞선 응답에 기대므로 세션 단위로 순서를 지키고, 로그인 토큰이나 서버가 준 ID처럼 실행마다 바뀌는 값은 재생기가 새 응답에서 받아 갈아 끼운다.
+    </p>
+    <p>
+      같은 "입력 기록 재생"이라도 목적이 다르다. <a href="../game-patterns/command-pattern.html">커맨드 패턴과 리플레이</a>의 재생은 같은 입력으로 비트 단위로 같은 결과를 내서 <strong>버그를 다시 일으키는</strong> 것이고, 결정론이 필요하다. 부하 재현용 재생은 서버가 받는 <strong>일의 양과 모양</strong>을 다시 만드는 것이라 결과가 원래와 똑같을 필요가 없다.
+    </p>
+    <p>
+      <strong>섀도 트래픽</strong>은 운영 요청을 복제해 새 판 서버에도 흘리고, 새 판의 응답은 사용자에게 보내지 않은 채 운영 응답과 비교만 한다. 실제 부하와 실제 입력으로 새 판을 미리 돌려 보는 셈이다. 다만 새 판이 쓰기를 하면 같은 아이템이 두 번 지급되거나 결제가 두 번 나간다. 섀도 쪽은 저장소를 따로 두거나 쓰기를 막고, 외부 호출은 가짜로 바꾼다.
+    </p>
+
+    <h3>환경과 용량 계획</h3>
+    <p>
+      시험 환경은 운영과 같은 사양, 같은 구성, 비슷한 데이터 양이어야 한다. 빈 DB에서는 인덱스가 다 메모리에 들어가 빠르고, 캐릭터 테이블이 억 단위가 되면 <a data-ref="database/query-plan">실행 계획</a>부터 달라진다. 결제 서버, 플랫폼 로그인, 외부 API는 가짜 서버로 바꾸되 응답 지연은 운영과 비슷하게 넣는다. 지연 없는 가짜는 호출을 기다리는 동안 붙잡히는 스레드와 커넥션을 감춘다.
+    </p>
+    <p>
+      용량 계획은 한 대가 기준을 지키는 한도에서 시작한다. 한 대가 동접 4,000명에서 틱 p99 기준을 넘기 시작했다면 그 값의 70% 정도를 운영 한도로 잡는다. 예상 피크가 동접 6만 명이면 6만 ÷ 2,800 ≈ 22대에 장애 대비 여유를 더한다. 한 대씩 늘린다고 그대로 늘지 않는 공유 지점(DB, 전역 서비스, 랭킹)은 따로 시험한다.
+    </p>
+
+    <h3>봇 클라이언트의 뼈대</h3>
+<pre><code class="language-csharp">// 봇 하나 = 연결 하나 + 시나리오 하나. 수천 개를 한 프로세스에서 비동기로 돌린다.
+sealed class Bot
+{
+    readonly int _id;
+    readonly GameConnection _conn = new();   // 실제 클라이언트의 네트워크 계층을 그대로 쓴다
+    readonly Random _rng;
+    readonly LatencyRecorder _rec;
+
+    public Bot(int id, LatencyRecorder rec)
+    {
+        _id = id;
+        _rng = new Random(id);                // 시드를 고정해 같은 시험을 다시 돌린다
+        _rec = rec;
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+        await _conn.ConnectAsync(ct);
+        await Measure("login", () =&gt; _conn.LoginAsync("bot" + _id, ct));
+        while (!ct.IsCancellationRequested)
+        {
+            var action = Scenario.Pick(_rng);  // 운영 접속 기록에서 뽑은 행동 비율
+            await Measure(action.Name, () =&gt; action.RunAsync(_conn, ct));
+            await Task.Delay(ThinkTime(), ct); // 사람처럼 쉬었다 움직인다
+        }
+    }
+
+    TimeSpan ThinkTime() =&gt; TimeSpan.FromMilliseconds(500 + _rng.Next(1500));
+
+    async Task Measure(string name, Func&lt;Task&gt; call)
+    {
+        long start = Stopwatch.GetTimestamp();
+        await call();
+        _rec.Record(name, Stopwatch.GetElapsedTime(start));
+    }
+}
+
+// 램프업: 한꺼번에 붙이지 않고 초당 정해진 수만큼 늘린다.
+for (int i = 0; i &lt; botCount; i++)
+{
+    _ = new Bot(i, recorder).RunAsync(cts.Token);
+    if ((i + 1) % botsPerSecond == 0) await Task.Delay(1000, cts.Token);
+}</code></pre>
+    <p>
+      이 뼈대는 봇마다 응답을 받고 쉬었다가 다음 행동을 하는 닫힌 모델이다. 행동 단위 지연을 보기에는 좋지만, 서버가 멈추면 봇도 같이 멈춘다. 과부하 판정용 수치는 행동을 보낼 예정 시각을 미리 정해 두고 그 시각부터 재거나, 도착률을 고정한 별도 부하원으로 잰다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>부하원</th><th>잘하는 것</th><th>못 하는 것</th></tr></thead>
+      <tbody>
+        <tr><td>시나리오 봇</td><td>아직 없는 기능, 출시 전 피크, 원하는 비율로 조절</td><td>사람이 상상한 행동만 한다. 실제 비율과 어긋날 수 있다</td></tr>
+        <tr><td>트래픽 재생</td><td>실제 행동 비율과 이상한 입력. 배속으로 더 큰 부하</td><td>지난 판의 프로토콜만 담긴다. 새 기능은 시험하지 못한다</td></tr>
+        <tr><td>섀도 트래픽</td><td>새 판을 실제 부하·입력으로 미리 돌리고 응답을 비교</td><td>쓰기와 외부 호출을 막아야 하고, 운영 설비가 함께 필요하다</td></tr>
+        <tr><td>HTTP 부하 도구</td><td>로그인 웹 API, 상점·우편 같은 요청-응답 서비스</td><td>오래 붙어 있는 실시간 연결과 세션 흐름</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      출시 전에는 시나리오 봇이 기본이다. 운영 중에는 재생으로 판끼리 회귀를 보고, 큰 변경을 내보내기 전에는 섀도로 확인한다. 결과는 판, 설정, 봇 수, 기준 대비 수치를 표로 남겨 다음 시험과 나란히 비교한다(<a href="deploy-pipeline.html">배포 파이프라인</a>에 정기 시험으로 넣어 두면 회귀가 바로 보인다).
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>신규 서버 오픈과 이벤트 정각을 따로 시험한다.</strong> 평소 피크의 몇 배가 몇 분 안에 몰린다. 로그인, 캐릭터 생성, 이벤트 보상 지급이 동시에 터지는 스파이크 시나리오를 만들고, 넘치는 접속이 입장 대기열로 곱게 넘어가는지 본다(<a href="../architecture/rate-limiting.html">레이트 리밋과 입장 대기열</a>).
+      </li>
+      <li>
+        <strong>한 존에 몰리는 시나리오가 전체 동접보다 먼저 무너진다.</strong> 동접 3만 명이 고르게 퍼진 시험은 통과해도, 공성전처럼 수백 명이 한자리에 모이면 브로드캐스트가 제곱으로 늘어 그 존의 틱이 먼저 밀린다(<a href="../server/aoi-broadcast.html">관심 영역과 브로드캐스트</a>). 봇을 한 지점으로 모으는 시나리오를 꼭 넣는다.
+      </li>
+      <li>
+        <strong>로그인 폭주는 뒤쪽 서비스까지 따라간다.</strong> 로그인 한 번이 인증, 캐릭터 목록, 우편, 길드, 랭킹 조회로 퍼진다. 로그인 서버만 보지 말고 그 뒤의 DB 커넥션 풀과 캐시 적중률까지 같이 본다(<a href="../database/scaling-db.html">DB 확장: 복제와 샤딩</a>).
+      </li>
+      <li>
+        <strong>내구 시험으로 누수를 잡는다.</strong> 몇 시간을 돌리면 해제하지 않은 이벤트 구독, 늘어만 가는 캐시, 닫히지 않은 소켓이 메모리와 핸들 그래프로 드러난다. 짧은 시험에서는 보이지 않는다(<a href="../csharp/memory-leaks.html">GC 언어의 메모리 누수</a>). GC 멈춤이 시간이 갈수록 길어지는지도 같이 본다(<a href="../csharp/gc-modes.html">GC 모드와 멈춤</a>).
+      </li>
+      <li>
+        <strong>매칭과 판 할당도 부하 대상이다.</strong> 봇이 대기열에 몰리면 매칭 계산과 전용 서버 할당 속도가 병목이 되기도 한다(<a href="../architecture/matchmaking.html">매치메이킹</a>). 판 단위 게임은 동접보다 초당 시작되는 판 수가 더 중요한 기준이다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>봇이 서버보다 먼저 지치지 않았는지 본다.</strong> 봇 머신의 CPU와 GC가 포화되면 결과 전체가 틀린다. 봇 머신의 여유를 결과와 함께 기록한다.
+      </li>
+      <li>
+        <strong>운영 환경에 부하를 줄 때는 범위를 나눈다.</strong> 운영 DB나 외부 결제를 건드리는 시험은 실제 피해가 난다. 시험 계정과 시험 데이터를 표시해 두고, 결제·우편·로그처럼 바깥으로 나가는 경로는 가짜로 바꾼다.
+      </li>
+      <li>
+        <strong>운영 로그를 재생할 때는 개인정보를 먼저 지운다.</strong> 패킷 로그에는 계정, 채팅, 결제 정보가 섞여 있다. 시험 환경으로 옮기기 전에 지우거나 바꾸고, 보관 기간을 정한다.
+      </li>
+      <li>
+        <strong>캐시가 데워진 상태와 식은 상태를 모두 본다.</strong> 같은 시험을 두 번째 돌리면 캐시가 차 있어 빠르다. 점검 직후처럼 캐시가 빈 상태로 시작하는 시나리오를 따로 돌린다.
+      </li>
+      <li>
+        <strong>한 번 통과로 끝내지 않는다.</strong> 기능이 늘 때마다 같은 시험을 다시 돌려 이전 결과와 비교한다. 성능 회귀는 대개 조금씩 쌓여서 한참 뒤에 기준을 넘는다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

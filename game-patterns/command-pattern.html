@@ -148,7 +148,7 @@ while (queue.TryDequeue(out var cmd))
       </li>
       <li>
         <strong>입력 로그 재생으로 버그를 다시 일으킨다.</strong> 문제가 난 존의 시작 상태와 그 뒤 커맨드를 남겨 두면 개발 장비에서 같은 틱을 다시 돌려 볼 수 있다. 드물게 나는 크래시나 아이템 복제처럼 재현이 어려운 버그에 특히 쓸모가 있다. 시각이나 외부 응답 같은 값까지 커맨드로 기록해야 재생이 맞는다.
-      </li>
+       같은 로그를 부하를 만들려고 다시 트는 쓰임은 목적이 달라서 <a href="../operations/load-testing.html">부하 시험과 트래픽 재생</a>에서 다룬다.</li>
       <li>
         <strong>C#에서는 할당을 줄인다.</strong> 커맨드마다 클래스를 <code>new</code>하면 초당 수만 개가 GC로 간다(<a href="../csharp/gc-basics.html">GC 기초</a>). 자주 오는 커맨드는 구조체로 만들어 종류 번호와 함께 <a data-ref="data-structure/stack-queue">링 버퍼</a>에 담거나, 풀에서 꺼내 쓴다(<a href="../csharp/struct-design.html">struct 설계</a>).
       </li>

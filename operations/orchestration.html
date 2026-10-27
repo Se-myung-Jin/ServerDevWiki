@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>컨테이너와 오케스트레이션 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="operations/orchestration">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="deploy-pipeline.html">배포 파이프라인</a>, <a href="../architecture/session-vs-persistent.html">세션 기반과 지속 세계</a>, <a href="../csharp/gc-modes.html">GC 모드와 멈춤</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      <span class="blank">컨테이너</span>는 산출물과 그것이 도는 데 필요한 실행 환경(런타임, 라이브러리, 설정 파일의 자리)을 이미지 하나로 묶는다. 같은 이미지는 개발 PC에서도 운영 서버에서도 같은 모양으로 뜬다. 가상 머신과 달리 운영체제 커널은 호스트와 함께 쓰고, 프로세스를 격리하고 자원을 제한하는 것은 커널 기능(네임스페이스, cgroups)이 맡는다. 그래서 몇 초 안에 뜨고 가볍다.
+    </p>
+    <p>
+      <strong>오케스트레이터</strong>는 컨테이너를 여러 대의 서버에 어떻게 띄울지 맞춰 주는 시스템이다. 사람이 "이 이미지를 세 개 띄워 둬라"라고 <em>원하는 상태</em>를 적으면, 오케스트레이터는 실제 상태를 계속 보며 차이를 메운다. 하나가 죽으면 다시 띄우고, 서버가 하나 빠지면 다른 서버로 옮긴다. 대표가 쿠버네티스다.
+    </p>
+    <p>
+      이 모델은 <strong>언제 지워도 되는 프로세스</strong>를 전제한다. 로그인, 로비, 상점 API 같은 상태 없는 서버에는 그대로 맞는다. 플레이어가 붙어 있는 게임 서버는 지워도 되는 시점을 서버만 알기 때문에, 그 사정을 아는 전용 도구나 직접 만든 관리 계층을 얹는다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>이미지는 계층으로 쌓이고, 컨테이너는 그 위의 프로세스다</h3>
+    <p>
+      이미지는 읽기 전용 계층을 차례로 쌓은 것이다. 운영체제 기본 파일, .NET 런타임, 서버 실행 파일이 각자 한 층이다. 서버 코드만 바뀌면 맨 위층만 새로 만들고 아래층은 캐시를 다시 쓴다. 컨테이너는 그 이미지 위에 쓰기용 얇은 층을 하나 얹고 프로세스를 띄운 것이다. 컨테이너를 지우면 그 쓰기 층도 사라진다. 그래서 남겨야 할 것(로그, 덤프, 저장 데이터)은 컨테이너 안이 아니라 바깥 볼륨이나 다른 서비스로 보낸다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th></th><th>가상 머신</th><th>컨테이너</th></tr></thead>
+      <tbody>
+        <tr><td>격리 단위</td><td>운영체제 전체(커널 포함)</td><td>프로세스. 커널은 호스트와 함께 쓴다</td></tr>
+        <tr><td>뜨는 시간</td><td>수십 초에서 분</td><td>대개 몇 초. 앱 기동 시간이 대부분이다</td></tr>
+        <tr><td>격리 강도</td><td>강하다</td><td>커널 취약점은 함께 탄다</td></tr>
+        <tr><td>자원 제한</td><td>가상 CPU·메모리를 할당</td><td>cgroups로 CPU 시간과 메모리 상한을 건다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      자원 제한이 서버 코드에 영향을 준다. 메모리 상한을 넘으면 커널이 프로세스를 강제로 끝낸다(종료 코드 137, <a href="../system-programming/signals.html">시그널과 프로세스 종료</a>). .NET 런타임은 컨테이너의 메모리·CPU 제한을 읽어 <a data-ref="csharp/gc-basics">GC</a> 힙 상한과 서버 GC 힙 수를 맞추는데, 그 값이 게임 서버에 맞는지는 따로 확인해야 한다(<a href="../csharp/gc-modes.html">GC 모드와 멈춤</a>). CPU 상한은 "코어 몇 개"가 아니라 "일정 시간당 쓸 수 있는 CPU 시간"이라서, 상한에 닿으면 남은 시간 동안 스레드가 멈춰 틱이 튄다.
+    </p>
+
+    <h3>오케스트레이터는 원하는 상태와 실제 상태의 차이를 메운다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 232" role="img" aria-label="원하는 상태는 복제본 셋이고 실제로는 둘만 살아 있다. 컨트롤러가 차이를 보고 하나를 새로 띄운다. 준비 프로브를 통과한 것만 서비스 목록에 들어간다">
+        <defs><marker id="or-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-box" x="20" y="30" width="170" height="56" rx="6"/>
+        <text class="f-text" x="105" y="54" text-anchor="middle">원하는 상태</text>
+        <text class="f-sub" x="105" y="72" text-anchor="middle">lobby 복제본 3개</text>
+        <line class="f-line" x1="190" y1="58" x2="268" y2="58" marker-end="url(#or-a)"/>
+        <rect class="f-miss" x="270" y="30" width="170" height="56" rx="6"/>
+        <text class="f-on" x="355" y="54" text-anchor="middle">컨트롤러</text>
+        <text class="f-on" x="355" y="72" text-anchor="middle">차이를 보고 맞춘다</text>
+        <line class="f-line" x1="440" y1="70" x2="518" y2="122" marker-end="url(#or-a)"/>
+        <text class="f-sub" x="570" y="162" text-anchor="middle">↑ 컨트롤러가 새로 띄움</text>
+
+        <rect class="f-hit" x="520" y="20" width="100" height="36" rx="6"/>
+        <text class="f-text" x="570" y="43" text-anchor="middle">lobby-1</text>
+        <rect class="f-hit" x="520" y="64" width="100" height="36" rx="6"/>
+        <text class="f-text" x="570" y="87" text-anchor="middle">lobby-2</text>
+        <rect class="f-box" x="520" y="108" width="100" height="36" rx="6"/>
+        <text class="f-text" x="570" y="131" text-anchor="middle">lobby-3</text>
+        <text class="f-sub" x="632" y="42">준비됨</text>
+        <text class="f-sub" x="632" y="86">준비됨</text>
+        <text class="f-sub" x="632" y="130">기동 중</text>
+
+        <line class="f-line f-dash" x1="355" y1="86" x2="355" y2="170"/>
+        <text class="f-sub" x="345" y="132" text-anchor="end">실제 상태를 계속 본다</text>
+        <rect class="f-box" x="20" y="160" width="420" height="52" rx="6"/>
+        <text class="f-text" x="230" y="182" text-anchor="middle">서비스(고정 주소) → 준비된 lobby-1, lobby-2로만 보낸다</text>
+        <text class="f-sub" x="230" y="200" text-anchor="middle">lobby-3은 준비 프로브를 통과하면 목록에 들어간다</text>
+        <line class="f-line" x1="440" y1="180" x2="518" y2="48" marker-end="url(#or-a)"/>
+        <line class="f-line" x1="440" y1="186" x2="518" y2="88" marker-end="url(#or-a)"/>
+      </svg>
+      <figcaption>오케스트레이터는 명령을 한 번 실행하고 끝나는 도구가 아니다. 원하는 상태를 적어 두면 컨트롤러가 실제 상태를 계속 보며 차이를 메운다. 누가 하나를 지워도 곧 다시 생긴다.</figcaption>
+    </figure>
+    <p>
+      쿠버네티스에서 자주 만나는 개념은 몇 개 되지 않는다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>개념</th><th>하는 일</th></tr></thead>
+      <tbody>
+        <tr><td>Pod</td><td>함께 뜨고 함께 지워지는 컨테이너 묶음. 배치와 재시작의 단위다</td></tr>
+        <tr><td>Deployment</td><td>"이 이미지의 Pod를 N개 유지"라는 원하는 상태. 이미지를 바꾸면 하나씩 바꿔 끼운다(롤링 업데이트)</td></tr>
+        <tr><td>Service</td><td>바뀌는 Pod 주소들 앞에 고정 주소를 하나 세운다. 준비된 Pod로만 보낸다</td></tr>
+        <tr><td>자원 요청과 한도</td><td>요청(request)은 배치할 때 확보할 양, 한도(limit)는 넘으면 막히거나 종료되는 선</td></tr>
+        <tr><td>HorizontalPodAutoscaler(HPA)</td><td>CPU 사용률이나 직접 내보낸 지표를 보고 Pod 수를 늘리고 줄인다</td></tr>
+        <tr><td>StatefulSet</td><td>Pod마다 고정 이름과 고정 저장소를 준다. 순서대로 띄우고 순서대로 내린다</td></tr>
+        <tr><td>PodDisruptionBudget</td><td>노드 정비처럼 계획된 축출 때 동시에 빠질 수 있는 Pod 수에 상한을 건다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>준비 프로브와 생존 프로브는 다른 것을 묻는다</h3>
+    <p>
+      오케스트레이터는 서버 안을 모른다. 그래서 서버에 주기적으로 물어본다. 묻는 질문이 둘이고, 실패했을 때 하는 일이 다르다.
+    </p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>프로브</th><th>묻는 것</th><th>실패하면</th><th>게임 서버에서 넣을 것</th></tr></thead>
+      <tbody>
+        <tr><td><span class="blank">준비 프로브</span>(readiness)</td><td>지금 새 요청을 받아도 되나</td><td>서비스 목록에서 뺀다. 프로세스는 그대로 둔다</td><td>기획 데이터 로드 완료, DB 연결, 드레이닝 중이면 실패로 응답</td></tr>
+        <tr><td><span class="blank">생존 프로브</span>(liveness)</td><td>살아는 있나, 멈춰 버리지 않았나</td><td>컨테이너를 재시작한다</td><td><a data-ref="server/tick-loop">틱 루프</a>가 마지막으로 돈 시각. 외부 의존(DB)은 넣지 않는다</td></tr>
+        <tr><td>시작 프로브(startup)</td><td>기동이 끝났나</td><td>끝날 때까지 다른 프로브를 미룬다</td><td>맵과 데이터 로드가 긴 서버에 쓴다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      흔한 사고는 생존 프로브에 DB 연결 확인을 넣는 것이다. DB가 잠깐 느려지면 모든 서버의 생존 프로브가 함께 실패하고, 오케스트레이터가 멀쩡한 서버를 전부 재시작한다. 장애가 한 곳에서 전체로 번진다. 외부 의존이 안 되면 "새 요청은 받지 마라"(준비 프로브 실패)가 맞는 답이다.
+    </p>
+    <pre><code class="language-csharp">// 준비 상태는 서버가 직접 들고 있다가 알려 준다.
+// 생존 확인은 틱 루프가 최근에 돌았는지만 본다.
+builder.Services.AddHealthChecks()
+    .AddCheck("ready", () => world.IsReady &amp;&amp; !world.IsDraining
+        ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy(),
+        tags: new[] { "ready" })
+    .AddCheck("live", () => DateTime.UtcNow - world.LastTickAt &lt; TimeSpan.FromSeconds(10)
+        ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy(),
+        tags: new[] { "live" });
+
+app.MapHealthChecks("/healthz/ready", new() { Predicate = c =&gt; c.Tags.Contains("ready") });
+app.MapHealthChecks("/healthz/live",  new() { Predicate = c =&gt; c.Tags.Contains("live") });</code></pre>
+    <p>
+      소켓을 직접 다루는 게임 서버라도 프로브용 HTTP 포트 하나는 따로 연다. 게임 포트로 프로브를 받으면 프로브 연결이 게임 세션으로 잡히거나, 게임 프로토콜이 프로브 형식을 모른다.
+    </p>
+
+    <h3>상태 없는 서버에는 그대로 맞고, 상태 있는 서버에서 어긋난다</h3>
+    <p>
+      Deployment의 롤링 업데이트와 HPA의 축소는 "아무 Pod나 지워도 된다"를 전제한다. 로비나 인증 서버는 요청 하나가 짧고 상태를 바깥(DB, <a data-ref="database/redis">Redis</a>)에 두므로 이 전제가 맞는다. 플레이어가 붙어 있는 서버는 다르다.
+    </p>
+    <ul>
+      <li><strong>축소할 때 고르는 Pod를 서버가 정할 수 없다.</strong> HPA가 Pod 수를 줄이면 플레이어가 가득한 Pod가 먼저 지워질 수 있다.</li>
+      <li><strong>지우기까지 기다려 주는 시간이 짧다.</strong> 종료 유예 시간이 기본 30초라서, 판이 끝나기를 기다리기에는 대개 모자란다(<a href="draining.html">세션 빼기와 배포 트리거</a>).</li>
+      <li><strong>고정 신원이 필요하다.</strong> 존 서버는 "3번 존을 맡은 프로세스"라는 이름이 의미를 갖는다. StatefulSet이 고정 이름은 주지만, 그 이름을 어느 존에 붙일지는 여전히 우리가 정한다.</li>
+      <li><strong>UDP와 직접 접속.</strong> 게임 클라이언트가 서버에 직접 붙어야 하면, 로드밸런서 뒤의 고정 주소가 아니라 그 Pod가 뜬 노드의 주소와 포트를 알려 줘야 한다. 호스트 포트나 호스트 네트워크를 쓰고, 포트 배정을 관리해야 한다.</li>
+    </ul>
+    <p>
+      그래서 판 단위로 끝나는 세션 서버는 게임 서버 전용 오케스트레이터(쿠버네티스 위의 Agones, 관리형 GameLift)에 맡기는 경우가 많다. 이 도구들은 "할당된 서버는 서버가 끝났다고 알릴 때까지 지우지 않는다"를 상태로 들고 있다. 그 수명 모델과, 끝이 없는 월드 서버에는 이 모델이 왜 그대로 맞지 않는지는 <a href="../architecture/session-vs-persistent.html">세션 기반과 지속 세계</a>에서 다룬다.
+    </p>
+
+    <h2>선택 기준</h2>
+    <div class="table-scroll"><table>
+      <thead><tr><th>서버 종류</th><th>맞는 배치</th><th>이유</th></tr></thead>
+      <tbody>
+        <tr><td>로그인, 로비, 상점·우편 API</td><td>Deployment + Service + HPA</td><td>요청이 짧고 상태가 바깥에 있다. 아무 Pod나 지워도 된다</td></tr>
+        <tr><td>게이트웨이</td><td>Deployment, 축소는 천천히</td><td>연결을 들고 있어서 지우면 재접속 폭주가 난다. 드레이닝을 길게 잡는다</td></tr>
+        <tr><td>판 단위 세션 서버</td><td>게임 서버 전용 오케스트레이터</td><td>할당 상태와 종료 신호를 도구가 이해한다</td></tr>
+        <tr><td>월드·존 서버</td><td>직접 만든 관리 계층, 또는 전용 컨트롤러</td><td>끝나는 시점이 없어서 교체 시점과 인계를 우리가 정한다</td></tr>
+        <tr><td>DB, <a data-ref="architecture/message-models">메시지 브로커</a></td><td>관리형 서비스, 또는 운영 경험이 있을 때만 StatefulSet</td><td>장애 복구와 백업이 오케스트레이터의 일이 아니다</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>자원 요청과 한도를 같은 값으로 두는 쪽이 틱에 안전하다.</strong> 한도가 요청보다 높으면 노드가 붐빌 때 CPU를 빼앗기고, CPU 한도에 닿으면 남은 주기 동안 멈춘다. 지연에 민감한 시뮬레이션 서버는 CPU를 넉넉히 요청하고, 다른 Pod와 한 노드에 몰리지 않게 배치 규칙을 건다.
+      </li>
+      <li>
+        <strong>노드 정비가 서버를 내린다.</strong> 클라우드 노드 교체나 클러스터 업그레이드는 Pod를 축출한다. PodDisruptionBudget으로 한 번에 빠지는 수를 제한하고, 플레이어가 있는 서버는 축출 전에 세션을 빼는 경로를 탄다.
+      </li>
+      <li>
+        <strong>로그와 덤프는 컨테이너 밖으로 보낸다.</strong> 크래시로 재시작되면 컨테이너 안의 파일은 함께 사라진다. 로그는 표준 출력으로 내보내 수집기가 가져가게 하고, 덤프는 볼륨에 남긴다(<a href="../system-programming/crash-dump.html">크래시 덤프와 심볼</a>).
+      </li>
+      <li>
+        <strong>설정과 비밀은 이미지에 굽지 않는다.</strong> 환경마다 다른 값은 ConfigMap과 비밀 저장소에서 넣는다(<a href="../security/secret-management.html">시크릿과 키 관리</a>). 그래야 같은 이미지가 모든 환경에 올라간다(<a href="deploy-pipeline.html">배포 파이프라인</a>).
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>
+        <strong>오케스트레이터가 배포 전략을 대신 정하지 않는다.</strong> 롤링이든 한꺼번에 교체든 도구는 고를 수 있게 해 줄 뿐이다. 플레이어가 붙은 서버를 어떤 순서로 바꿀지는 <a href="zero-downtime-patch.html">무중단 패치</a>에서 정한다.
+      </li>
+      <li>
+        <strong>재시작은 복구가 아니다.</strong> 생존 프로브가 실패해 재시작되면 증상은 사라져도 원인은 남는다. 재시작 횟수를 지표로 남기고, 늘어나면 원인을 찾는다.
+      </li>
+      <li>
+        <strong>메모리 한도에 걸린 종료는 예외 로그가 남지 않는다.</strong> 커널이 바로 끝내기 때문이다. 재시작 사유(OOMKilled)를 오케스트레이터 쪽에서 확인한다.
+      </li>
+      <li>
+        <strong>컨테이너 격리는 보안 경계로 충분하지 않다.</strong> 커널을 함께 쓰므로, 남의 코드를 돌리는 용도라면 더 강한 격리가 필요하다. 이미지는 루트가 아닌 사용자로 실행한다.
+      </li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

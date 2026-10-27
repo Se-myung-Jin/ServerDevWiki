@@ -76,7 +76,7 @@ dotnet-counters collect -p 12345 --format csv -o run.csv   # 파일로 남겨 �
       </table>
     </div>
     <p>
-      카운터는 런타임이 원래 세는 숫자를 1초쯤마다 내보내는 것이라 붙여도 성능이 거의 달라지지 않는다. 숫자 하나로 원인을 확정하지는 못한다. 다음에 무엇을 붙일지를 정하는 것이 카운터의 일이다. .NET 9부터는 런타임 지표가 <code>System.Diagnostics.Metrics</code> 기반의 계측(Meter)으로도 나와, 같은 값을 OpenTelemetry로 Prometheus 같은 수집기에 보낼 수 있다. 이때 지표 이름이 바뀐다. 아래 표의 <code>alloc-rate</code> 같은 이름은 예전 EventCounters 이름이고, Meter 쪽은 <code>dotnet.gc.heap.total_allocated</code>, <code>dotnet.monitor.lock_contentions</code>처럼 OpenTelemetry 규칙을 따른다. 대시보드를 만들 때는 어느 쪽 이름인지 확인한다.
+      카운터는 런타임이 원래 세는 숫자를 1초쯤마다 내보내는 것이라 붙여도 성능이 거의 달라지지 않는다. 숫자 하나로 원인을 확정하지는 못한다. 다음에 무엇을 붙일지를 정하는 것이 카운터의 일이다. .NET 9부터는 런타임 지표가 <code>System.Diagnostics.Metrics</code> 기반의 계측(Meter)으로도 나와, 같은 값을 <a data-ref="operations/observability">OpenTelemetry</a>로 Prometheus 같은 수집기에 보낼 수 있다. 이때 지표 이름이 바뀐다. 아래 표의 <code>alloc-rate</code> 같은 이름은 예전 EventCounters 이름이고, Meter 쪽은 <code>dotnet.gc.heap.total_allocated</code>, <code>dotnet.monitor.lock_contentions</code>처럼 OpenTelemetry 규칙을 따른다. 대시보드를 만들 때는 어느 쪽 이름인지 확인한다.
     </p>
 
     <h3>추적: 어디서 시간을 쓰는지 기록한다</h3>
