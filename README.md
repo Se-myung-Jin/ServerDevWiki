@@ -46,10 +46,12 @@ ServerDevWiki/
 ├── assets/
 │   ├── catalog.js             # 분야와 주제 문서 목록 (여기만 고치면 목차가 갱신됨)
 │   ├── quiz-data.js           # 점검 문항 (각 문항은 하나의 주제 문서에 연결)
-│   ├── app.js · quiz.js       # 사이드바, 목차, 문항 렌더링
+│   ├── links.js               # 역링크 색인 (tools/build-links.js가 만든다)
+│   ├── app.js · quiz.js       # 상단 바·메뉴·검색·목차·연결된 문서, 문항 렌더링
 │   ├── boot.js                # 테마·본문 폭·학습 모드 복원
 │   └── style.css              # 테마(자동/라이트/다크/세피아/터미널)
 ├── templates/topic.html       # 주제 문서 템플릿
+├── tools/                     # 합치기·자동 링크·점검·캡처 스크립트 (tools/README.md)
 ├── computer-architecture/
 ├── operating-system/
 ├── ...                        # 분야별 폴더 (각각 index.html + 주제 문서)
@@ -65,6 +67,7 @@ ServerDevWiki/
 2. 복사한 파일의 `data-topic`을 `"<분야 폴더>/<slug>"`로 바꾸고 본문을 쓴다.
 3. `assets/catalog.js`의 해당 분야 `topics`에 `{ slug, title, importance, summary, tags }`를 추가한다. `importance`는 `"핵심"`(면접 단골), 생략(보통), `"참고"`(알아두면 좋은 정도) 중 하나다. `tags`는 그 분야의 `tags` 목록(분야당 10개 미만)에서 고른다.
 4. 점검 문항은 `assets/quiz-data.js`에 `{ topic, q, a }`로 추가한다.
+5. `node tools/lint.js .`로 점검한다. 여러 문서를 한꺼번에 더하거나 고치는 순서, 자동 링크, 그림·모바일 확인은 [tools/README.md](tools/README.md)에 있다.
 
 본문에서 `<span class="blank">핵심어</span>`로 감싼 부분은 학습 모드에서 가려지고, 클릭하면 드러납니다.
 

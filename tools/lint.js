@@ -46,6 +46,9 @@ for (const c of window.CATALOG) {
     if (new Set(ids).size !== ids.length) report(rel, "marker id 중복");
     if (!/<svg/.test(body)) report(rel, "(정보) 그림 없음");
     if (/<h2>출처<\/h2>/.test(body)) report(rel, "출처 섹션이 있음");
+    // &lt; 의 & 가 빠지는 식으로 깨진 엔티티. sed 치환에 & 를 쓰면 생긴다
+    const broken = body.match(/[^&#a-z;](lt|gt|amp);/);
+    if (broken) report(rel, "깨진 엔티티 " + JSON.stringify(broken[0]));
   }
 }
 // 역링크 색인이 지금 문서들과 맞는지 본다
