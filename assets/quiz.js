@@ -9,12 +9,17 @@
     var QUIZ = window.QUIZ || [];
     var mount = document.getElementById("quiz");
 
+    // 로드맵의 곁가지(클라이언트 접점) 분야는 출제하지 않는다.
+    var side = SDW.sideDirs || [];
+    CATALOG = CATALOG.filter(function (cat) { return side.indexOf(cat.dir) === -1; });
+
     // 문항에 분야/문서 정보를 붙인다. 카탈로그에 없는 문서를 가리키는 문항은 제외.
-    var pool = QUIZ.map(function (q) {
+    var all = QUIZ.map(function (q) {
       var f = SDW.findTopic(q.topic);
       return f ? { q: q.q, a: q.a, cat: f.cat, topic: f.topic } : null;
     }).filter(Boolean);
-    var orphan = QUIZ.length - pool.length;
+    var orphan = QUIZ.length - all.length;
+    var pool = all.filter(function (p) { return side.indexOf(p.cat.dir) === -1; });
 
     if (!pool.length) {
       mount.innerHTML =
@@ -94,6 +99,20 @@
       return a;
     }
 
+    // 문항마다 핵심 토픽 쪽을 80, 나머지를 20의 비중으로 뽑는다. 고정 비율이 아니라 확률이고,
+    // 한쪽이 바닥나면 남은 쪽에서 계속 뽑는다.
+    var CORE_WEIGHT = 0.8;
+    function weightedDraw(items, size) {
+      var core = shuffle(items.filter(function (p) { return p.topic.importance === "핵심"; }));
+      var rest = shuffle(items.filter(function (p) { return p.topic.importance !== "핵심"; }));
+      var out = [], n = size || items.length;
+      while (out.length < n && (core.length || rest.length)) {
+        var fromCore = !rest.length || (core.length && Math.random() < CORE_WEIGHT);
+        out.push((fromCore ? core : rest).pop());
+      }
+      return out;
+    }
+
     var deck = [], pos = 0, missed = [], known = 0;
 
     function start(items) {
@@ -107,9 +126,8 @@
 
     form.addEventListener("submit", function (e) {
       e.preventDefault();
-      var items = shuffle(selection());
       var size = parseInt(checked("size")[0], 10);
-      if (size) items = items.slice(0, size);
+      var items = weightedDraw(selection(), size);
       if (!items.length) {
         stage.innerHTML = '<div class="empty">선택한 범위에 문항이 없습니다.</div>';
         return;

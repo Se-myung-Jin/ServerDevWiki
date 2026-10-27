@@ -135,12 +135,33 @@
       return '<option value="' + t[0] + '">' + t[1] + "</option>";
     }).join("");
 
+    // 위쪽 바: 메뉴 버튼, 사이트 이름, 지금 분야, 검색과 점검 문항 바로가기.
+    // 메뉴(분야 목록과 설정)는 평소 숨겨 두고 버튼이나 단축키로 왼쪽에서 꺼낸다.
+    var here = currentCat
+      ? '<span class="topbar__sep">/</span><a class="topbar__here" href="' + catHref(currentCat) + '">' + esc(currentCat.title) + "</a>"
+      : "";
     var shell = el(
       '<div class="layout">' +
-        '<button type="button" class="menu-btn" aria-label="메뉴 열기">☰ 목차</button>' +
-        '<aside class="side">' +
-          '<div class="side__brand"><a href="' + ROOT + 'index.html">' + SITE + "</a></div>" +
-          '<div class="side__sub">' + SUBTITLE + "</div>" +
+        '<header class="topbar">' +
+          '<button type="button" class="menu-btn" aria-label="메뉴 열기" aria-expanded="false" aria-controls="side">' +
+            '<span class="menu-btn__bars" aria-hidden="true"><i></i><i></i><i></i></span>' +
+          "</button>" +
+          '<a class="topbar__brand" href="' + ROOT + 'index.html">' + SITE + "</a>" + here +
+          '<span class="topbar__gap"></span>' +
+          '<button type="button" class="topbar__search" aria-label="분야와 문서 검색">' +
+            '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg>' +
+            '<span class="topbar__search-text">검색</span><kbd>/</kbd>' +
+          "</button>" +
+          '<a class="topbar__quiz" href="' + ROOT + 'quiz.html">점검 문항</a>' +
+          (currentTopicId ? '<span class="topbar__progress" aria-hidden="true"></span>' : "") +
+        "</header>" +
+        '<div class="side-backdrop" hidden></div>' +
+        '<aside class="side" id="side" aria-label="분야와 설정">' +
+          '<div class="side__head">' +
+            '<div><div class="side__brand"><a href="' + ROOT + 'index.html">' + SITE + "</a></div>" +
+            '<div class="side__sub">' + SUBTITLE + "</div></div>" +
+            '<button type="button" class="side__close" aria-label="메뉴 닫기">×</button>' +
+          "</div>" +
           '<input type="search" class="side__search" placeholder="분야 · 문서 검색" aria-label="분야와 문서 검색">' +
           '<div class="side__label">분야</div>' +
           '<ul class="nav">' + nav + "</ul>" +
@@ -193,11 +214,55 @@
       renderStudy();
     });
 
-    document.querySelector(".menu-btn").addEventListener("click", function () {
-      document.body.classList.toggle("side-open");
+    // 메뉴 드로어: 버튼, 바깥 클릭, Esc로 여닫고, "/"나 Ctrl+K는 열면서 검색 칸으로 간다.
+    var body = document.body;
+    var side = document.getElementById("side");
+    var menuBtn = document.querySelector(".menu-btn");
+    var backdrop = document.querySelector(".side-backdrop");
+    var search = document.querySelector(".side__search");
+    function setMenu(open, focusSearch) {
+      if (open === body.classList.contains("side-open")) {
+        if (open && focusSearch) search.focus();
+        return;
+      }
+      body.classList.toggle("side-open", open);
+      menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      menuBtn.setAttribute("aria-label", open ? "메뉴 닫기" : "메뉴 열기");
+      if (open) {
+        backdrop.hidden = false;
+        var cur = side.querySelector(".nav__topics a.is-current, .nav__cat.is-current > a");
+        if (cur) cur.scrollIntoView({ block: "center" });
+        (focusSearch ? search : side.querySelector(".side__close")).focus({ preventScroll: true });
+      } else {
+        setTimeout(function () { if (!body.classList.contains("side-open")) backdrop.hidden = true; }, 250);
+        if (side.contains(document.activeElement)) menuBtn.focus();
+      }
+    }
+    menuBtn.addEventListener("click", function () { setMenu(!body.classList.contains("side-open")); });
+    document.querySelector(".topbar__search").addEventListener("click", function () { setMenu(true, true); });
+    document.querySelector(".side__close").addEventListener("click", function () { setMenu(false); });
+    backdrop.addEventListener("click", function () { setMenu(false); });
+    document.addEventListener("keydown", function (e) {
+      var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+      if (e.key === "Escape" && body.classList.contains("side-open")) setMenu(false);
+      else if ((e.key === "/" && !typing) || (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey))) {
+        e.preventDefault();
+        setMenu(true, true);
+      }
     });
 
-    var search = document.querySelector(".side__search");
+    // 문서 페이지에서는 위쪽 바 아래에 읽은 정도를 가는 선으로 보여 준다.
+    var progress = document.querySelector(".topbar__progress");
+    if (progress) {
+      var onScroll = function () {
+        var max = document.documentElement.scrollHeight - window.innerHeight;
+        progress.style.transform = "scaleX(" + (max > 0 ? Math.min(1, window.scrollY / max) : 0) + ")";
+      };
+      window.addEventListener("scroll", onScroll, { passive: true });
+      window.addEventListener("resize", onScroll);
+      onScroll();
+    }
+
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
       document.querySelectorAll(".nav__cat").forEach(function (li) {
@@ -629,6 +694,7 @@
     store: store,
     findTopic: findTopic,
     topicHref: topicHref,
+    sideDirs: ROADMAP_SIDE.dirs,
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
