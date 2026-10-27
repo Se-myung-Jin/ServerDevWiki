@@ -130,7 +130,7 @@
       물리는 20ms마다 움직이는데 화면은 그보다 자주(예: 144Hz면 약 7ms마다) 그려진다. 그대로 그리면 같은 위치가 여러 프레임 반복되다 한 번에 뛰어 떨림이 보인다. 그래서 <code>Rigidbody</code>의 보간(interpolate)을 켜 두면, 렌더링은 마지막 두 물리 상태 사이를 섞어 그린다. 화면은 실제 물리보다 최대 한 간격 늦은 모습이다. <a href="../game-patterns/state-sync.html">스냅샷과 상태 동기화</a>에서 다른 플레이어를 두 스냅샷 사이로 보간하는 것과 같은 맞바꿈이다.
     </p>
     <p>
-      프레임률 자체는 <code>QualitySettings.vSyncCount</code>와 <code>Application.targetFrameRate</code>로 정한다. 수직 동기화를 켜면 모니터 주사율에 맞춰 기다리므로 <code>targetFrameRate</code>는 무시된다. 모바일은 배터리와 발열 때문에 30이나 60으로 묶는 경우가 많다. 프레임을 고르게 내보내는 문제는 <a data-ref="graphics/frame-pacing">프레임 페이싱</a>에서 다룬다.
+      프레임률 자체는 <code>QualitySettings.vSyncCount</code>와 <code>Application.targetFrameRate</code>로 정한다. 수직 동기화를 켜면 모니터 주사율에 맞춰 기다리므로 <code>targetFrameRate</code>는 무시된다. 이것이 부드러움과 지연에 주는 영향은 <a href="../graphics/frame-pacing.html">프레임 표시와 지연</a>에서 다룬다. 모바일은 배터리와 발열 때문에 30이나 60으로 묶는 경우가 많다. 프레임을 고르게 내보내는 문제는 <a data-ref="graphics/frame-pacing">프레임 페이싱</a>에서 다룬다.
     </p>
 
     <h2>서버 틱과 무엇이 다른가</h2>

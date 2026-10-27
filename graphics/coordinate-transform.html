@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>좌표계와 변환 · ServerDevWiki</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/boot.js"></script>
+</head>
+<body data-page="topic" data-topic="graphics/coordinate-transform">
+  <article class="doc-body">
+
+    <p class="prereq">먼저 읽을 것: <a href="rendering-pipeline.html">렌더링 파이프라인</a>, <a href="../computer-architecture/number-representation.html">수의 표현</a></p>
+
+    <h2>핵심 요약</h2>
+    <p>
+      모델의 정점은 자기 원점 기준으로 저장돼 있고, 화면에 나오기까지 좌표계를 여러 번 갈아탄다. 모델 → 월드 → 뷰(카메라 기준) → 클립 → 정규 장치 좌표 → 화면 순서다. 단계마다 행렬을 곱하고, 마지막에 <span class="blank">w로 나누는</span> 원근 나눗셈이 한 번 들어간다. 행렬 곱은 순서를 바꾸면 결과가 달라진다.
+    </p>
+    <p>
+      서버 프로그래머에게 중요한 것은 이 사슬 가운데 <strong>월드 좌표</strong>다. 서버는 월드 좌표로 위치를 정하고, 사거리와 시야각을 판정하고, 클라이언트에 보낸다. 그래서 서버와 클라이언트가 축 방향, 단위, 회전 표현을 똑같이 써야 한다. 하나라도 어긋나면 서버 판정과 화면이 다르게 보인다.
+    </p>
+
+    <h2>동작 원리</h2>
+
+    <h3>정점은 좌표계를 차례로 갈아탄다</h3>
+    <figure class="fig">
+      <svg viewBox="0 0 760 200" role="img" aria-label="정점은 모델 행렬로 월드, 뷰 행렬로 카메라 기준, 투영 행렬로 클립 좌표가 되고, w로 나눠 정규 장치 좌표, 뷰포트 변환으로 화면 좌표가 된다. 서버는 월드 좌표만 다룬다">
+        <defs><marker id="ct-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path class="f-head" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+        <rect class="f-cell" x="14" y="60" width="92" height="50" rx="6"/>
+        <text class="f-text" x="60" y="82" text-anchor="middle">모델</text>
+        <text class="f-sub" x="60" y="99" text-anchor="middle">물체 원점</text>
+        <line class="f-line" x1="106" y1="85" x2="134" y2="85" marker-end="url(#ct-a)"/>
+        <text class="f-sub" x="120" y="54" text-anchor="middle">모델 행렬</text>
+        <rect class="f-miss" x="136" y="60" width="92" height="50" rx="6"/>
+        <text class="f-on" x="182" y="82" text-anchor="middle">월드</text>
+        <text class="f-on" x="182" y="99" text-anchor="middle" style="font-weight:400;font-size:12px">장면 원점</text>
+        <line class="f-line" x1="228" y1="85" x2="256" y2="85" marker-end="url(#ct-a)"/>
+        <text class="f-sub" x="242" y="54" text-anchor="middle">뷰 행렬</text>
+        <rect class="f-cell" x="258" y="60" width="92" height="50" rx="6"/>
+        <text class="f-text" x="304" y="82" text-anchor="middle">뷰</text>
+        <text class="f-sub" x="304" y="99" text-anchor="middle">카메라 원점</text>
+        <line class="f-line" x1="350" y1="85" x2="378" y2="85" marker-end="url(#ct-a)"/>
+        <text class="f-sub" x="364" y="54" text-anchor="middle">투영 행렬</text>
+        <rect class="f-cell" x="380" y="60" width="92" height="50" rx="6"/>
+        <text class="f-text" x="426" y="82" text-anchor="middle">클립</text>
+        <text class="f-sub" x="426" y="99" text-anchor="middle">(x, y, z, w)</text>
+        <line class="f-line" x1="472" y1="85" x2="500" y2="85" marker-end="url(#ct-a)"/>
+        <text class="f-strong" x="486" y="54" text-anchor="middle">÷ w</text>
+        <rect class="f-cell" x="502" y="60" width="104" height="50" rx="6"/>
+        <text class="f-text" x="554" y="82" text-anchor="middle">정규 장치</text>
+        <text class="f-sub" x="554" y="99" text-anchor="middle">−1 ~ 1 범위</text>
+        <line class="f-line" x1="606" y1="85" x2="634" y2="85" marker-end="url(#ct-a)"/>
+        <rect class="f-cell" x="636" y="60" width="110" height="50" rx="6"/>
+        <text class="f-text" x="691" y="82" text-anchor="middle">화면</text>
+        <text class="f-sub" x="691" y="99" text-anchor="middle">픽셀 좌표</text>
+        <rect class="f-pad" x="128" y="130" width="108" height="34" rx="6"/>
+        <text class="f-sub" x="182" y="152" text-anchor="middle">서버는 여기만 쓴다</text>
+        <line class="f-line f-dash" x1="182" y1="130" x2="182" y2="112"/>
+        <text class="f-sub" x="490" y="152" text-anchor="middle">뷰부터 뒤는 클라이언트 화면에만 있는 좌표다</text>
+      </svg>
+      <figcaption>세 행렬은 보통 하나로 미리 곱해 두고 정점마다 한 번만 곱한다. 원근감은 마지막 나눗셈에서 생긴다. 멀리 있는 점일수록 w가 커서, 나누고 나면 화면 가운데 쪽으로 모인다.</figcaption>
+    </figure>
+    <p>
+      모델 행렬은 크기 조절, 회전, 이동을 하나로 묶은 것이다. 이 순서를 바꾸면 결과가 달라진다. 이동한 뒤에 회전하면 물체가 자기 자리에서 도는 대신 원점을 중심으로 크게 돈다. 투영 행렬은 카메라 기준 좌표를 잘라 낼 범위로 옮기고, 깊이 값을 w에 담아 둔다. 그 w로 나누는 순간 원근이 생긴다.
+    </p>
+
+    <h3>곱하는 순서는 관례마다 반대로 적는다</h3>
+    <p>
+      같은 변환을 라이브러리마다 반대 순서로 적는다. 벡터를 열로 세우는 관례는 <code>M × v</code>로 쓰고, 오른쪽 행렬부터 적용된다. 벡터를 행으로 눕히는 관례는 <code>v × M</code>로 쓰고, 왼쪽 행렬부터 적용된다. Unity의 <code>Matrix4x4</code>는 앞의 방식을, .NET의 <code>System.Numerics.Matrix4x4</code>는 뒤의 방식을 쓴다. 서버가 <code>System.Numerics</code>로 계산하고 클라이언트가 Unity로 계산하면, 같은 수식을 옮겨 적어도 곱하는 순서를 뒤집어야 같은 결과가 나온다.
+    </p>
+
+    <h3>엔진마다 축이 다르다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>환경</th><th>손 방향</th><th>위쪽 축</th><th>앞쪽 축</th></tr></thead>
+      <tbody>
+        <tr><td>Unity</td><td>왼손</td><td>+Y</td><td>+Z</td></tr>
+        <tr><td>Unreal Engine</td><td>왼손</td><td>+Z</td><td>+X</td></tr>
+        <tr><td>OpenGL 관례</td><td>오른손</td><td>+Y</td><td>−Z(카메라가 보는 쪽)</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      왼손과 오른손은 x, y를 같게 두었을 때 z축이 반대를 가리킨다는 차이다. 외적의 방향과 회전 각도의 부호가 여기에 따라 뒤집힌다. 지도 툴, 서버 물리, 클라이언트 엔진이 서로 다른 관례를 쓰면 경계마다 축을 바꾸는 변환이 들어가야 한다. 이 변환이 한 군데라도 빠지면 몬스터가 거울처럼 반대쪽에 나타난다.
+    </p>
+
+    <h3>회전 표현은 셋이고 장단이 다르다</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>표현</th><th>크기</th><th>장점</th><th>약점</th></tr></thead>
+      <tbody>
+        <tr><td>오일러 각(pitch, yaw, roll)</td><td>숫자 3개</td><td>사람이 읽기 쉽다. 기획 데이터에 적기 좋다</td><td>축 둘이 겹치면 한 방향 자유도를 잃는다(짐벌 락). 두 회전 사이를 고르게 잇기 어렵다</td></tr>
+        <tr><td>쿼터니언</td><td>숫자 4개</td><td>짐벌 락이 없다. 두 회전 사이를 구면 보간(slerp)으로 매끄럽게 잇는다</td><td>읽기 어렵다. 계산을 거듭하면 길이가 1에서 벗어나 정규화가 필요하다</td></tr>
+        <tr><td>회전 행렬</td><td>숫자 9개</td><td>점에 바로 곱한다. 다른 변환과 합치기 쉽다</td><td>크다. 오차가 쌓이면 직교성이 깨진다</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      엔진은 보통 내부에서 쿼터니언으로 회전을 들고, 편집기 화면에만 오일러 각을 보여 준다. 서버도 계산은 쿼터니언이나 방향 벡터로 하고, 사람이 보는 로그와 기획 데이터에만 각도를 쓰는 편이 안전하다.
+    </p>
+
+    <h3>판정은 내적, 외적, 제곱 거리로 한다</h3>
+    <p>
+      서버가 하는 공간 판정 대부분은 벡터 연산 세 가지로 끝난다. 두 단위 벡터의 <strong>내적</strong>은 사이각의 코사인이라, 상대가 앞에 있는지(양수), 시야각 안에 있는지(코사인 비교)를 각도 계산 없이 판정한다. <strong>외적</strong>의 부호는 상대가 왼쪽인지 오른쪽인지를 알려 준다. 거리 비교는 제곱근을 건너뛰고 <strong>제곱 거리</strong>끼리 비교한다.
+    </p>
+<pre><code class="language-csharp">using System.Numerics;
+
+// 부채꼴(사거리 + 시야각) 안에 대상이 있는지 본다. 높이는 무시하고 땅 평면에서 판정한다.
+static bool InCone(Vector3 origin, Vector3 forward, Vector3 target, float range, float halfAngleDeg)
+{
+    var to = target - origin;
+    to.Y = 0;                                   // Y-up 관례: 높이 성분을 뺀다
+    float distSq = to.LengthSquared();
+    if (distSq &gt; range * range) return false;   // 제곱끼리 비교해 제곱근을 피한다
+    if (distSq &lt; 1e-6f) return true;            // 같은 자리면 시야각을 따지지 않는다
+
+    var f = Vector3.Normalize(new Vector3(forward.X, 0, forward.Z));
+    float cos = Vector3.Dot(f, to / MathF.Sqrt(distSq));
+    float limit = MathF.Cos(halfAngleDeg * MathF.PI / 180f);  // 상수는 미리 계산해 둘 수 있다
+    return cos &gt;= limit;
+}</code></pre>
+    <p>
+      <code>System.Numerics</code>의 벡터 연산은 <a data-ref="csharp/jit-aot">JIT</a>이 SIMD 명령으로 바꿔 준다(<a href="../computer-architecture/simd.html">SIMD</a>). 판정이 몇 만 번씩 도는 서버라면 벡터 형식을 직접 쓰는 것만으로도 차이가 난다.
+    </p>
+
+    <h3>원점에서 멀수록 좌표가 거칠어진다</h3>
+    <p>
+      좌표는 보통 32비트 <code>float</code>다. 가수부가 24비트라 유효 숫자는 일곱 자리쯤이고, 값이 커질수록 표현할 수 있는 간격이 넓어진다(<a href="../computer-architecture/number-representation.html">수의 표현</a>). 원점에서 1만 단위 떨어진 곳의 간격은 약 0.001이고, 10만 단위에서는 약 0.008이다. 단위가 미터라면 10km 밖에서는 1mm보다 고운 움직임을 담지 못한다. 큰 월드의 끝에서 캐릭터가 떨리거나 카메라가 흔들리는 원인이다.
+    </p>
+    <p>
+      클라이언트는 플레이어가 멀어지면 월드 전체를 옮겨 원점을 다시 플레이어 근처로 가져오는 <strong>원점 이동</strong>(floating origin)으로 이를 피한다. 서버는 월드를 존이나 격자 칸으로 나눠 칸 안의 상대 좌표로 들고 있거나, 계산은 <code>double</code>로 하고 보낼 때만 줄인다.
+    </p>
+
+    <h2>게임 서버에서는</h2>
+    <ul>
+      <li>
+        <strong>축, 단위, 회전 표현을 프로토콜 계약으로 적는다.</strong> "Y가 위, 단위는 미터, 회전은 Y축 기준 yaw를 도 단위로, 시계 방향이 양수"처럼 정해 프로토콜 문서와 공유 코드에 함께 적는다. 맵 데이터를 내보내는 툴, 서버의 충돌 데이터, 클라이언트 엔진이 같은 계약을 따라야 한다. 서버 위치와 화면 위치가 한 축만 뒤집혀 보이는 버그는 거의 이 계약이 어긋난 것이다.
+      </li>
+      <li>
+        <strong>판정은 가능하면 평면에서 한다.</strong> 높이 차가 판정에 의미 없는 게임이면 XZ 평면(Unity 관례)에서 거리와 각도를 계산한다. 연산이 줄고, 언덕에 선 캐릭터가 사거리 밖으로 밀리는 어긋남도 줄어든다. 높이가 중요한 게임은 높이 허용 범위를 따로 검사한다.
+      </li>
+      <li>
+        <strong>보낼 때는 좌표를 줄인다.</strong> 위치는 존 기준 상대 좌표를 정해진 정밀도(예: 1cm)로 양자화해 16비트 정수에 담을 수 있다. 회전은 캐릭터라면 yaw 하나를 8~16비트로 보내도 충분하다. 자유롭게 도는 물체는 쿼터니언에서 가장 큰 성분을 빼고 나머지 셋만 보내는 방식(smallest three)으로 크기를 줄인다(<a href="../game-patterns/state-sync.html">스냅샷과 상태 동기화</a>).
+      </li>
+      <li>
+        <strong>서버 판정과 화면이 다르게 보이는 이유를 구분한다.</strong> 클라이언트는 보간 때문에 조금 지난 위치를 그리고, 모델의 시각적 중심과 서버의 판정 원점이 다를 수 있다. "분명히 맞았는데 빗나갔다"는 제보는 좌표 계약 문제인지, 보간 지연 문제인지, 판정 원점 문제인지 나눠서 본다.
+      </li>
+    </ul>
+
+    <h2>주의 사항</h2>
+    <ul>
+      <li>각도를 쿼터니언으로, 쿼터니언을 각도로 바꾸는 왕복은 같은 값으로 돌아오지 않을 수 있다. 같은 회전을 나타내는 오일러 각은 여러 개다.</li>
+      <li>쿼터니언 <code>q</code>와 <code>−q</code>는 같은 회전이다. 두 쿼터니언이 같은지 성분별로 비교하면 틀린다. 내적의 절댓값이 1에 가까운지로 본다.</li>
+      <li><code>float</code> 좌표를 <code>==</code>로 비교하지 않는다. 허용 오차를 두고 비교한다.</li>
+      <li>서버와 클라이언트가 같은 수식으로 계산해도 부동소수 결과가 비트까지 같다는 보장은 없다. 판정 권한은 서버 한쪽에 둔다.</li>
+    </ul>
+
+  </article>
+
+  <script src="../assets/catalog.js"></script>
+  <script src="../assets/quiz-data.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

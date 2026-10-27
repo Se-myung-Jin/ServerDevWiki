@@ -588,5 +588,19 @@
   ["Boehm","unity/unity-vs-dotnet"],
   ["증분 GC","unity/unity-vs-dotnet"],
   ["코드 스트리핑","unity/unity-vs-dotnet"],
-  ["보수적 수거기","unity/unity-vs-dotnet"]
+  ["보수적 수거기","unity/unity-vs-dotnet"],
+  ["드로 콜","graphics/rendering-pipeline"],
+  ["덧그리기","graphics/rendering-pipeline"],
+  ["인스턴싱","graphics/rendering-pipeline"],
+  ["헤드리스","graphics/rendering-pipeline"],
+  ["원근 나눗셈","graphics/coordinate-transform"],
+  ["짐벌 락","graphics/coordinate-transform"],
+  ["쿼터니언","graphics/coordinate-transform"],
+  ["원점 이동","graphics/coordinate-transform"],
+  ["floating origin","graphics/coordinate-transform"],
+  ["티어링","graphics/frame-pacing"],
+  ["vSync","graphics/frame-pacing"],
+  ["트리플 버퍼링","graphics/frame-pacing"],
+  ["가변 주사율","graphics/frame-pacing"],
+  ["프레임 페이싱","graphics/frame-pacing"]
 ]
