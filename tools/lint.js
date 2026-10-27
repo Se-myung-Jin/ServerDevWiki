@@ -50,7 +50,7 @@ for (const c of window.CATALOG) {
 }
 // 역링크 색인이 지금 문서들과 맞는지 본다
 const links = require("./build-links.js");
-if (!fs.existsSync(links.outFile) || fs.readFileSync(links.outFile, "utf8") !== links.build())
+if (!fs.existsSync(links.outFile) || fs.readFileSync(links.outFile, "utf8").replace(/\r\n/g, "\n") !== links.build())
   report("assets/links.js", "역링크 색인이 오래됐다. node tools/build-links.js 를 실행한다");
 
 console.log(problems ? problems + "건" : "문제 없음");

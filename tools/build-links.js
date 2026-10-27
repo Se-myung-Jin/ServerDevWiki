@@ -48,7 +48,7 @@ module.exports = { build, outFile };
 
 if (require.main === module) {
   const text = build();
-  const old = fs.existsSync(outFile) ? fs.readFileSync(outFile, "utf8") : "";
+  const old = fs.existsSync(outFile) ? fs.readFileSync(outFile, "utf8").replace(/\r\n/g, "\n") : "";
   if (process.argv.includes("--check")) {
     console.log(old === text ? "links.js 최신" : "links.js 가 오래됐다. node tools/build-links.js 를 실행한다");
     process.exit(old === text ? 0 : 1);
