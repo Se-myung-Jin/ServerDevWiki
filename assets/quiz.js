@@ -19,7 +19,8 @@
       return f ? { q: q.q, a: q.a, cat: f.cat, topic: f.topic } : null;
     }).filter(Boolean);
     var orphan = QUIZ.length - all.length;
-    var pool = all.filter(function (p) { return side.indexOf(p.cat.dir) === -1; });
+    // 참고 문서의 문항은 문서 안에서만 보이고 무작위 출제에는 넣지 않는다.
+    var pool = all.filter(function (p) { return side.indexOf(p.cat.dir) === -1 && p.topic.importance !== "참고"; });
 
     if (!pool.length) {
       mount.innerHTML =
@@ -49,7 +50,6 @@
         "<fieldset><legend>중요도</legend><div class=\"chips\">" +
           '<label><input type="checkbox" name="importance" value="핵심" checked> ★ 핵심</label>' +
           '<label><input type="checkbox" name="importance" value="보통" checked> 보통</label>' +
-          '<label><input type="checkbox" name="importance" value="참고" checked> 참고</label>' +
         "</div></fieldset>" +
         "<fieldset><legend>문항 수</legend><div class=\"chips\">" +
           '<label><input type="radio" name="size" value="10" checked> 10</label>' +

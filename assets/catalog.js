@@ -281,14 +281,12 @@ window.CATALOG = [
       {
         slug: "inline-codegen",
         title: "인라인과 코드 생성",
-        importance: "참고",
         summary: "인라인이 다른 최적화의 문을 연다. 그리고 실행 중에 알아내는 대신 빌드 때 만들어 두는 길.",
         tags: ["빌드", "런타임"],
       },
       {
         slug: "signals",
         title: "시그널과 프로세스 종료",
-        importance: "참고",
         summary: "커널이 프로세스에 보내는 비동기 알림. 처리하지 않으면 대부분 프로세스를 끝낸다.",
         tags: ["커널 인터페이스"],
       },
@@ -991,7 +989,6 @@ window.CATALOG = [
       {
         slug: "ecs-structural-change",
         title: "ECS 구조 변경과 틱 경계",
-        importance: "참고",
         summary: "값을 고치는 일과 구성을 고치는 일은 다르다. 구성 변경은 명령으로 쌓아 두었다가 정해진 자리에서 반영한다.",
         tags: ["ECS"],
       },
@@ -1249,7 +1246,6 @@ window.CATALOG = [
       {
         slug: "cipher-modes",
         title: "운용 모드와 인증 암호",
-        importance: "참고",
         summary: "기밀성과 무결성은 다른 성질이다. 모드와 초기값을 잘못 고르면 암호를 쓰고도 패턴이 남고 변조를 못 막는다.",
         tags: ["암호 기초"],
       },
